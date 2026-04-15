@@ -83,3 +83,13 @@ export function getCacheDir(cwd?: string): string {
 export function getLogsDir(cwd?: string): string {
   return join(getProjectDataDir(cwd), "logs");
 }
+
+/** `.unfade/bin/` — daemon binaries (unfaded, unfade-send). */
+export function getBinDir(cwd?: string): string {
+  return join(getProjectDataDir(cwd), "bin");
+}
+
+/** `~/.unfade/state/` — user-level global state (repos.json, etc). */
+export function getUserStateDir(): string {
+  return join(getUserConfigDir(), "state");
+}

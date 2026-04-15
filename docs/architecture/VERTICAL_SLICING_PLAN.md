@@ -2040,7 +2040,7 @@ The cross-tool constraint is the key barrier: **no IDE vendor will share memory 
 | `docs/architecture/VERTICAL_SLICING_PLAN.md` | This document — architectural triage, vertical slices, cross-cutting concerns | Complete |
 | `docs/architecture/cli/PHASE_0_SCAFFOLDING.md` | Phase 0 tasks (UF-001 → UF-011b), tests (T-001 → T-013) | Complete |
 | `docs/architecture/cli/PHASE_1_CAPTURE_AND_DISTILL.md` | Phase 1 tasks (UF-012 → UF-041, UF-086a/c/g), tests (T-012 → T-102), 7 micro-sprints (1A–1G), Zero-Knowledge UX integrated | Complete |
-| `docs/architecture/cli/PHASE_2_HOOKS_API_AND_MCP.md` | Phase 2 tasks (UF-042 → UF-057), tests (T-089 → T-127) | Complete |
+| `docs/architecture/cli/PHASE_2_HOOKS_API_AND_MCP.md` | Phase 2 tasks (UF-042 → UF-057, UF-086d/e), tests (T-103 → T-155), 5 micro-sprints (2A–2E), Zero-Knowledge UX integrated | Complete |
 | `docs/architecture/cli/PHASE_3_CARDS_AND_TERMINAL.md` | Phase 3 tasks (UF-058 → UF-069), tests (T-128 → T-154) | Complete |
 | `docs/architecture/cli/PHASE_4_PERSONALIZATION_AND_AMPLIFICATION.md` | Phase 4 tasks (UF-070 → UF-079), tests (T-155 → T-179) | Complete |
 | `docs/architecture/cli/PHASE_5_ECOSYSTEM_LAUNCH.md` | Phase 5 tasks (UF-080 → UF-093), tests (T-180 → T-202) | Complete |

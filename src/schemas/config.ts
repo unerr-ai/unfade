@@ -19,7 +19,7 @@ const CaptureSchema = z.object({
 
 const DistillSchema = z.object({
   schedule: z.string().default("0 18 * * *"),
-  provider: z.enum(["ollama", "openai", "anthropic", "custom"]).default("ollama"),
+  provider: z.enum(["ollama", "openai", "anthropic", "custom", "none"]).default("ollama"),
   model: z.string().default("llama3.2"),
   apiKey: z.string().optional(),
   apiBase: z.string().optional(),

@@ -1,0 +1,113 @@
+// FILE: src/commands/distill.ts
+// UF-037: `unfade distill` command.
+// Manual trigger (today by default), view by date, backfill N days,
+// provider override. Displays summary on completion.
+
+import { loadConfig } from "../config/manager.js";
+import { USER_TERMS } from "../constants/terminology.js";
+import type { UnfadeConfig } from "../schemas/config.js";
+import type { DailyDistill } from "../schemas/distill.js";
+import { backfill, distill } from "../services/distill/distiller.js";
+import { createLLMProvider } from "../services/distill/providers/ai.js";
+import { logger } from "../utils/logger.js";
+
+interface DistillCommandOptions {
+  date?: string;
+  backfill?: string;
+  provider?: string;
+}
+
+/**
+ * Format a distill result for stderr output.
+ */
+function printDistillSummary(d: DailyDistill): void {
+  logger.info("");
+  logger.info(`  ${USER_TERMS.distill} — ${d.date}`);
+  logger.info(`  ${d.summary}`);
+  logger.info("");
+  logger.info(`  Decisions: ${d.decisions.length}`);
+
+  if (d.tradeOffs && d.tradeOffs.length > 0) {
+    logger.info(`  Trade-offs: ${d.tradeOffs.length}`);
+  }
+  if (d.deadEnds && d.deadEnds.length > 0) {
+    logger.info(`  Dead ends: ${d.deadEnds.length}`);
+  }
+  if (d.breakthroughs && d.breakthroughs.length > 0) {
+    logger.info(`  Breakthroughs: ${d.breakthroughs.length}`);
+  }
+  if (d.patterns && d.patterns.length > 0) {
+    logger.info(`  Patterns: ${d.patterns.join(", ")}`);
+  }
+
+  logger.info(`  Events processed: ${d.eventsProcessed}`);
+  logger.info(`  Synthesized by: ${d.synthesizedBy ?? "unknown"}`);
+  logger.info("");
+}
+
+/**
+ * Resolve LLM provider from CLI override or config.
+ */
+async function resolveProvider(providerOverride: string | undefined, config: UnfadeConfig) {
+  if (!providerOverride) return undefined;
+
+  // Override the config's provider setting
+  const overrideConfig = {
+    ...config,
+    distill: {
+      ...config.distill,
+      provider: providerOverride as UnfadeConfig["distill"]["provider"],
+    },
+  };
+  return createLLMProvider(overrideConfig);
+}
+
+/**
+ * Execute the `unfade distill` command.
+ */
+export async function distillCommand(options: DistillCommandOptions): Promise<void> {
+  const config = loadConfig();
+
+  // Resolve provider override if given
+  const provider = await resolveProvider(options.provider, config);
+
+  // Backfill mode
+  if (options.backfill) {
+    const days = Number.parseInt(options.backfill, 10);
+    if (Number.isNaN(days) || days <= 0) {
+      logger.error("--backfill requires a positive integer");
+      return;
+    }
+
+    logger.info(`${USER_TERMS.distilling} ${days} past day${days === 1 ? "" : "s"}...`);
+
+    const results = await backfill(days, config, { provider, silent: true });
+
+    if (results.length === 0) {
+      logger.info("No days with events found in backfill range.");
+      return;
+    }
+
+    logger.info(
+      `Backfill complete: ${results.length} day${results.length === 1 ? "" : "s"} distilled.`,
+    );
+    for (const r of results) {
+      printDistillSummary(r.distill);
+    }
+    return;
+  }
+
+  // Single date mode (default: today)
+  const date = options.date ?? new Date().toISOString().slice(0, 10);
+
+  logger.info(`${USER_TERMS.distilling} ${date}...`);
+
+  const result = await distill(date, config, { provider });
+
+  if (!result) {
+    logger.info(`No events for ${date}. Nothing to distill.`);
+    return;
+  }
+
+  printDistillSummary(result.distill);
+}

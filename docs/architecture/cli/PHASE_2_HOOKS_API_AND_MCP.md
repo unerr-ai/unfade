@@ -10,7 +10,7 @@
 >
 > **Foundation doc:** [Research & Design](./UNFADE_CLI_RESEARCH_AND_DESIGN.md)
 >
-> **Last updated:** 2026-04-14
+> **Last updated:** 2026-04-15
 
 ---
 
@@ -21,7 +21,7 @@
 - [3. Research](#3-research)
 - [4. Architecture](#4-architecture)
 - [5. Design Principles](#5-design-principles)
-- [6. Implementation Plan](#6-implementation-plan)
+- [6. Implementation Plan (Micro-Sprints 2A–2E)](#6-implementation-plan-micro-sprints-2a2e)
 - [7. Success Metrics](#7-success-metrics)
 - [8. Risk Assessment](#8-risk-assessment)
 
@@ -60,6 +60,9 @@ Unfade captures events and generates distills — but the reasoning data is lock
 | **Profile API** | `GET /unfade/profile` — reasoning fingerprint accessible programmatically |
 | **Server auto-start** | Server starts automatically with daemon via `unfade init`, always available on `localhost:7654` |
 | **Web UI** | HTML pages served by Hono — dashboard, distill viewer, profile, settings — powered by htmx |
+| **`unfade mcp` hidden command** | Starts MCP stdio server for IDE integration. Not listed in `--help`. Called by IDE configs: `{ "command": "npx", "args": ["unfade", "mcp"] }` |
+| **Connect AI Tools** | Web UI Settings page includes copy-paste MCP config snippets for Claude Code, Cursor, Windsurf |
+| **Terminology** | All user-facing strings say "capture engine" not "daemon" (per Zero-Knowledge UX Plan) |
 
 ---
 
@@ -255,37 +258,110 @@ export const DecisionsInputSchema = z.object({
 
 ---
 
+## 6. Implementation Plan (Micro-Sprints 2A–2E)
+
+> **Phase 2 Boundary:**
+> Phase 2 is TypeScript-only — no Go daemon changes. All data is read from `.unfade/` files written by the Phase 1 daemon.
+>
+> ```
+> TypeScript READS from:  .unfade/events/YYYY-MM-DD.jsonl  (query, context, decisions)
+>                          .unfade/distills/YYYY-MM-DD.md   (query, distill serving)
+>                          .unfade/graph/decisions.jsonl     (decisions tool)
+>                          .unfade/graph/domains.json        (domains resource)
+>                          .unfade/profile/reasoning_model.json (profile tool, context shaper)
+>                          .unfade/state/daemon.pid          (health check)
+>                          .unfade/state/health.json         (server status)
+>
+> TypeScript WRITES to:   .unfade/state/server.json         (atomic: tmp + rename)
+> ```
+>
+> **Query Engine consistency model:**
+> - Single-file consistency: atomic writes (tmp + rename for JSON, O_APPEND for JSONL)
+> - Cross-file eventual consistency: seconds of staleness acceptable
+> - Every response includes `last_updated` timestamp (file mtime)
+> - No read locks — read whatever is on disk
+
 ---
 
-## 5b. Execution Guide (Day 2: Memory Layer — MCP + HTTP API + Web UI)
+### 6.1 Sprint 2A — Shared Read Services & Schemas
 
-> **Sourced from:** Master Execution Blueprint — consolidated tasks with acid tests, strict contracts, and agent directives for AI-agent-driven execution.
+**Objective:** Build the query engine and read services that both HTTP and MCP servers consume. All `.unfade/` file reading logic lives here — neither transport implements its own file reading.
 
-### Acid Test
+**Acid Test:**
+```bash
+pnpm test -- --grep "query-engine|context-reader|decisions|profile-reader|mcp-schema"
+# All tests pass
 
-```
-# MCP test: Claude Code auto-discovers Unfade context
-claude-code --mcp-config '{"unfade": {"command": "unfade", "args": ["mcp-stdio"]}}'
-> "What was I working on yesterday?"
-→ Agent returns context from unfade://context/recent
-
-# HTTP test
-curl http://localhost:7654/context | jq .
-→ Returns recent reasoning signals
-
-# Web UI test
-open http://localhost:7654
-→ Dashboard renders with today's distill + profile summary
-
-# CLI test
-unfade query "caching" | head
-→ Returns matching decisions
+# In code:
+import { queryEvents } from './tools/unfade-query'
+queryEvents({ query: 'caching', limit: 10 })  # → matching events from JSONL
+import { getRecentContext } from './tools/unfade-context'
+getRecentContext({ scope: 'today' })           # → today's events
+import { getProfile } from './tools/unfade-profile'
+getProfile()                                    # → reasoning model JSON
 ```
 
-### Strict Contracts
+| Task | Description | File | Status |
+|---|---|---|---|
+| **UF-046** | MCP Zod schemas: input/output schemas for all MCP tools — `QueryInputSchema`, `ContextInputSchema`, `DecisionsInputSchema`, `ProfileOutputSchema`, `ContextOutputSchema`, `DecisionsOutputSchema`, `QueryResultSchema`. Each exports both schema AND inferred type | `src/schemas/mcp.ts` | [ ] |
+| **UF-052** | Query engine: keyword + date range search over JSONL events and Markdown distills — returns ranked results with relevance scores. Reads daily JSONL files for date range, scans distill Markdown for matching sections. No database — pure file reads | `src/tools/unfade-query.ts` | [ ] |
+| **UF-053** | Context reader: recent context retrieval with scope filtering (`last_2h`, `today`, `this_week`) and optional project filter. Reads events from appropriate date files, groups by temporal proximity | `src/tools/unfade-context.ts` | [ ] |
+| **UF-054** | Decisions reader: list recent decisions with domain filter, alternatives count, trade-off summaries. Reads from `graph/decisions.jsonl` | `src/tools/unfade-decisions.ts` | [ ] |
+| **UF-055** | Profile reader: retrieve full reasoning profile — decision style, domain distribution, patterns with confidence. Reads from `profile/reasoning_model.json` | `src/tools/unfade-profile.ts` | [ ] |
 
-**server.json (written atomically by `unfade server` on startup):**
+**Agent Directive (Sprint 2A):**
 
+> "Build 5 modules. (1) `src/schemas/mcp.ts`: define Zod schemas for all MCP tool inputs and outputs — `QueryInputSchema` (query string, optional dateRange with from/to, limit with default 10), `ContextInputSchema` (scope enum: last_2h/today/this_week, optional project), `DecisionsInputSchema` (limit, optional domain), plus output schemas wrapping response data with `_meta` envelope. Export both schema and inferred type for each. (2) `src/tools/unfade-query.ts`: export `queryEvents(input: QueryInput): QueryResult[]` — read `.unfade/events/YYYY-MM-DD.jsonl` files within date range, keyword-match on event content fields, scan `.unfade/distills/YYYY-MM-DD.md` files for matching sections. Score by keyword frequency + recency. Return ranked results with `last_updated` (most recent file mtime). (3) `src/tools/unfade-context.ts`: export `getRecentContext(input: ContextInput): ContextOutput` — for `last_2h`: read today's events, filter by timestamp. For `today`: read all today's events. For `this_week`: read last 7 days. Include distill if available. (4) `src/tools/unfade-decisions.ts`: export `getDecisions(input: DecisionsInput): DecisionsOutput` — read `graph/decisions.jsonl`, filter by domain if specified, limit results, return with alternatives count. (5) `src/tools/unfade-profile.ts`: export `getProfile(): ProfileOutput` — read `profile/reasoning_model.json`, return full profile. Handle missing file gracefully (return empty profile with `degraded: true` in `_meta`)."
+
+**Strict Contracts:**
+- All read functions return data + `_meta` envelope with `last_updated`, `degraded`, `durationMs`
+- Missing files return empty results with `degraded: true` — never throw
+- Query engine scans only files within the requested date range — no full scan
+- All schemas export BOTH `XxxSchema` AND `type Xxx = z.infer<typeof XxxSchema>`
+
+---
+
+### 6.2 Sprint 2B — HTTP Server & JSON API
+
+**Objective:** Hono HTTP server running on `localhost:7654` with all JSON API endpoints, context shaping, and server lifecycle management.
+
+**Acid Test:**
+```bash
+# Start server (assumes daemon running from Phase 1)
+unfade server &
+
+curl http://localhost:7654/unfade/health | jq .
+# → { "status": "ok", "version": "0.1.0", "daemon": "running" }
+
+curl http://localhost:7654/unfade/context?scope=today | jq .
+# → { "data": { "signals": [...] }, "_meta": { ... } }
+
+curl http://localhost:7654/unfade/query?q=caching | jq .
+# → { "data": { "results": [...] }, "_meta": { ... } }
+
+cat .unfade/state/server.json | jq .port
+# → 7654
+```
+
+| Task | Description | File | Status |
+|---|---|---|---|
+| **UF-050** | HTTP server setup: Hono on `localhost:7654` (configurable via `server.port`, fallback 7655–7660), CORS for local-only, JSON response format, `_meta` envelope middleware, health check endpoint (`/unfade/health`). Bind to `127.0.0.1` only | `src/server/http.ts` | [ ] |
+| **UF-051** | REST routes: implement 7 JSON API endpoints — `GET /unfade/context`, `GET /unfade/query`, `GET /unfade/decisions`, `GET /unfade/profile`, `GET /unfade/distill/latest`, `GET /unfade/distill/:date`, `POST /unfade/distill`. All routes call Sprint 2A read services, wrap in `_meta` envelope | `src/server/routes/context.ts`, `src/server/routes/query.ts`, `src/server/routes/decisions.ts`, `src/server/routes/profile.ts`, `src/server/routes/distill.ts` | [ ] |
+| **UF-047** | Context shaper: personalization-aware context delivery — shape raw events based on reasoning profile (exploration depth, domain distribution, AI acceptance rate). High exploration → more alternatives. Domain expert → deeper context in specialty. Missing profile → no shaping (passthrough) | `src/services/personalization/context-shaper.ts` | [ ] |
+| **UF-048** | Server auto-start: HTTP server starts automatically during `unfade init` (Phase 1 UF-018 step 7). Write `server.json` atomically on startup with port, PID, startedAt, version, transport URLs. Server lifecycle tied to daemon — starts when daemon starts, stops when daemon stops | `src/services/daemon/server-bootstrap.ts` | [ ] |
+| **UF-049** | `server.json` for MCP Registry: standard MCP server manifest with name (`unfade`), description, version, capabilities list, installation instructions, repository URL. Written to project root for MCP Registry auto-discovery | `server.json` | [ ] |
+
+**Agent Directive (Sprint 2B):**
+
+> "Build 5 modules. (1) `src/server/http.ts`: export `createServer(config: UnfadeConfig): Hono` — create Hono app on `config.server.port` (default 7654). Bind to `127.0.0.1` only. Add middleware: CORS (allow localhost only), `_meta` envelope (wrap all JSON responses with `{ data, _meta: { durationMs, degraded, tool } }`), error handler (return JSON errors, never crash). Try ports 7654–7660 if default is occupied. On start, write `server.json` atomically (tmp + rename) with `{ port, pid, startedAt, version, transport: { http, mcp } }`. (2) `src/server/routes/`: one file per resource — `context.ts` (GET /unfade/context?scope=), `query.ts` (GET /unfade/query?q=), `decisions.ts` (GET /unfade/decisions?limit=&domain=), `profile.ts` (GET /unfade/profile), `distill.ts` (GET+POST /unfade/distill). Each route calls the corresponding Sprint 2A read service. (3) `src/services/personalization/context-shaper.ts`: export `shapeContext(events: CaptureEvent[], profile: ReasoningModel): ShapedContext` — reorder and emphasize events based on profile. Never remove events, only reorder. Handle missing/empty profile gracefully (return events unchanged). (4) `src/services/daemon/server-bootstrap.ts`: export `bootstrapServer()` — called from init flow. Starts HTTP server, writes `server.json`. (5) `server.json`: static MCP Registry manifest at project root."
+
+**Strict Contracts:**
+- HTTP server binds to `127.0.0.1` ONLY — never `0.0.0.0`
+- All JSON responses wrapped in `{ data, _meta }` envelope — including errors
+- `server.json` written atomically (tmp + rename) — never partial JSON
+- Context shaper NEVER removes events — only reorders and adds emphasis metadata
+
+**server.json schema (written atomically on startup):**
 ```json
 {
   "port": 7654,
@@ -299,56 +375,49 @@ unfade query "caching" | head
 }
 ```
 
-**HTTP API endpoints (all JSON, all GET except where noted):**
+---
 
-```
-GET  /context              → { signals: CaptureEvent[], last_updated: ISO-8601 }
-GET  /context/for?file=X   → { signals: CaptureEvent[], file: string }
-GET  /query?q=X            → { results: Decision[], query: string }
-GET  /decisions             → { decisions: Decision[], total: number }
-GET  /profile               → ReasoningModel
-POST /distill               → { status: "started" | "already_running" }
-```
+### 6.3 Sprint 2C — MCP Server & IDE Integration
 
-**MCP surface (5 Resources, 5 Tools, 3 Prompts):**
+**Objective:** Full MCP server with 5 Resources, 5 Tools, 3 Prompts over stdio transport. Hidden `unfade mcp` command for IDE integration. Streamable HTTP transport mounted on existing Hono server.
 
-Resources return text content, never throw errors:
-```
-unfade://context/recent     → Last 2 hours of reasoning signals
-unfade://context/for/{file} → All reasoning about a specific file
-unfade://profile            → Developer's reasoning profile
-unfade://decisions/recent   → Recent decisions with rationale
-unfade://domains            → Domain expertise map
-```
+**Acid Test:**
+```bash
+# Stdio test
+echo '{"jsonrpc":"2.0","method":"initialize","params":{"capabilities":{}},"id":1}' | unfade mcp
+# → MCP initialize response on stdout (JSON-RPC)
 
-Tools return JSON:
-```
-unfade_query(query: string)   → { results: Decision[] }
-unfade_amplify()              → { insights: Connection[] }    // Placeholder until Phase 4
-unfade_similar(context: str)  → { similar: Decision[] }       // Placeholder until Phase 4
-unfade_ask(question: string)  → { answer: string }            // Placeholder until Phase 4
-unfade_distill()              → { status: string }
+# Tool discovery
+echo '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":2}' | unfade mcp
+# → Lists all 5 tools
+
+# Resource listing
+echo '{"jsonrpc":"2.0","method":"resources/list","params":{},"id":3}' | unfade mcp
+# → Lists all 5 resources
+
+# Hidden command check
+unfade --help | grep -c "mcp"
+# → 0 (not listed in help)
 ```
 
-**Query Engine consistency model:**
-- Single-file consistency: atomic writes (tmp + rename for JSON, O_APPEND for JSONL)
-- Cross-file eventual consistency: seconds of staleness is acceptable
-- Every response includes `last_updated` timestamp
-- No read locks — read whatever is on disk
+| Task | Description | File | Status |
+|---|---|---|---|
+| **UF-042** | MCP server setup: initialize `@modelcontextprotocol/sdk` Server, register capabilities (resources, tools, prompts), handle lifecycle (connect, disconnect, error). Mount Streamable HTTP transport at `/mcp` on existing Hono server | `src/services/mcp/server.ts` | [ ] |
+| **UF-043** | MCP Resources: implement 5 read-only resources — `unfade://context/recent`, `unfade://context/today`, `unfade://profile`, `unfade://decisions/recent`, `unfade://distill/latest`. Each calls Sprint 2A read services. NEVER throw — return empty content with status metadata when data unavailable | `src/services/mcp/resources.ts` | [ ] |
+| **UF-044** | MCP Tools: implement 5 executable tools — `unfade_query`, `unfade_distill`, `unfade_profile`, `unfade_context`, `unfade_decisions`. Zod-validated inputs (Sprint 2A schemas), `_meta` envelope responses. Degradation: daemon offline → `{ error: "daemon_offline" }`, not initialized → `{ status: "not_initialized" }` with setup instructions | `src/services/mcp/tools.ts` | [ ] |
+| **UF-045** | MCP Prompts: implement 3 reasoning framework prompts — `unfade_code_review` (injects developer patterns + past decisions for relevant files), `unfade_architecture` (injects past architectural decisions + trade-off preferences), `unfade_debug` (injects past dead ends + debugging patterns). Each fetches relevant context from read services | `src/services/mcp/prompts.ts` | [ ] |
+| **UF-086d** | `unfade mcp` hidden command: starts MCP stdio server for IDE integration. Instantiates MCP server with stdio transport, wires up same handlers as Streamable HTTP transport, exits when stdin closes. Registered with Commander but NOT listed in `--help` output. Called by IDE configs: `{ "command": "npx", "args": ["unfade", "mcp"] }`. _(From Zero-Knowledge UX Plan)_ | `src/commands/mcp.ts` | [ ] |
 
-### Consolidated Tasks (4) with Agent Directives
+**Agent Directive (Sprint 2C):**
 
-#### Task 2.1: Query Engine + HTTP API
+> "Build 5 modules. (1) `src/services/mcp/server.ts`: export `createMcpServer()` — initialize MCP Server from `@modelcontextprotocol/sdk`. Register all resources, tools, and prompts. Export `mountMcpHttp(app: Hono)` to mount Streamable HTTP transport at `/mcp` path on the existing Hono server from Sprint 2B. (2) `src/services/mcp/resources.ts`: implement 5 resource handlers. Each calls the corresponding Sprint 2A read service: `unfade://context/recent` → `getRecentContext({ scope: 'last_2h' })`, `unfade://context/today` → `getRecentContext({ scope: 'today' })`, `unfade://profile` → `getProfile()`, `unfade://decisions/recent` → `getDecisions({ limit: 10 })`, `unfade://distill/latest` → read latest distill file. Resources return text content. NEVER throw errors — return `{ content: '', status: 'unavailable' }` when data missing. (3) `src/services/mcp/tools.ts`: implement 5 tool handlers. Each validates input with Sprint 2A Zod schemas, calls read services, wraps in `_meta` envelope. Degradation: check daemon PID before executing — if daemon offline, return `{ error: 'daemon_offline', setup: 'Run unfade to restart' }`. If not initialized, return `{ status: 'not_initialized', setup: 'Run npx unfade' }`. (4) `src/services/mcp/prompts.ts`: implement 3 prompt handlers. `unfade_code_review`: accept `{ diff }`, fetch context for files in diff, inject developer's decision patterns. `unfade_architecture`: accept `{ question }`, fetch related past decisions, inject trade-off preferences. `unfade_debug`: accept `{ error, context }`, fetch past dead ends and debugging sessions. (5) `src/commands/mcp.ts`: Commander command `.command('mcp')` registered but hidden (`.hideHelp()` or similar). Handler: create MCP server, connect to stdio transport, exit when stdin closes. All logging to stderr."
 
-Build the query engine that reads `.unfade/` files and the Hono HTTP server that exposes it as a JSON API.
-
-**Agent directive:** "Build `src/server/query-engine.ts` — a class that reads from `.unfade/` directories: `getRecentContext(hours: number)` reads events JSONL, `getContextForFile(file: string)` filters events by file path, `queryDecisions(query: string)` does keyword search on decisions.jsonl, `getProfile()` reads reasoning_model.json, `getDecisions()` reads decisions.jsonl, `getDomains()` reads domains.json. Each method returns the data + `last_updated` (file mtime). Build `src/server/http.ts` — Hono server on `config.server.port` (default 7654, fallback 7655–7660). Register routes in `src/server/routes/` — one file per endpoint. Write `server.json` atomically on startup. All routes bind to `config.server.host` (default 127.0.0.1)."
-
-#### Task 2.2: MCP Server
-
-Expose the same query engine data as MCP Resources, Tools, and Prompts via both stdio and Streamable HTTP transports.
-
-**Agent directive:** "Build `src/mcp/resources.ts`, `src/mcp/tools.ts`, `src/mcp/prompts.ts`. Build `src/server/mcp.ts` — MCP server setup using @modelcontextprotocol/sdk. Register all 5 resources, 5 tools, 3 prompts. Resources NEVER throw errors — return empty content with status metadata when data is unavailable. Build `src/commands/mcp-stdio.ts` — a separate CLI entry point (`unfade mcp-stdio`) that instantiates the MCP server with stdio transport, wires up the same handlers, and exits when stdin closes. The Streamable HTTP transport is mounted at `/mcp` on the existing Hono server. Both transports share the same resource/tool/prompt handler code."
+**Strict Contracts:**
+- MCP resources NEVER throw — return empty content with metadata when data unavailable
+- MCP tools return `_meta` envelope with degradation status
+- `unfade mcp` writes ONLY MCP JSON-RPC to stdout — all diagnostics to stderr
+- `unfade mcp` NOT listed in `--help` output — IDE integration only
+- Both stdio and Streamable HTTP transports share the same handler code
 
 **MCP degradation contract (non-negotiable):**
 - Daemon offline → resources return `{ status: "daemon_offline" }`, tools return `{ error: "daemon_offline" }`
@@ -356,97 +425,142 @@ Expose the same query engine data as MCP Resources, Tools, and Prompts via both 
 - No distills yet → resources return fingerprint data only, tools return `{ results: [], note: "..." }`
 - Never throw, never error — agents must not crash because Unfade is unavailable
 
-#### Task 2.3: Web UI (htmx)
+---
 
-Server-rendered HTML pages on the same Hono server. htmx handles interactivity — no JS build step.
+### 6.4 Sprint 2D — Web UI Pages (htmx)
 
-**Agent directive:** "Build `src/server/pages/layout.ts` — base HTML template: dark theme CSS (inline or minimal file), htmx script tag (~14KB CDN or bundled), nav bar (Dashboard | Distill | Profile | Settings). Build 4 page handlers in `src/server/pages/`: `dashboard.ts` (GET / — status, today's distill summary, event count), `distill.ts` (GET /distill — distill viewer with date navigation, re-generate button via `hx-post='/distill'`), `profile.ts` (GET /profile — reasoning profile visualization), `settings.ts` (GET /settings — daemon status, capture source toggles, LLM provider config). All pages are server-rendered by Hono — return complete HTML. htmx attributes handle dynamic updates: `hx-get`, `hx-post`, `hx-trigger`, `hx-swap`. No React, no JSX — pure template strings or a lightweight HTML builder."
+**Objective:** Server-rendered HTML pages on the existing Hono server. htmx handles interactivity. No JS build step. Settings page includes "Connect AI Tools" section with copy-paste MCP config snippets.
 
-#### Task 2.4: CLI Commands (`query`, `open`)
+**Acid Test:**
+```bash
+# Dashboard
+curl -s http://localhost:7654/ | grep -c "<html"
+# → 1 (returns complete HTML page)
 
-Search reasoning history from the terminal and open the web UI in a browser.
+# Distill viewer with htmx re-generate
+curl -s http://localhost:7654/distill | grep -c "hx-post"
+# → 1+ (htmx re-generate button present)
 
-**Agent directive:** "Build `src/commands/query.ts` — `unfade query 'search term'`. Reads `server.json` for the HTTP API URL, calls `GET /query?q=...`, formats results as plain text to stdout (pipeable). If server is not running, fall back to direct file reading via the query engine. Build `src/commands/open.ts` — `unfade open`. Reads `server.json` for the port, opens `http://127.0.0.1:{port}` in the default browser using `open` (macOS) or `xdg-open` (Linux)."
+# Settings — Connect AI Tools
+curl -s http://localhost:7654/settings | grep -c "mcpServers"
+# → 1+ (MCP config snippets present)
 
-## 6. Implementation Plan
-
-### Sprint 4: MCP Server
-
-> **Goal:** Unfade exposed as MCP server. Any MCP-compatible agent discovers and queries reasoning context.
-
-| Task | Description | File | Status |
-|---|---|---|---|
-| **UF-042** | MCP server setup: initialize `@modelcontextprotocol/sdk` Server with stdio transport, register capabilities (resources, tools, prompts), handle lifecycle (connect, disconnect, error) | `src/services/mcp/server.ts` | [ ] |
-| **UF-043** | MCP Resources: implement 5 read-only resources — `unfade://context/recent`, `unfade://context/today`, `unfade://profile`, `unfade://decisions/recent`, `unfade://distill/latest` — each reads from `.unfade/` files | `src/services/mcp/resources.ts` | [ ] |
-| **UF-044** | MCP Tools: implement 5 executable tools — `unfade_query`, `unfade_distill`, `unfade_profile`, `unfade_context`, `unfade_decisions` — with Zod-validated inputs and `_meta` envelope responses | `src/services/mcp/tools.ts` | [ ] |
-| **UF-045** | MCP Prompts: implement 3 reasoning framework prompts — `unfade_code_review`, `unfade_architecture`, `unfade_debug` — each injects relevant context from reasoning history | `src/services/mcp/prompts.ts` | [ ] |
-| **UF-046** | MCP Zod schemas: input/output schemas for all MCP tools — `QueryInputSchema`, `ContextInputSchema`, `DecisionsInputSchema`, and corresponding output schemas | `src/schemas/mcp.ts` | [ ] |
-| **UF-047** | Context shaper: personalization-aware context delivery — shape raw events based on reasoning profile (exploration depth, domain distribution, AI acceptance rate) | `src/services/personalization/context-shaper.ts` | [ ] |
-| **UF-048** | Server auto-start: MCP and HTTP servers start automatically with daemon via `unfade init`. Server always available on `localhost:7654`. MCP stdio transport configured via `server.json` — agents connect directly | `src/services/daemon/server-bootstrap.ts` | [ ] |
-| **UF-049** | `server.json` for MCP Registry: standard MCP server manifest with name, description, capabilities, installation instructions | `server.json` | [ ] |
-
-### Sprint 5: HTTP API
-
-> **Goal:** HTTP API running for custom integrations. Query engine for searching across events and distills.
+# htmx dynamic update
+curl -s -X POST http://localhost:7654/unfade/distill | grep -c "status"
+# → 1+ (returns status for htmx swap)
+```
 
 | Task | Description | File | Status |
 |---|---|---|---|
-| **UF-050** | HTTP server setup: Hono on `localhost:7654`, CORS for local-only, JSON response format, `_meta` envelope on all responses, health check endpoint. Serves both JSON API and HTML pages (web UI) | `src/server/http.ts` | [ ] |
-| **UF-051** | REST routes: implement `/unfade/context`, `/unfade/query`, `/unfade/decisions`, `/unfade/profile`, `/unfade/distill/latest`, `/unfade/distill/:date`, `/unfade/health` | `src/server/routes.ts` | [ ] |
-| **UF-051a** | Web UI pages: server-rendered HTML with htmx. Base layout (htmx script, nav, dark theme CSS), dashboard (`GET /`), distill viewer + history + re-generate (`GET /distill`), reasoning profile visualization (`GET /profile`), daemon control + LLM config + capture sources (`GET /settings`) | `src/server/pages/layout.ts`, `src/server/pages/dashboard.ts`, `src/server/pages/distill.ts`, `src/server/pages/profile.ts`, `src/server/pages/settings.ts` | [ ] |
-| **UF-052** | Query engine: keyword + date range search over JSONL events and Markdown distills — returns ranked results with relevance scores | `src/tools/unfade-query.ts` | [ ] |
-| **UF-053** | Context tool: recent context retrieval with scope filtering (last_2h, today, this_week) and optional project filter | `src/tools/unfade-context.ts` | [ ] |
-| **UF-054** | Decisions tool: list recent decisions with domain filter, alternatives count, trade-off summaries | `src/tools/unfade-decisions.ts` | [ ] |
-| **UF-055** | Profile tool: retrieve full reasoning profile — decision style, domain distribution, patterns with confidence | `src/tools/unfade-profile.ts` | [ ] |
-| **UF-056** | `unfade query` command: CLI interface for the query engine — `unfade query "caching"` with `--from`, `--to`, `--limit` flags | `src/commands/query.ts` | [ ] |
-| **UF-057** | Integration test: Claude Code ↔ Unfade MCP — add Unfade to Claude Code MCP config, verify tool discovery and context retrieval | `test/integration/mcp.test.ts` | [ ] |
+| **UF-051a-layout** | Base HTML layout: dark theme CSS (inline `<style>` or minimal file), htmx script tag (~14KB CDN or bundled), nav bar (Dashboard \| Distill \| Profile \| Settings), responsive viewport meta. Export `layout(title: string, content: string): string` template function | `src/server/pages/layout.ts` | [ ] |
+| **UF-051a-dash** | Dashboard page (`GET /`): status indicator (capturing/paused/error using `USER_TERMS`), today's event count, today's decision count, latest distill summary (truncated), reasoning profile quick stats (domains, alt/decision ratio), link to web UI sections | `src/server/pages/dashboard.ts` | [ ] |
+| **UF-051a-distill** | Distill viewer page (`GET /distill`): date navigation (prev/next day via query param), full distill Markdown rendered as HTML, re-generate button via `hx-post="/unfade/distill"` with `hx-swap="innerHTML"`, empty state for days with no distill | `src/server/pages/distill.ts` | [ ] |
+| **UF-051a-profile** | Profile visualization page (`GET /profile`): reasoning profile display — decision style metrics, domain distribution, AI acceptance rate, exploration depth, patterns with confidence scores. Read from `profile/reasoning_model.json` via Sprint 2A profile reader | `src/server/pages/profile.ts` | [ ] |
+| **UF-051a-settings** | Settings page (`GET /settings`): capture engine status display (using `USER_TERMS`), capture source toggles, LLM provider configuration, shell hook reinstall button, "Pause capture" toggle. **"Connect AI Tools" section** (integrates UF-086e): copy-paste MCP config snippets for Claude Code (`~/.claude/settings.json`), Cursor (`.cursor/mcp.json`), Windsurf, and generic MCP clients. Pre-formatted JSON: `{ "command": "npx", "args": ["unfade", "mcp"] }` | `src/server/pages/settings.ts` | [ ] |
 
-### Tests
+**Agent Directive (Sprint 2D):**
 
-| Test | What It Validates | File |
-|---|---|---|
-| **T-089** | MCP server: initializes and accepts connection on stdio | `test/services/mcp/server.test.ts` |
-| **T-090** | MCP server: lists all 5 resources | `test/services/mcp/server.test.ts` |
-| **T-091** | MCP server: lists all 5 tools | `test/services/mcp/server.test.ts` |
-| **T-092** | MCP resource: `unfade://context/recent` returns recent events | `test/services/mcp/resources.test.ts` |
-| **T-093** | MCP resource: `unfade://profile` returns reasoning profile | `test/services/mcp/resources.test.ts` |
-| **T-094** | MCP resource: `unfade://decisions/recent` returns structured decisions | `test/services/mcp/resources.test.ts` |
-| **T-095** | MCP resource: `unfade://distill/latest` returns latest distill | `test/services/mcp/resources.test.ts` |
-| **T-096** | MCP resource: `unfade://context/today` returns today's full context | `test/services/mcp/resources.test.ts` |
-| **T-097** | MCP tool: `unfade_query` returns matching events for keyword | `test/services/mcp/tools.test.ts` |
-| **T-098** | MCP tool: `unfade_query` respects date range filter | `test/services/mcp/tools.test.ts` |
-| **T-099** | MCP tool: `unfade_context` returns events for given scope | `test/services/mcp/tools.test.ts` |
-| **T-100** | MCP tool: `unfade_profile` returns reasoning model | `test/services/mcp/tools.test.ts` |
-| **T-101** | MCP tool: `unfade_decisions` returns structured decision list | `test/services/mcp/tools.test.ts` |
-| **T-102** | MCP tool: `unfade_distill` triggers manual distillation | `test/services/mcp/tools.test.ts` |
-| **T-103** | MCP tool: all responses include `_meta` envelope | `test/services/mcp/tools.test.ts` |
-| **T-104** | MCP prompt: `unfade_code_review` includes reasoning context | `test/services/mcp/prompts.test.ts` |
-| **T-105** | MCP prompt: `unfade_architecture` includes past decisions | `test/services/mcp/prompts.test.ts` |
-| **T-106** | MCP prompt: `unfade_debug` includes past dead ends | `test/services/mcp/prompts.test.ts` |
-| **T-107** | MCP Zod schemas: QueryInputSchema validates correct input | `test/schemas/mcp.test.ts` |
-| **T-108** | MCP Zod schemas: QueryInputSchema rejects invalid input | `test/schemas/mcp.test.ts` |
-| **T-109** | Context shaper: high exploration profile gets more alternatives | `test/services/personalization/context-shaper.test.ts` |
-| **T-110** | Context shaper: domain expert gets deeper context in specialty | `test/services/personalization/context-shaper.test.ts` |
-| **T-111** | Context shaper: handles missing profile gracefully (no shaping) | `test/services/personalization/context-shaper.test.ts` |
-| **T-112** | HTTP server: starts on configured port | `test/services/http/server.test.ts` |
-| **T-113** | HTTP server: health check returns 200 | `test/services/http/server.test.ts` |
-| **T-114** | HTTP route: `/unfade/context` returns structured events | `test/services/http/routes.test.ts` |
-| **T-115** | HTTP route: `/unfade/query` returns search results | `test/services/http/routes.test.ts` |
-| **T-116** | HTTP route: `/unfade/profile` returns reasoning profile | `test/services/http/routes.test.ts` |
-| **T-117** | HTTP route: `/unfade/decisions` returns decision list | `test/services/http/routes.test.ts` |
-| **T-118** | HTTP route: `/unfade/distill/latest` returns latest distill | `test/services/http/routes.test.ts` |
-| **T-119** | HTTP route: `POST /unfade/distill` triggers distillation | `test/services/http/routes.test.ts` |
-| **T-120** | Query engine: keyword search returns relevant events | `test/tools/unfade-query.test.ts` |
-| **T-121** | Query engine: date range filter works correctly | `test/tools/unfade-query.test.ts` |
-| **T-122** | Query engine: empty query returns recent events | `test/tools/unfade-query.test.ts` |
-| **T-123** | Query engine: limit parameter caps results | `test/tools/unfade-query.test.ts` |
-| **T-124** | Integration: Claude Code discovers Unfade MCP tools | `test/integration/mcp.test.ts` |
-| **T-125** | Integration: MCP context retrieval returns structured data | `test/integration/mcp.test.ts` |
-| **T-126** | Web UI: `GET /` returns dashboard HTML page | `test/server/pages/dashboard.test.ts` |
-| **T-127** | Web UI: `GET /distill` returns distill viewer HTML page | `test/server/pages/distill.test.ts` |
-| **T-128** | Web UI: `GET /profile` returns profile visualization HTML page | `test/server/pages/profile.test.ts` |
-| **T-129** | Web UI: `GET /settings` returns settings HTML page | `test/server/pages/settings.test.ts` |
-| **T-130** | Web UI: `hx-post="/distill"` returns HTML fragment for re-distill | `test/server/pages/distill.test.ts` |
+> "Build 5 page modules. All pages are server-rendered by Hono — return complete HTML strings. No React, no JSX — use template literals or a lightweight HTML builder. (1) `src/server/pages/layout.ts`: export `layout(title, content)` that returns a complete HTML page. Include: `<meta charset='utf-8'>`, `<meta name='viewport'>`, inline dark theme CSS (dark background #1a1a2e, light text #e0e0e0, accent blue #0099ff, monospace font), htmx `<script>` tag (use `https://unpkg.com/htmx.org@2.0.4`), nav bar with links to `/`, `/distill`, `/profile`, `/settings`. (2) `src/server/pages/dashboard.ts`: handler for `GET /` — call `getRecentContext({ scope: 'today' })` and `getProfile()` from Sprint 2A. Render: status badge (using USER_TERMS), event count, decision count, latest distill preview (first 200 chars), profile quick stats. (3) `src/server/pages/distill.ts`: handler for `GET /distill` — read distill Markdown for requested date (default today), render as HTML. Date navigation with `?date=YYYY-MM-DD` query param and prev/next links. Re-generate button: `<button hx-post='/unfade/distill' hx-swap='innerHTML' hx-target='#distill-status'>Re-generate</button>`. (4) `src/server/pages/profile.ts`: handler for `GET /profile` — read reasoning model via Sprint 2A profile reader, render metrics as styled HTML (stat cards, domain list, pattern descriptions). (5) `src/server/pages/settings.ts`: handler for `GET /settings` — show capture engine health status (USER_TERMS), capture source toggles (read-only for v1), LLM provider display. Add 'Connect AI Tools' section with pre-formatted code blocks: Claude Code JSON config (`~/.claude/settings.json` → mcpServers.unfade), Cursor JSON config (`.cursor/mcp.json`), Windsurf config, generic MCP client config. Each shows `{ 'command': 'npx', 'args': ['unfade', 'mcp'] }`. Register all 5 page routes in the Hono app from Sprint 2B."
+
+**Strict Contracts:**
+- All pages return complete HTML via `layout()` wrapper — no partial HTML
+- htmx attributes handle dynamic updates — no custom JavaScript beyond htmx
+- Dark theme CSS is inline or in a single `<style>` tag — no CSS build step
+- "Connect AI Tools" snippets use `npx unfade mcp` as the command
+- Pages call Sprint 2A read services — no direct `.unfade/` file reading in page handlers
+- All user-facing status text uses `USER_TERMS` constants from Phase 1
+
+---
+
+### 6.5 Sprint 2E — CLI Command & Integration Tests
+
+**Objective:** `unfade query` CLI command for terminal-based search. Integration test proving Claude Code ↔ Unfade MCP end-to-end.
+
+**Acid Test:**
+```bash
+unfade query "caching"
+# → Formatted search results in terminal
+
+unfade query "auth" --from 2026-04-01 --to 2026-04-14 --limit 5
+# → Filtered results within date range
+
+unfade query "caching" --json | jq .
+# → JSON output for scripting
+```
+
+| Task | Description | File | Status |
+|---|---|---|---|
+| **UF-056** | `unfade query` command: CLI interface for the query engine — `unfade query "caching"` with `--from`, `--to`, `--limit` flags, `--json` for JSON output. Reads `server.json` for HTTP API URL, calls `GET /unfade/query?q=...`. Falls back to direct file reading via query engine if server not running. Format results as colored plain text to stderr (default) or JSON to stdout (`--json`) | `src/commands/query.ts` | [ ] |
+| **UF-057** | Integration test: Claude Code ↔ Unfade MCP — verify MCP server starts via `unfade mcp`, tool listing returns all 5 tools, resource listing returns all 5 resources, `unfade_context` returns structured data, `unfade_query` returns search results. Test MCP degradation: verify graceful response when daemon offline and when not initialized | `test/integration/mcp.test.ts` | [ ] |
+
+**Agent Directive (Sprint 2E):**
+
+> "Build 2 modules. (1) `src/commands/query.ts`: Commander command `unfade query <search>` with options `--from` (date string), `--to` (date string), `--limit` (number, default 10), `--json` (boolean). Implementation: read `.unfade/state/server.json` — if server running, call `GET http://127.0.0.1:{port}/unfade/query?q={search}&from={from}&to={to}&limit={limit}`. If server not running (no server.json or connection refused), fall back to direct query via `queryEvents()` from Sprint 2A. Format: without `--json`, print colored results to stderr (date, source, summary per result). With `--json`, print raw JSON to stdout. (2) `test/integration/mcp.test.ts`: integration test that spawns `unfade mcp` as a child process, sends MCP JSON-RPC messages via stdin, validates responses on stdout. Test: initialize → list tools (expect 5) → list resources (expect 5) → call `unfade_context` tool → call `unfade_query` tool → verify `_meta` envelope present. Test degradation: with no `.unfade/` directory, verify tools return `{ status: 'not_initialized' }` instead of crashing."
+
+**Strict Contracts:**
+- `unfade query` with `--json` writes to stdout — without `--json` writes to stderr (stdout sacred)
+- HTTP fallback: if server unreachable, use direct file read — never show "server not running" error to user
+- Integration test spawns real `unfade mcp` process — no mocking of MCP transport
+
+---
+
+### 6.6 Tests (T-103 → T-147)
+
+| Test | What It Validates | File | Sprint |
+|---|---|---|---|
+| **T-103** | MCP Zod schemas: QueryInputSchema validates correct input | `test/schemas/mcp.test.ts` | 2A |
+| **T-104** | MCP Zod schemas: QueryInputSchema rejects invalid input | `test/schemas/mcp.test.ts` | 2A |
+| **T-105** | Query engine: keyword search returns relevant events | `test/tools/unfade-query.test.ts` | 2A |
+| **T-106** | Query engine: date range filter works correctly | `test/tools/unfade-query.test.ts` | 2A |
+| **T-107** | Query engine: empty query returns recent events | `test/tools/unfade-query.test.ts` | 2A |
+| **T-108** | Query engine: limit parameter caps results | `test/tools/unfade-query.test.ts` | 2A |
+| **T-109** | Context reader: `last_2h` scope filters by timestamp | `test/tools/unfade-context.test.ts` | 2A |
+| **T-110** | Context reader: `today` scope returns all today's events | `test/tools/unfade-context.test.ts` | 2A |
+| **T-111** | Decisions reader: domain filter returns matching decisions | `test/tools/unfade-decisions.test.ts` | 2A |
+| **T-112** | Profile reader: returns reasoning model from file | `test/tools/unfade-profile.test.ts` | 2A |
+| **T-113** | Profile reader: missing file returns empty profile with `degraded: true` | `test/tools/unfade-profile.test.ts` | 2A |
+| **T-114** | HTTP server: starts on configured port | `test/server/http.test.ts` | 2B |
+| **T-115** | HTTP server: health check returns 200 | `test/server/http.test.ts` | 2B |
+| **T-116** | HTTP route: `/unfade/context` returns structured events | `test/server/routes/context.test.ts` | 2B |
+| **T-117** | HTTP route: `/unfade/query` returns search results | `test/server/routes/query.test.ts` | 2B |
+| **T-118** | HTTP route: `/unfade/profile` returns reasoning profile | `test/server/routes/profile.test.ts` | 2B |
+| **T-119** | HTTP route: `/unfade/decisions` returns decision list | `test/server/routes/decisions.test.ts` | 2B |
+| **T-120** | HTTP route: `/unfade/distill/latest` returns latest distill | `test/server/routes/distill.test.ts` | 2B |
+| **T-121** | HTTP route: `POST /unfade/distill` triggers distillation | `test/server/routes/distill.test.ts` | 2B |
+| **T-122** | HTTP route: all JSON responses include `_meta` envelope | `test/server/routes/context.test.ts` | 2B |
+| **T-123** | Context shaper: high exploration profile gets more alternatives | `test/services/personalization/context-shaper.test.ts` | 2B |
+| **T-124** | Context shaper: domain expert gets deeper context in specialty | `test/services/personalization/context-shaper.test.ts` | 2B |
+| **T-125** | Context shaper: handles missing profile gracefully (no shaping) | `test/services/personalization/context-shaper.test.ts` | 2B |
+| **T-126** | server.json: written atomically on server startup | `test/server/http.test.ts` | 2B |
+| **T-127** | MCP server: initializes and accepts connection on stdio | `test/services/mcp/server.test.ts` | 2C |
+| **T-128** | MCP server: lists all 5 resources | `test/services/mcp/server.test.ts` | 2C |
+| **T-129** | MCP server: lists all 5 tools | `test/services/mcp/server.test.ts` | 2C |
+| **T-130** | MCP resource: `unfade://context/recent` returns recent events | `test/services/mcp/resources.test.ts` | 2C |
+| **T-131** | MCP resource: `unfade://profile` returns reasoning profile | `test/services/mcp/resources.test.ts` | 2C |
+| **T-132** | MCP resource: `unfade://decisions/recent` returns structured decisions | `test/services/mcp/resources.test.ts` | 2C |
+| **T-133** | MCP resource: `unfade://distill/latest` returns latest distill | `test/services/mcp/resources.test.ts` | 2C |
+| **T-134** | MCP resource: `unfade://context/today` returns today's full context | `test/services/mcp/resources.test.ts` | 2C |
+| **T-135** | MCP tool: `unfade_query` returns matching events for keyword | `test/services/mcp/tools.test.ts` | 2C |
+| **T-136** | MCP tool: `unfade_context` returns events for given scope | `test/services/mcp/tools.test.ts` | 2C |
+| **T-137** | MCP tool: `unfade_profile` returns reasoning model | `test/services/mcp/tools.test.ts` | 2C |
+| **T-138** | MCP tool: `unfade_decisions` returns structured decision list | `test/services/mcp/tools.test.ts` | 2C |
+| **T-139** | MCP tool: `unfade_distill` triggers manual distillation | `test/services/mcp/tools.test.ts` | 2C |
+| **T-140** | MCP tool: all responses include `_meta` envelope | `test/services/mcp/tools.test.ts` | 2C |
+| **T-141** | MCP prompt: `unfade_code_review` includes reasoning context | `test/services/mcp/prompts.test.ts` | 2C |
+| **T-142** | MCP prompt: `unfade_architecture` includes past decisions | `test/services/mcp/prompts.test.ts` | 2C |
+| **T-143** | MCP prompt: `unfade_debug` includes past dead ends | `test/services/mcp/prompts.test.ts` | 2C |
+| **T-144** | `unfade mcp` hidden command: starts MCP stdio server and responds to initialize | `test/commands/mcp.test.ts` | 2C |
+| **T-145** | `unfade mcp` not listed in `unfade --help` output | `test/commands/mcp.test.ts` | 2C |
+| **T-146** | Web UI: `GET /` returns dashboard HTML page with status and distill summary | `test/server/pages/dashboard.test.ts` | 2D |
+| **T-147** | Web UI: `GET /distill` returns distill viewer with `hx-post` re-generate button | `test/server/pages/distill.test.ts` | 2D |
+| **T-148** | Web UI: `GET /profile` returns profile visualization HTML page | `test/server/pages/profile.test.ts` | 2D |
+| **T-149** | Web UI: `GET /settings` returns settings page with "Connect AI Tools" MCP snippets | `test/server/pages/settings.test.ts` | 2D |
+| **T-150** | Web UI: layout includes htmx script tag and dark theme CSS | `test/server/pages/layout.test.ts` | 2D |
+| **T-151** | `unfade query`: returns formatted results from HTTP API | `test/commands/query.test.ts` | 2E |
+| **T-152** | `unfade query --json`: outputs JSON to stdout | `test/commands/query.test.ts` | 2E |
+| **T-153** | `unfade query`: falls back to direct file read when server unavailable | `test/commands/query.test.ts` | 2E |
+| **T-154** | Integration: Claude Code discovers Unfade MCP tools | `test/integration/mcp.test.ts` | 2E |
+| **T-155** | Integration: MCP degradation returns graceful response when not initialized | `test/integration/mcp.test.ts` | 2E |
 
 ---
 
@@ -461,7 +575,7 @@ Search reasoning history from the terminal and open the web UI in a browser.
 | **MCP resource availability** | N/A | All 5 resources return data | Curl or MCP client test |
 | **Context shaping accuracy** | N/A | Shaped context matches profile expectations (qualitative) | Compare raw vs shaped context for high-exploration profile |
 | **HTTP endpoint coverage** | N/A | All 7 JSON API endpoints return valid JSON, all 4 web UI pages return valid HTML | Automated HTTP test suite |
-| **Test count** | 88 (Phase 1) | 130+ tests, all passing | `pnpm test` |
+| **Test count** | 102+ (Phase 1) | 155+ tests, all passing | `pnpm test` |
 
 ---
 

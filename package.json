@@ -25,14 +25,24 @@
     ]
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.69",
+    "@ai-sdk/openai": "^3.0.53",
     "@commander-js/extra-typings": "^14.0.0",
+    "ai": "^6.0.162",
     "commander": "^14.0.0",
+    "ink": "^6.8.0",
+    "node-notifier": "^10.0.1",
+    "ollama-ai-provider": "^1.2.0",
     "picocolors": "^1.1.0",
+    "react": "^19.2.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
     "@types/node": "^25.6.0",
+    "@types/node-notifier": "^8.0.5",
+    "@types/react": "^19.2.14",
+    "ink-testing-library": "^4.0.0",
     "tsdown": "^0.21.8",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

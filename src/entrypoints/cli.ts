@@ -3,6 +3,10 @@
 // Bare `unfade` (no args) prints help. TUI dashboard deferred to Phase 1.
 
 import { Command } from "@commander-js/extra-typings";
+import { daemonStatusCommand, daemonStopCommand } from "../commands/daemon.js";
+import { distillCommand } from "../commands/distill.js";
+import { initCommand } from "../commands/init.js";
+import { openCommand } from "../commands/open.js";
 import { logger } from "../utils/logger.js";
 
 const program = new Command()
@@ -27,15 +31,15 @@ const program = new Command()
 program
   .command("init")
   .description("Initialize .unfade/, download capture engine, configure LLM, install shell hooks")
-  .action(() => {
-    logger.info("unfade init: not implemented yet");
+  .action(async () => {
+    await initCommand();
   });
 
 program
   .command("open")
   .description("Open web UI in browser (localhost:7654)")
-  .action(() => {
-    logger.info("unfade open: not implemented yet");
+  .action(async () => {
+    await openCommand();
   });
 
 program
@@ -58,8 +62,11 @@ program
 program
   .command("distill")
   .description("Trigger manual distillation")
-  .action(() => {
-    logger.info("unfade distill: not implemented yet");
+  .option("--date <date>", "Distill a specific date (YYYY-MM-DD)")
+  .option("--backfill <days>", "Backfill N past days")
+  .option("--provider <name>", "Override LLM provider (ollama|openai|anthropic)")
+  .action(async (opts) => {
+    await distillCommand(opts);
   });
 
 const daemonCmd = program.command("daemon").description("Manage the capture engine");
@@ -67,20 +74,25 @@ const daemonCmd = program.command("daemon").description("Manage the capture engi
 daemonCmd
   .command("stop")
   .description("Gracefully stop the capture engine")
-  .action(() => {
-    logger.info("unfade daemon stop: not implemented yet");
+  .action(async () => {
+    await daemonStopCommand();
   });
 
 daemonCmd
   .command("status")
   .description("Show capture engine status")
-  .action(() => {
-    logger.info("unfade daemon status: not implemented yet");
+  .action(async () => {
+    await daemonStatusCommand();
   });
 
-// Bare `unfade` with no args → show help
-program.action(() => {
-  program.help();
+// Bare `unfade` with no args → TUI dashboard (if interactive), otherwise help
+program.action(async () => {
+  if (process.stderr.isTTY) {
+    const { launchDashboard } = await import("../tui/dashboard.js");
+    await launchDashboard();
+  } else {
+    program.help();
+  }
 });
 
 program.parse();
