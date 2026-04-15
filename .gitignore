@@ -1,0 +1,73 @@
+# ============================================================================
+# Unfade CLI — .gitignore
+# Hybrid project: TypeScript (CLI/TUI/MCP) + Go (daemon)
+# ============================================================================
+
+# --- Node.js / TypeScript ---
+node_modules/
+dist/
+*.tgz
+.npmrc.local
+
+# --- pnpm ---
+pnpm-lock.yaml!
+.pnpm-store/
+
+# --- Build artifacts ---
+*.js.map
+*.d.ts
+*.d.ts.map
+tsconfig.tsbuildinfo
+
+# --- Go daemon binaries ---
+daemon/unfaded
+daemon/unfade-send
+daemon/unfaded.exe
+daemon/unfade-send.exe
+
+# --- Go build cache ---
+daemon/vendor/
+
+# --- Unfade runtime data ---
+# Created by `unfade init` — user-specific, never committed
+.unfade/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# --- Testing ---
+coverage/
+.vitest-results/
+__snapshots__/
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+credentials.json
+*.pem
+*.key
+
+# --- Logs ---
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+
+# --- Temporary files ---
+tmp/
+temp/
+.cache/

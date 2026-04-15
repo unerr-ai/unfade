@@ -27,6 +27,7 @@
   - [8. Workflow Validation Matrix](#8-workflow-validation-matrix)
   - [9. DX Principles Checklist](#9-dx-principles-checklist)
   - [10. Extensibility Validation](#10-extensibility-validation)
+- [11. Cross-Phase Reference: File Ownership Map](#11-cross-phase-reference-file-ownership-map)
 
 ---
 
@@ -100,7 +101,7 @@ Extracted from unerr-cli (18.6K LOC TypeScript, pnpm monorepo, Commander + Ink).
 
 | Pattern | Implementation | Relevance to Unfade |
 |---|---|---|
-| **Commander entry** | `src/entrypoints/cli.ts` — single entry, ESM, tsup-bundled | Very High — adopt directly |
+| **Commander entry** | `src/entrypoints/cli.ts` — single entry, ESM, tsdown-bundled | Very High — adopt directly |
 | **9-state detector** | `src/state-detector.ts` — checks credentials, git repo, PID lock, graph freshness → determines startup flow | Very High — Unfade needs state-aware startup |
 | **Smart Serve Model** | `unerr` with no args intelligently detects context and executes appropriate action | High — consider for `unfade` bare command |
 | **Three-Act startup** | Instant Competence (0-2s) → Revelation (2-5s) → Invitation (5s+) | High — proven UX staging |
@@ -129,7 +130,7 @@ Extracted from unerr-cli (18.6K LOC TypeScript, pnpm monorepo, Commander + Ink).
 |---|---|---|
 | **Workspace convention** | `.unerr/` with subdirs: `config.json`, `state/`, `ledger/`, `drift/`, `graph/`, `cache/`, `logs/` | Very High — `.unfade/` follows this pattern |
 | **Zod schemas** | Every API endpoint validated with Zod. Single source of truth | Very High — adopt for type safety |
-| **Dynamic imports** | Heavy modules (cozo-node, tree-sitter, isomorphic-git) lazy-loaded | High — LLM SDKs should lazy-load |
+| **Dynamic imports** | Heavy modules (cozo-node, tree-sitter) lazy-loaded | High — Vercel AI SDK provider adapters should lazy-load |
 | **Dual config levels** | `~/.unerr/settings.json` (user) + `.unerr/settings.json` (project) | High — same pattern for Unfade |
 
 ### 2.5 Developer Experience
@@ -160,13 +161,13 @@ Patterns observed in **both** Claude Code and unerr-cli that represent proven co
 
 | Pattern | Claude Code | unerr-cli | Unfade Adoption |
 |---|---|---|---|
-| **TypeScript + ESM** | Bun-based, ESM | Node 20+, ESM, tsup | Adopt: TypeScript + ESM + tsup |
+| **TypeScript + ESM** | Bun-based, ESM | Node 20+, ESM, tsup | Adopt: TypeScript + ESM + tsdown (actively maintained successor to tsup) |
 | **Ink for terminal UI** | Full custom fork | Stock Ink 6.x | Adopt: Stock Ink initially |
 | **Commander for CLI routing** | @commander-js/extra-typings | commander ^12 | Adopt: commander with extra-typings |
 | **Zod for validation** | zod ^3.24 | zod ^3.24 | Adopt: Zod for all schemas |
 | **MCP SDK** | @modelcontextprotocol/sdk ^1.12 | @modelcontextprotocol/sdk ^1.0 | Adopt: latest MCP SDK |
 | **Biome for linting** | biome ^1.9 | biome ^1.9 | Adopt: Biome (no ESLint) |
-| **chokidar for watchers** | chokidar ^4.0 | chokidar ^4.0 | Adopt: chokidar for capture daemon |
+| **chokidar for watchers** | chokidar ^4.0 | chokidar ^4.0 | N/A — Go daemon uses fsnotify instead; no Node.js file watching needed |
 | **React 19 + Ink** | react ^19, custom reconciler | react ^19, ink ^6 | Adopt: react ^19 + ink ^6 |
 | **Layered config** | ~/.claude/ + .claude/ | ~/.unerr/ + .unerr/ | Adopt: ~/.unfade/ + .unfade/ |
 | **Service isolation** | src/services/ with subdirs | src/intelligence/, src/tracking/, etc. | Adopt: domain-organized services |
@@ -434,10 +435,39 @@ Validated against the "it just works" standard:
 
 ---
 
+## 11. Cross-Phase Reference: File Ownership Map
+
+Every file in `.unfade/` has exactly ONE writer. This table is the concurrency Bible — if two components ever write to the same file, there is a bug.
+
+| File | Writer | Readers | Write Semantics |
+|---|---|---|---|
+| `config.json` | TypeScript (init, web UI settings) | Go daemon (ConfigWatcher) | Atomic: tmp + rename |
+| `events/YYYY-MM-DD.jsonl` | Go daemon (EventWriter) | TypeScript (distill, query) | O_APPEND, <4KB per write |
+| `distills/YYYY-MM-DD.md` | TypeScript (distill pipeline) | TypeScript (server, query, cards) | Atomic: tmp + rename |
+| `distills/.distill.lock` | TypeScript (distill pipeline) | TypeScript (distill pipeline) | PID-based file lock |
+| `graph/decisions.jsonl` | TypeScript (distill pipeline) | TypeScript (server, amplifier) | O_APPEND |
+| `graph/decisions_index.json` | TypeScript (amplifier) | TypeScript (amplifier, query) | Atomic: tmp + rename |
+| `graph/domains.json` | TypeScript (distill pipeline) | TypeScript (server, query) | Atomic: tmp + rename |
+| `profile/reasoning_model.json` | TypeScript (distill pipeline, personalization engine) | TypeScript (server, query, cards), Go daemon (none) | Atomic: tmp + rename |
+| `amplification/connections.jsonl` | TypeScript (amplifier) | TypeScript (server, query) | O_APPEND |
+| `amplification/feedback.jsonl` | TypeScript (HTTP /feedback) | TypeScript (amplifier) | O_APPEND |
+| `cards/YYYY-MM-DD.png` | TypeScript (card generator) | TypeScript (server, web UI) | Overwrite (idempotent) |
+| `state/daemon.pid` | Go daemon | TypeScript (status check), Go daemon (startup) | flock() on file |
+| `state/daemon.sock` | Go daemon (listener) | Shell hook (via unfade-send) | Unix socket |
+| `state/health.json` | Go daemon | TypeScript (status, TUI) | Atomic: tmp + rename |
+| `state/server.json` | TypeScript (server startup) | TypeScript (CLI commands) | Atomic: tmp + rename |
+| `state/init_progress.json` | TypeScript (init command) | TypeScript (init command) | Atomic: tmp + rename |
+| `~/.unfade/state/repos.json` | TypeScript (init, deinit) | Go daemon (startup, ConfigWatcher) | Atomic: tmp + rename |
+| `~/.unfade/state/daemon.pid` | Go daemon | TypeScript, Go daemon | flock() on file |
+| `~/.unfade/state/daemon.sock` | Go daemon | unfade-send | Unix socket |
+
+---
+
 > **This document is the shared foundation. See phase-specific implementation plans:**
-> - [Phase 0: Scaffolding & Boilerplate](./PHASE_0_SCAFFOLDING.md)
-> - [Phase 1: The Core Loop](./PHASE_1_CORE_LOOP.md)
-> - [Phase 2: The Context Engine + MCP Server](./PHASE_2_CONTEXT_ENGINE.md)
-> - [Phase 3: The Thinking Graph + Personalization](./PHASE_3_THINKING_GRAPH.md)
-> - [Phase 4: The Ecosystem](./PHASE_4_ECOSYSTEM.md)
-> - [Phase 5: The Reasoning Agent](./PHASE_5_REASONING_AGENT.md)
+> - [Phase 0: Scaffolding](./PHASE_0_SCAFFOLDING.md)
+> - [Phase 1: Capture & Distill](./PHASE_1_CAPTURE_AND_DISTILL.md)
+> - [Phase 2: Hooks API & MCP Server](./PHASE_2_HOOKS_API_AND_MCP.md)
+> - [Phase 3: Cards & Terminal Capture](./PHASE_3_CARDS_AND_TERMINAL.md)
+> - [Phase 4: Personalization & Amplification](./PHASE_4_PERSONALIZATION_AND_AMPLIFICATION.md)
+> - [Phase 5: Ecosystem Launch](./PHASE_5_ECOSYSTEM_LAUNCH.md)
+> - [Phase 6: Post-Launch & Enterprise Prep](./PHASE_6_POST_LAUNCH.md)

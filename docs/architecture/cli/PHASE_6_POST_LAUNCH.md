@@ -50,7 +50,7 @@ Named pipes, PowerShell hooks, Task Scheduler auto-start.
 
 Add OpenAI and Anthropic as LLM provider options for higher-quality distillation.
 
-**Agent directive:** "Implement `src/services/llm/openai.ts` and `src/services/llm/anthropic.ts` — both implement the LLMProvider interface. Use the official SDKs (`openai`, `@anthropic-ai/sdk`). API keys read from `config.json`. The `unfade distill --provider openai` flag overrides the configured provider for a single run. Add provider selection to web UI `/settings` page. Cloud providers require explicit opt-in — never auto-select a cloud provider."
+**Agent directive:** "Add OpenAI and Anthropic provider support to `src/services/distill/providers/ai.ts` — register `@ai-sdk/openai` and `@ai-sdk/anthropic` adapters alongside the existing `ai-sdk-ollama` default. All providers use Vercel AI SDK's `generateObject()` for structured output. API keys read from `config.json`. The `unfade distill --provider openai` flag overrides the configured provider for a single run. Add provider selection to web UI `/settings` page. Cloud providers require explicit opt-in — never auto-select a cloud provider."
 
 | ID | Status |
 |---|---|

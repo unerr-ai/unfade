@@ -4,9 +4,9 @@
 >
 > **Prerequisites:** None — this is the starting point.
 >
-> **Status:** AWAITING REVIEW
+> **Status:** COMPLETE (Sprint 0A ✓, Sprint 0B ✓, Sprint 0C ✓ — all 13 tasks done, 13/13 tests passing)
 >
-> **Inspired by:** unerr-cli scaffolding (tsup + Commander + Biome + Vitest), Claude Code's service isolation pattern, Stripe's "one decision per concern" infrastructure philosophy
+> **Inspired by:** unerr-cli scaffolding (tsdown + Commander + Biome + Vitest), Claude Code's service isolation pattern, Stripe's "one decision per concern" infrastructure philosophy
 >
 > **Foundation doc:** [Research & Design](./UNFADE_CLI_RESEARCH_AND_DESIGN.md)
 >
@@ -24,7 +24,7 @@
 - [6. Core Schemas (Single Source of Truth)](#6-core-schemas-single-source-of-truth)
 - [7. Command Hierarchy](#7-command-hierarchy)
 - [8. Design Principles](#8-design-principles)
-- [9. Implementation Plan (Sprint 0)](#9-implementation-plan-sprint-0)
+- [9. Execution Plan — Micro-Sprints](#9-execution-plan--micro-sprints)
 - [10. Dependency List](#10-dependency-list)
 - [11. Success Metrics](#11-success-metrics)
 - [12. Risk Assessment](#12-risk-assessment)
@@ -57,7 +57,7 @@ An empty repository with only product strategy documents (`docs/product/`) and a
 
 | Concern | State |
 |---|---|
-| **Build** | `pnpm build` → `dist/cli.js` (single ESM bundle via tsup) |
+| **Build** | `pnpm build` → `dist/cli.js` (single ESM bundle via tsdown) |
 | **Lint** | `pnpm lint` → Biome checks pass (formatting + lint rules) |
 | **Test** | `pnpm test` → Vitest runs 11+ tests, all passing |
 | **Run** | `./dist/cli.js --help` → Unfade banner + command list |
@@ -73,7 +73,7 @@ An empty repository with only product strategy documents (`docs/product/`) and a
 | Decision | Claude Code | unerr-cli | Unfade Choice | Rationale |
 |---|---|---|---|---|
 | **Language** | TypeScript (Bun) | TypeScript (Node 20, ESM) | TypeScript (Node 20+, ESM, strict) | Widest ecosystem, `npx` support, both references validate TS |
-| **Bundler** | Custom Bun scripts | tsup (single entry → ESM) | tsup | Proven in unerr, minimal config, fast |
+| **Bundler** | Custom Bun scripts | tsup (single entry → ESM) | tsdown | Actively maintained successor to tsup, Rolldown-powered, compatible config |
 | **CLI framework** | @commander-js/extra-typings | commander ^12 | @commander-js/extra-typings | Type-safe command definitions, used by both |
 | **Linting** | Biome ^1.9 | Biome ^1.9 | Biome ^1.9 | Fast, replaces ESLint + Prettier, both references agree |
 | **Validation** | Zod ^3.24 | Zod ^3.24 | Zod ^3.24 | Type-safe schemas, both references agree |
@@ -93,7 +93,7 @@ unfade-cli/
 ├── tsconfig.json
 ├── biome.json
 ├── vitest.config.ts
-├── tsup.config.ts
+├── tsdown.config.ts
 ├── CLAUDE.md
 │
 ├── src/
@@ -134,9 +134,7 @@ unfade-cli/
 │   │   │   ├── amplifier.ts          # Phase 2
 │   │   │   └── providers/
 │   │   │       ├── types.ts
-│   │   │       ├── ollama.ts
-│   │   │       ├── openai.ts
-│   │   │       └── anthropic.ts
+│   │   │       └── ai.ts              # Vercel AI SDK integration (generateObject + provider adapters)
 │   │   │
 │   │   ├── personalization/          # Phase 1
 │   │   │   ├── profile-builder.ts
@@ -245,18 +243,23 @@ unfade-cli/
 | **Terminal UI** | Ink 6.x + React 19 | Stock Ink (no custom fork). TUI dashboard (`unfade` with no args: status, today's distill, quick actions) |
 | **Web UI** | htmx (~14KB) | Server-rendered HTML pages on localhost:7654 via `unfade open`. Lightweight, no SPA framework needed |
 | **Daemon** | Go binary (`unfaded`) | Separate Go binary for passive capture. Uses `fsnotify` for file watching. Downloaded during `unfade init` |
-| **Bundler** | tsup | Single entry → single ESM output. Used by unerr-cli. Fast, minimal config |
+| **Bundler** | tsdown | Rolldown-powered ESM bundling. Actively maintained successor to tsup. Compatible config format |
 | **Linting** | Biome | Both references. Replaces ESLint + Prettier. Single tool |
 | **Validation** | Zod 3.x | Both references. Type-safe schema contracts for all data boundaries |
 | **Testing** | Vitest | ESM-native. Fast. Used by unerr-cli |
 | **File watching** | fsnotify (Go daemon) | Handled by the Go daemon binary, not the TypeScript CLI |
 | **MCP** | @modelcontextprotocol/sdk (latest) | Universal agent protocol. Both references |
-| **Git operations** | isomorphic-git | Pure JS. No native deps. Used for `unfade init` fingerprinting (not the daemon — the Go daemon handles git event capture) |
+| **Git operations** | simple-git | Wraps system `git` binary — faster, lower memory than pure JS. Used for `unfade init` fingerprinting (not the daemon — the Go daemon handles git event capture) |
 | **Local storage** | Markdown + JSONL + JSON | Plain text, inspectable, greppable. Core to trust model. No database for v1 |
-| **LLM integration** | Ollama (default) + OpenAI-compatible API | Local-first. Provider-agnostic interface |
+| **LLM integration** | Vercel AI SDK (`ai`) + `ai-sdk-ollama` (default) + `@ai-sdk/openai` + `@ai-sdk/anthropic` | Local-first via Ollama. `generateObject()` for structured output via Zod. Single SDK abstracts all providers |
 | **IPC (daemon)** | Filesystem-as-IPC (`.unfade/` directory) | Go daemon writes to `.unfade/events/`, TypeScript reads. No sockets needed for primary data flow. Unix domain socket retained for daemon lifecycle commands (stop/status) |
+| **Interactive prompts** | @clack/prompts | Beautiful prompts for `unfade init` wizard flow. Lightweight alternative to inquirer |
+| **Subprocess management** | execa | Clean subprocess spawning (daemon lifecycle, system git calls). ESM-native, better error handling than child_process |
+| **HTTP server** | Hono + @hono/node-server | Lightweight web framework for localhost web UI. Use `overrideGlobalObjects: false` in `getRequestListener()` to avoid MCP SDK conflict |
+| **Card rendering** | satori + resvg-js | Generate Unfade Card images from JSX → SVG → PNG. No browser dependency |
 | **Notifications** | node-notifier | Cross-platform system notifications |
 | **Process management** | PID file + proper-lockfile | Single-instance daemon guarantee |
+| **Testing (fs)** | memfs | Virtual filesystem for unit tests — fast, isolated, no disk I/O |
 
 ---
 
@@ -421,21 +424,18 @@ export interface CaptureSource {
 }
 ```
 
-### 6.6 LLMProvider — provider-agnostic LLM interface
+### 6.6 LLM Integration — Vercel AI SDK
 
 ```typescript
-// src/services/distill/providers/types.ts
-export interface LLMProvider {
-  name: string;
-  isAvailable(): Promise<boolean>;
+// src/services/distill/providers/ai.ts
+// Uses Vercel AI SDK — no custom LLMProvider interface needed
+import { generateObject } from 'ai';
+import { ollama } from 'ai-sdk-ollama';       // Default: local, offline
+import { openai } from '@ai-sdk/openai';       // Opt-in: cloud
+import { anthropic } from '@ai-sdk/anthropic'; // Opt-in: cloud
 
-  /** Generate a completion from a prompt */
-  complete(prompt: string, options?: {
-    maxTokens?: number;
-    temperature?: number;
-    systemPrompt?: string;
-  }): Promise<string>;
-}
+// Structured output via generateObject() + Zod schemas
+// Provider selection from config.json, switchable per run with --provider flag
 ```
 
 ---
@@ -476,7 +476,7 @@ unfade daemon stop       # Gracefully stop the Go daemon
 
 ## 8. Design Principles
 
-1. **Decide once per concern.** One linter (Biome), one test runner (Vitest), one bundler (tsup), one schema system (Zod). No committee debates per sprint.
+1. **Decide once per concern.** One linter (Biome), one test runner (Vitest), one bundler (tsdown), one schema system (Zod). No committee debates per sprint.
 
 2. **Schemas are the source of truth.** `src/schemas/` defines every data contract. Runtime validation, TypeScript types, MCP tool schemas, and documentation all derive from Zod schemas.
 
@@ -484,7 +484,7 @@ unfade daemon stop       # Gracefully stop the Go daemon
 
 4. **Paths are resolved, not hardcoded.** `src/utils/paths.ts` handles `~/.unfade/` (user) and `.unfade/` (project) resolution. Every service uses path utilities instead of string concatenation.
 
-5. **Build produces one file.** `tsup` bundles `src/entrypoints/cli.ts` → `dist/cli.js`. Single ESM output. `npx unfade` works out of the box.
+5. **Build produces one file.** `tsdown` bundles `src/entrypoints/cli.ts` → `dist/cli.js`. Single ESM output. `npx unfade` works out of the box.
 
 6. **Tests mirror source.** `test/schemas/event.test.ts` tests `src/schemas/event.ts`. No creative directory structures.
 
@@ -492,234 +492,131 @@ unfade daemon stop       # Gracefully stop the Go daemon
 
 ---
 
-## 8b. Execution Guide (Day: Pre-Day 1)
+## 9. Execution Plan — Micro-Sprints
 
-> **Sourced from:** Master Execution Blueprint — consolidated tasks with acid tests, strict contracts, and agent directives for AI-agent-driven execution.
-
-### Acid Test
-
-```
-npm run build          → produces dist/cli.js (empty commander app)
-npm run lint           → biome passes
-npm run test           → vitest runs (0 tests, 0 failures)
-cd daemon && go build ./cmd/unfaded   → produces unfaded binary
-cd daemon && go build ./cmd/unfade-send → produces unfade-send binary
-```
-
-### Repository Structure (Canonical)
-
-```
-unfade-cli/
-├── src/                              # TypeScript CLI + server (unfade)
-│   ├── cli.ts                        # Commander entry point
-│   ├── commands/                     # CLI command handlers
-│   ├── server/                       # Hono HTTP + MCP server
-│   │   ├── routes/                   # JSON API endpoints
-│   │   └── pages/                    # htmx server-rendered HTML
-│   ├── services/                     # Business logic (fingerprint, distill, cards, etc.)
-│   ├── schemas/                      # Zod schemas (shared source of truth)
-│   ├── mcp/                          # MCP resources, tools, prompts
-│   ├── tui/                          # Ink TUI components
-│   └── utils/                        # Helpers (git, file I/O)
-├── daemon/                           # Go daemon (unfaded + unfade-send)
-│   ├── cmd/
-│   │   ├── unfaded/                  # Main daemon entry point
-│   │   │   └── main.go
-│   │   └── unfade-send/              # Tiny shell hook companion
-│   │       └── main.go
-│   ├── internal/
-│   │   ├── capture/                  # CaptureSource implementations
-│   │   ├── platform/                 # PlatformManager (launchd, systemd)
-│   │   ├── health/                   # Health reporter
-│   │   └── state/                    # PID, socket, repos.json management
-│   └── go.mod
-├── package.json                      # CLI package + scripts + daemon optional deps
-├── tsconfig.json
-├── tsup.config.ts
-├── biome.json
-├── vitest.config.ts
-└── docs/
-```
-
-### Consolidated Tasks (4) with Agent Directives
-
-#### Task 0.1: TypeScript Project Scaffold
-
-Set up the Node.js ESM project with all dependencies, build tooling, and an empty Commander CLI entry point.
-
-**Agent directive:** "Initialize a TypeScript ESM project in the repo root. Use Commander with extra-typings as the CLI framework. Configure tsup for ESM bundling, biome for linting+formatting, vitest for testing. The entry point is `src/cli.ts` — register a single placeholder `init` command that prints 'not implemented'. Add `bin.unfade` to package.json pointing to `dist/cli.js`. Ensure `npm run build && npm run lint` passes."
-
-**Dependencies to install:**
-- Runtime: `commander`, `@commander-js/extra-typings`, `zod`, `ink`, `react`, `hono`, `isomorphic-git`, `@modelcontextprotocol/sdk`, `satori`, `@resvg/resvg-js`, `ollama-ai-provider`
-- Dev: `typescript`, `tsup`, `@biomejs/biome`, `vitest`, `@types/react`, `@types/node`
-
-**Key config decisions:**
-- `package.json`: `"type": "module"`, `"bin": { "unfade": "./dist/cli.js" }`
-- `tsconfig.json`: `"strict": true`, `"target": "ES2022"`, `"module": "Node16"`
-- `tsup.config.ts`: `entry: ["src/cli.ts"]`, `format: ["esm"]`, `shims: true`
-- `biome.json`: default rules, `"indentStyle": "space"`, `"indentWidth": 2`
-
-#### Task 0.2: Go Daemon Scaffold
-
-Set up the Go module with the daemon and unfade-send entry points. Both compile to zero-logic binaries.
-
-**Agent directive:** "Create a Go module at `daemon/` with `go mod init github.com/anthropics/unfade-cli/daemon`. Create two commands: `cmd/unfaded/main.go` (prints 'unfaded: not implemented') and `cmd/unfade-send/main.go` (prints 'unfade-send: not implemented'). Create empty package directories: `internal/capture/`, `internal/platform/`, `internal/health/`, `internal/state/`. Add fsnotify dependency: `go get github.com/fsnotify/fsnotify`. Ensure both `go build ./cmd/unfaded` and `go build ./cmd/unfade-send` produce binaries."
-
-#### Task 0.3: Shared Schema Definitions
-
-Define all Zod schemas (TypeScript) and corresponding Go structs. These are the contracts between the two processes. Define them ONCE, here, before any business logic.
-
-**Agent directive:** "Create Zod schemas in `src/schemas/` and matching Go structs in `daemon/internal/capture/`. These schemas are the canonical data contracts — every reader and writer in the system validates against them. Do NOT add any business logic — only type definitions and validation."
-
-**Schemas to define (TypeScript — Zod):**
-
-File `src/schemas/event.ts`:
-```
-CaptureEventSchema {
-  version: z.number().int().default(1)
-  timestamp: z.string().datetime()
-  source: z.enum(["git", "ai_session", "terminal", "manual"])
-  type: z.string()
-  content: z.record(z.unknown())
-  git_context: z.object({
-    repo: z.string(),
-    branch: z.string(),
-    sha: z.string()
-  }).optional()
-}
-```
-
-File `src/schemas/decision.ts`:
-```
-DecisionSchema {
-  date: z.string()
-  decision: z.string()
-  rationale: z.string()
-  alternatives_evaluated: z.number().int()
-  domain: z.string()
-  dead_end: z.boolean()
-  ai_modified: z.boolean()
-  sources: z.array(z.string())
-}
-```
-
-File `src/schemas/profile.ts`:
-```
-ReasoningModelSchema {
-  version: z.number().int().default(1)
-  updated_at: z.string().datetime()
-  decision_style: z.object({
-    avg_alternatives_evaluated: z.number(),
-    convergence_speed: z.enum(["quick", "deliberate", "exhaustive"]),
-    prototype_vs_analyze: z.number()
-  })
-  trade_off_weights: z.record(z.number())
-  domain_depth: z.record(z.object({
-    decision_count: z.number().int(),
-    depth: z.enum(["shallow", "moderate", "deep"])
-  }))
-  exploration_habits: z.object({
-    avg_dead_ends_per_major_decision: z.number(),
-    dead_end_tolerance_minutes: z.number(),
-    ai_acceptance_rate: z.number(),
-    ai_modification_rate: z.number()
-  })
-  blind_spots: z.array(z.string())
-  failure_patterns: z.array(z.string())
-}
-```
-
-File `src/schemas/config.ts`:
-```
-ConfigSchema {
-  version: z.number().int().default(1)
-  llm: z.object({
-    provider: z.enum(["ollama", "openai", "anthropic"]).default("ollama"),
-    model: z.string().default("llama3.2"),
-    apiKey: z.string().nullable().default(null)
-  })
-  capture: z.object({
-    git: z.boolean().default(true),
-    ai_sessions: z.boolean().default(true),
-    terminal: z.boolean().default(true),
-    ai_session_paths: z.array(z.string()),
-    ignorePatterns: z.array(z.string()).default(["*.env", "*.secret"])
-  })
-  distillation: z.object({
-    schedule: z.string().default("18:00"),
-    timezone: z.string().default("America/New_York")
-  })
-  server: z.object({
-    port: z.number().int().default(7654),
-    host: z.string().default("127.0.0.1")
-  })
-  fingerprint: z.object({
-    scanMonths: z.number().int().default(12),
-    maxCommits: z.number().int().default(5000)
-  })
-}
-```
-
-**Go structs to define (daemon/internal/capture/event.go):**
-
-```
-CaptureEvent struct:
-  Version    int
-  Timestamp  string
-  Source     string    // "git" | "ai_session" | "terminal" | "manual"
-  Type       string
-  Content    map[string]interface{}
-  GitContext *GitContext   // nullable
-
-CaptureSource interface:
-  Name() string
-  Initialize(config CaptureConfig) error
-  Start(ctx context.Context) error
-  Stop() error
-  Events() <-chan CaptureEvent
-```
-
-#### Task 0.4: CI & Dev Scripts
-
-Set up npm scripts, Makefile for Go, and a basic GitHub Actions workflow.
-
-**Agent directive:** "Add npm scripts: `build`, `dev`, `lint`, `test`, `typecheck`. Add a Makefile in `daemon/` with targets: `build`, `test`, `clean`, `build-send` (for unfade-send). Create `.github/workflows/ci.yml` that runs TypeScript build+lint+test and Go build+test on push. Add `.gitignore` entries for `dist/`, `node_modules/`, `daemon/unfaded`, `daemon/unfade-send`, `.unfade/`."
+> **Goal:** Buildable, lintable, testable project skeleton — TypeScript CLI + Go daemon. 2-3 days, split into 3 micro-sprints of max 5 tasks each. Each sprint is a self-contained unit with its own acid test.
+>
+> **Total:** 13 tasks (UF-001 → UF-011b) | 13 tests (T-001 → T-013)
 
 ---
 
-## 9. Implementation Plan (Sprint 0)
+### 9.1 Sprint 0A — TypeScript Build Pipeline (Day -2)
 
-> **Goal:** Buildable, lintable, testable project skeleton. 2-3 days.
+**Objective:** A TypeScript ESM project that compiles, lints, and runs an empty test suite. No source logic — only tooling configs.
 
-| Task | Description | File | Status |
+**Acid Test:**
+```bash
+pnpm install && pnpm build && pnpm lint && pnpm test
+# All four commands exit 0. dist/cli.js exists. No lint warnings. 0 tests, 0 failures.
+```
+
+| Task | Description | Output Files | Status |
 |---|---|---|---|
-| **UF-001** | Initialize `package.json` with name (`unfade`), version (`0.1.0`), type (`module`), bin (`./dist/cli.js`), scripts (`build`, `test`, `lint`, `dev`), all production and dev dependencies | `package.json` | [ ] |
-| **UF-002** | Configure TypeScript — ESM, strict mode, `moduleResolution: "NodeNext"`, `target: "ES2022"`, `outDir: "dist"`, path aliases if needed | `tsconfig.json` | [ ] |
-| **UF-003** | Configure Biome — lint rules (recommended), formatter (tabs → spaces, 2 width), organize imports, JSON formatting | `biome.json` | [ ] |
-| **UF-004** | Configure Vitest — ESM support, `src/` root, coverage thresholds, test file pattern `test/**/*.test.ts` | `vitest.config.ts` | [ ] |
-| **UF-005** | Configure tsup — single entry (`src/entrypoints/cli.ts`), format ESM, target node20, dts generation, clean output, shebang injection (`#!/usr/bin/env node`) | `tsup.config.ts` or `package.json` scripts | [ ] |
-| **UF-006** | Create Commander entry point — bare skeleton with program name, version, description, `--help` output. Register placeholder commands: core (`init`, `open`, `query`) and power user (`export`, `distill`, `daemon stop`). Smart default: bare `unfade` launches Ink TUI dashboard | `src/entrypoints/cli.ts` | [ ] |
-| **UF-007** | Create logger utility — structured logger that writes exclusively to stderr. Levels: debug, info, warn, error. Supports `--verbose` and `--quiet` flags. Never writes to stdout (MCP compatibility) | `src/utils/logger.ts` | [ ] |
-| **UF-008** | Create path utilities — `getUserConfigDir()` → `~/.unfade/`, `getProjectDataDir()` → `.unfade/`, `getEventsDir()`, `getDistillsDir()`, `getProfileDir()`, `getStateDir()`. Cross-platform (macOS, Linux, Windows) | `src/utils/paths.ts` | [ ] |
-| **UF-009** | Create Zod schemas — `CaptureEventSchema`, `UnfadeConfigSchema`, `ToolResponseSchema`, `ReasoningProfileSchema` (stub), `DailyDistillSchema` (stub), `DecisionSchema` (stub). Each exports both schema and inferred type | `src/schemas/event.ts`, `src/schemas/config.ts`, `src/schemas/profile.ts`, `src/schemas/distill.ts`, `src/schemas/decision.ts` | [ ] |
-| **UF-010** | Create Tool interface types — `UnfadeTool<TInput, TOutput>` generic interface, `ToolResponseSchema` with `_meta` envelope | `src/tools/types.ts` | [ ] |
-| **UF-011** | Write CLAUDE.md with project conventions — stdout sacred rule, stderr logging, schema-first development, response envelope pattern, graceful degradation modes, `.unfade/` workspace convention, test naming, commit message style | `CLAUDE.md` | [ ] |
+| **UF-001** | Initialize `package.json` — name: `unfade`, version: `0.1.0`, type: `module`, bin: `./dist/cli.mjs`, scripts: `build`, `test`, `lint`, `dev`, `typecheck`. Install all production and dev dependencies (see Section 10) | `package.json`, `pnpm-lock.yaml` | `COMPLETE` |
+| **UF-002** | Configure TypeScript — ESM, `strict: true`, `moduleResolution: "NodeNext"`, `module: "Node16"`, `target: "ES2022"`, `outDir: "dist"`, `rootDir: "src"`. Use `.js` extensions in all imports | `tsconfig.json` | `COMPLETE` |
+| **UF-003** | Configure Biome 2.x — recommended lint rules, formatter: spaces, indent width 2, organize imports via assist, JSON formatting enabled | `biome.json` | `COMPLETE` |
+| **UF-004** | Configure Vitest 4.x — ESM support, root: `./`, test file pattern `test/**/*.test.ts`, coverage thresholds (statements: 80%) | `vitest.config.ts` | `COMPLETE` |
+| **UF-005** | Configure tsdown — single entry `src/entrypoints/cli.ts`, format: `esm`, target: `node20`, clean output, shebang injection (`#!/usr/bin/env node`). Create minimal `src/entrypoints/cli.ts` that just imports commander and calls `program.parse()` | `tsdown.config.ts`, `src/entrypoints/cli.ts` (stub) | `COMPLETE` |
 
-### Tests for Sprint 0
+**Agent Directive (Sprint 0A):**
 
-| Test | What It Validates | File |
-|---|---|---|
-| **T-001** | CLI entry point: `--help` flag returns exit code 0 and includes "unfade" in output | `test/entrypoints/cli.test.ts` |
-| **T-002** | Logger: info-level message writes to stderr, not stdout | `test/utils/logger.test.ts` |
-| **T-003** | Logger: debug-level message suppressed when verbose is false | `test/utils/logger.test.ts` |
-| **T-004** | Paths: `getUserConfigDir()` returns path ending in `.unfade` | `test/utils/paths.test.ts` |
-| **T-005** | Paths: `getProjectDataDir()` returns `.unfade` relative to cwd | `test/utils/paths.test.ts` |
-| **T-006** | Paths: `getEventsDir()` returns `<projectDir>/events` | `test/utils/paths.test.ts` |
-| **T-007** | Schema: valid CaptureEvent passes validation | `test/schemas/event.test.ts` |
-| **T-008** | Schema: CaptureEvent with missing `source` fails validation | `test/schemas/event.test.ts` |
-| **T-009** | Schema: valid UnfadeConfig with defaults fills all fields | `test/schemas/config.test.ts` |
-| **T-010** | Schema: empty object produces valid config with all defaults | `test/schemas/config.test.ts` |
-| **T-011** | Schema: ToolResponseSchema validates envelope with `_meta` | `test/schemas/tool.test.ts` |
+> "Initialize a TypeScript ESM project in the repo root. Use pnpm as the package manager. Create `package.json` with `"type": "module"`, `"bin": { "unfade": "./dist/cli.js" }`, and scripts: `build` (tsup), `dev` (tsx watch), `lint` (biome check), `test` (vitest run), `typecheck` (tsc --noEmit). Install all dependencies from Section 10. Create `tsconfig.json` with strict mode, ES2022 target, Node16 module resolution. Create `biome.json` with recommended rules, space indentation (width 2). Create `vitest.config.ts` with ESM support. Create `tsdown.config.ts` with entry `src/entrypoints/cli.ts`, ESM format, node20 target, shebang banner. Create a minimal `src/entrypoints/cli.ts` that imports Commander, sets name/version/description, and calls `program.parse()`. Verify: `pnpm install && pnpm build && pnpm lint` all exit 0."
+
+**Strict Contracts:**
+- `package.json` MUST have `"type": "module"` — no CommonJS
+- `tsconfig.json` MUST have `"strict": true` — no opt-out
+- All imports MUST use `.js` extensions (ESM requirement)
+- `dist/cli.js` MUST start with `#!/usr/bin/env node`
+
+---
+
+### 9.2 Sprint 0B — Core TypeScript + Go Scaffold (Day -1)
+
+**Objective:** A runnable CLI with `--help` output, a stderr-only logger, path resolution utilities, and a Go daemon that compiles to two binaries.
+
+**Acid Test:**
+```bash
+pnpm build && ./dist/cli.js --help
+# Shows: "unfade" banner, version, command list (init, open, query, export, distill, daemon)
+
+cd daemon && go build ./cmd/unfaded && go build ./cmd/unfade-send
+# Both produce binaries without errors
+```
+
+| Task | Description | Output Files | Status |
+|---|---|---|---|
+| **UF-006** | Create Commander entry point — program name (`unfade`), version (from `package.json`), description. Register placeholder commands: `init`, `open`, `query` (core) and `export`, `distill`, `daemon stop/status` (power user). Each prints "not implemented" to stderr. Bare `unfade` (no args) prints help. Global flags: `--verbose`, `--quiet`, `--json`, `--config`, `--data-dir` | `src/entrypoints/cli.ts` | `COMPLETE` |
+| **UF-007** | Create logger utility — structured logger that writes exclusively to stderr via `process.stderr.write()`. Levels: `debug`, `info`, `warn`, `error`. Respects `--verbose` (shows debug) and `--quiet` (suppresses info). Timestamped, color-coded with picocolors. NEVER writes to stdout | `src/utils/logger.ts` | `COMPLETE` |
+| **UF-008** | Create path utilities — `getUserConfigDir()` → `~/.unfade/`, `getProjectDataDir()` → `.unfade/` (relative to nearest `.git`, falls back to cwd), `getEventsDir()`, `getDistillsDir()`, `getProfileDir()`, `getStateDir()`, `getGraphDir()`, `getCacheDir()`, `getLogsDir()`. Cross-platform via `node:os`, `node:path`, `node:fs` | `src/utils/paths.ts` | `COMPLETE` |
+| **UF-011a** | Go daemon scaffold — `daemon/` directory with Go module (`github.com/unfade-io/unfade-cli/daemon`), Go 1.25.7. Two entry points: `cmd/unfaded/main.go`, `cmd/unfade-send/main.go`. Empty packages: `internal/capture/`, `internal/platform/`, `internal/health/`, `internal/state/`. fsnotify v1.9.0. Both binaries compile | `daemon/go.mod`, `daemon/cmd/unfaded/main.go`, `daemon/cmd/unfade-send/main.go` | `COMPLETE` |
+
+**Agent Directive (Sprint 0B):**
+
+> "Expand the CLI entry point from Sprint 0A into a full Commander skeleton. Register 6 placeholder commands: `init`, `open`, `query` (core), `export`, `distill` (power user), and a `daemon` command with `stop` subcommand. Each handler prints 'not implemented' to stderr and exits 0. Create `src/utils/logger.ts` — a structured logger with levels (debug, info, warn, error) that writes ONLY to stderr via `console.error()`. Export a singleton `logger` instance with methods: `logger.debug()`, `logger.info()`, `logger.warn()`, `logger.error()`. The logger must accept a `verbose: boolean` and `quiet: boolean` config. Create `src/utils/paths.ts` with functions: `getUserConfigDir()` (returns `~/.unfade/`), `getProjectDataDir()` (returns `.unfade/` relative to cwd), `getEventsDir()`, `getDistillsDir()`, `getProfileDir()`, `getStateDir()`, `getGraphDir()` (all subdirectories of project data dir). Use `node:os` and `node:path` for cross-platform support. Then create the Go daemon scaffold: `daemon/go.mod`, `daemon/cmd/unfaded/main.go`, `daemon/cmd/unfade-send/main.go`. Both Go binaries just print a placeholder message and exit. Create empty directories with `.gitkeep` files: `daemon/internal/capture/`, `daemon/internal/platform/`, `daemon/internal/health/`, `daemon/internal/state/`. Run `go get github.com/fsnotify/fsnotify` in the daemon directory. Verify: `pnpm build && ./dist/cli.js --help` shows all commands, and `cd daemon && go build ./cmd/unfaded && go build ./cmd/unfade-send` both succeed."
+
+**Strict Contracts:**
+- Logger MUST write to stderr (`console.error`) — never `console.log` or `process.stdout`
+- Path functions MUST use `node:path` join — no string concatenation with `/`
+- `getUserConfigDir()` MUST use `os.homedir()` — no hardcoded `~`
+- Go module path: `github.com/unfade-io/unfade-cli/daemon`
+- Go daemon entry points are zero-logic — `fmt.Println()` only
+
+---
+
+### 9.3 Sprint 0C — Schemas, Contracts & CI (Day 0)
+
+**Objective:** All cross-language data contracts defined, tool interface established, project conventions documented, CI pipeline green, all tests passing.
+
+**Acid Test:**
+```bash
+pnpm test
+# 13/13 tests pass (T-001 → T-013)
+
+pnpm build && pnpm lint && pnpm typecheck
+# All exit 0
+
+cd daemon && go build ./cmd/unfaded && go build ./cmd/unfade-send && go vet ./...
+# All exit 0
+```
+
+| Task | Description | Output Files | Status |
+|---|---|---|---|
+| **UF-009** | Zod 4 schemas — `CaptureEventSchema`, `UnfadeConfigSchema` (empty `{}` → full defaults via factory functions), `ReasoningModelSchema`, `DailyDistillSchema`, `DecisionSchema`, `ToolResponseSchema`. Go struct `CaptureEvent` with camelCase JSON tags mirroring TypeScript field-for-field | `src/schemas/event.ts`, `src/schemas/config.ts`, `src/schemas/profile.ts`, `src/schemas/distill.ts`, `src/schemas/decision.ts`, `src/schemas/tool-response.ts`, `daemon/internal/capture/event.go` | `COMPLETE` |
+| **UF-010** | `UnfadeTool<TInput, TOutput>` generic interface + `ToolResponseSchema` re-export with `_meta` envelope (tool, durationMs, degraded, degradedReason, personalizationLevel) | `src/tools/types.ts` | `COMPLETE` |
+| **UF-011** | CLAUDE.md rewritten with 7 engineering conventions: stdout sacred, Zod schemas as source of truth, response envelope, `.unfade/` workspace (one writer per file), "capture engine" terminology, test mirroring, ESM import rules. Build + daemon commands documented | `CLAUDE.md` | `COMPLETE` |
+| **UF-011b** | CI pipeline (GitHub Actions: TS build+lint+typecheck+test, Go build+vet), `.gitignore` (comprehensive for hybrid TS+Go project), `daemon/Makefile` (build, build-send, test, clean). All 13 tests (T-001 → T-013) passing | `.github/workflows/ci.yml`, `.gitignore`, `daemon/Makefile`, `test/**/*.test.ts` | `COMPLETE` |
+
+**Agent Directive (Sprint 0C):**
+
+> "Create all Zod schemas in `src/schemas/`. For `event.ts`: define `CaptureEventSchema` with fields: `version` (int, default 1), `timestamp` (datetime string), `source` (enum: git, ai_session, terminal, manual), `type` (string), `content` (record of unknown), `git_context` (optional object: repo, branch, sha). Export `type CaptureEvent = z.infer<typeof CaptureEventSchema>`. For `config.ts`: define `UnfadeConfigSchema` matching Section 6.4 — all fields have defaults so an empty object produces a valid config. For `profile.ts`: define `ReasoningModelSchema` with decision_style, trade_off_weights, domain_depth, exploration_habits, blind_spots, failure_patterns. For `decision.ts`: define `DecisionSchema` with date, decision, rationale, alternatives_evaluated, domain, dead_end, ai_modified, sources. For `distill.ts`: create a stub `DailyDistillSchema` with date, summary, decisions (array), events_processed (int). Each file exports both schema and inferred type. Create `daemon/internal/capture/event.go` with a Go struct mirroring `CaptureEventSchema` — use `json` tags matching the TypeScript field names exactly. Create `src/tools/types.ts` with the `UnfadeTool` interface and `ToolResponseSchema` from Section 6.2. Update `CLAUDE.md` with project conventions: (1) stdout is sacred — only MCP JSON-RPC, (2) all logging to stderr, (3) Zod schemas are single source of truth, (4) response envelope with `_meta`, (5) one writer per `.unfade/` file (reference File Ownership Map in UNFADE_CLI_RESEARCH_AND_DESIGN.md), (6) user-facing terminology: 'capture engine' not 'daemon', (7) test files mirror source at `test/<path>/<name>.test.ts`. Create `.github/workflows/ci.yml` that runs on push and PR: job 1 runs `pnpm install && pnpm build && pnpm lint && pnpm typecheck && pnpm test`, job 2 runs `cd daemon && go build ./cmd/unfaded && go build ./cmd/unfade-send && go vet ./...`. Create `.gitignore` with: dist/, node_modules/, daemon/unfaded, daemon/unfade-send, .unfade/, *.tgz. Create `daemon/Makefile` with targets: build (unfaded), build-send (unfade-send), test, clean. Write all 13 tests — see Section 9.4 for the full test matrix."
+
+**Strict Contracts:**
+- Zod schemas MUST export both the schema object AND the inferred type
+- Go struct field names MUST use `json` tags matching TypeScript field names (snake_case)
+- `CaptureEventSchema` TypeScript and Go `CaptureEvent` struct MUST be field-for-field identical
+- `UnfadeConfigSchema` parsed with `{}` (empty object) MUST produce a fully populated config with all defaults
+- CI workflow MUST test both TypeScript AND Go on every push
+- CLAUDE.md MUST use "capture engine" terminology, not "daemon", in user-facing contexts (per Zero-Knowledge UX Plan)
+
+---
+
+### 9.4 Test Matrix (13 tests)
+
+| Test | What It Validates | File | Sprint |
+|---|---|---|---|
+| **T-001** | CLI entry point: `--help` flag returns exit code 0 and includes "unfade" in output | `test/entrypoints/cli.test.ts` | 0C |
+| **T-002** | Logger: info-level message writes to stderr, not stdout | `test/utils/logger.test.ts` | 0C |
+| **T-003** | Logger: debug-level message suppressed when verbose is false | `test/utils/logger.test.ts` | 0C |
+| **T-004** | Paths: `getUserConfigDir()` returns path ending in `.unfade` | `test/utils/paths.test.ts` | 0C |
+| **T-005** | Paths: `getProjectDataDir()` returns `.unfade` relative to cwd | `test/utils/paths.test.ts` | 0C |
+| **T-006** | Paths: `getEventsDir()` returns `<projectDir>/events` | `test/utils/paths.test.ts` | 0C |
+| **T-007** | Schema: valid CaptureEvent passes validation | `test/schemas/event.test.ts` | 0C |
+| **T-008** | Schema: CaptureEvent with missing `source` fails validation | `test/schemas/event.test.ts` | 0C |
+| **T-009** | Schema: valid UnfadeConfig with defaults fills all fields | `test/schemas/config.test.ts` | 0C |
+| **T-010** | Schema: empty object produces valid config with all defaults | `test/schemas/config.test.ts` | 0C |
+| **T-011** | Schema: ToolResponseSchema validates envelope with `_meta` | `test/schemas/tool.test.ts` | 0C |
+| **T-012** | Schema: DecisionSchema validates a complete decision record | `test/schemas/decision.test.ts` | 0C |
+| **T-013** | Schema: ReasoningModelSchema validates a complete profile | `test/schemas/profile.test.ts` | 0C |
 
 ---
 
@@ -728,20 +625,26 @@ Set up npm scripts, Makefile for Go, and a basic GitHub Actions workflow.
 ```json
 {
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.82.0",
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/openai": "^1.0.0",
+    "@clack/prompts": "^0.9.0",
     "@commander-js/extra-typings": "^13.1.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "ai": "^4.0.0",
+    "ai-sdk-ollama": "^0.2.0",
+    "execa": "^9.0.0",
+    "@hono/node-server": "^1.0.0",
     "hono": "^4.0.0",
     "htmx.org": "^2.0.0",
     "ignore": "^6.0.0",
     "ink": "^6.0.0",
-    "isomorphic-git": "^1.37.0",
     "node-notifier": "^10.0.0",
-    "ollama": "^0.5.0",
-    "openai": "^4.0.0",
     "picocolors": "^1.1.0",
     "proper-lockfile": "^4.1.0",
     "react": "^19.0.0",
+    "resvg-js": "^2.0.0",
+    "satori": "^0.12.0",
+    "simple-git": "^3.27.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -749,7 +652,8 @@ Set up npm scripts, Makefile for Go, and a basic GitHub Actions workflow.
     "@types/node": "^22.0.0",
     "@types/proper-lockfile": "^4.1.0",
     "@types/react": "^19.0.0",
-    "tsup": "^8.0.0",
+    "memfs": "^4.0.0",
+    "tsdown": "^0.9.0",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
@@ -769,6 +673,7 @@ Set up npm scripts, Makefile for Go, and a basic GitHub Actions workflow.
 | **CLI help output** | N/A | Shows banner, version, all command stubs | `./dist/cli.js --help` |
 | **Schema coverage** | N/A | 5 schemas (event, config, profile, distill, decision) with Zod + inferred types | File count + type check |
 | **Logger stderr guarantee** | N/A | Logger never writes to stdout | Test T-002 |
+| **Go daemon build** | N/A | `go build ./cmd/unfaded` and `go build ./cmd/unfade-send` exit 0 | CI / manual |
 | **Bundle size** | N/A | < 500KB (skeleton only) | `ls -la dist/cli.js` |
 | **Time to scaffold** | N/A | < 3 days | Calendar |
 
@@ -779,11 +684,11 @@ Set up npm scripts, Makefile for Go, and a basic GitHub Actions workflow.
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | **Ink 6.x + React 19 compatibility** | Medium | Medium | Both are used together in unerr-cli. Pin exact versions. If issues arise, defer Ink components to Phase 1 and use plain stderr output in Sprint 0 |
-| **tsup shebang injection** | Low | Low | tsup supports `banner` config for shebang. If not, post-build script prepends `#!/usr/bin/env node` |
+| **tsdown shebang injection** | Low | Low | tsdown supports `banner` config for shebang. If not, post-build script prepends `#!/usr/bin/env node` |
 | **Node 20 ESM edge cases** | Low | Medium | Use `moduleResolution: "NodeNext"` and `.js` extensions in imports. Both reference CLIs handle this pattern |
 | **Dependency version conflicts** | Low | Low | Lock file (`pnpm-lock.yaml`) pins exact versions. No floating ranges for critical deps |
 | **CLAUDE.md drift from code** | Medium | Low | CLAUDE.md is a Sprint 0 deliverable AND a Sprint 7 update target. Review in every phase |
 
 ---
 
-> **Next phase:** [Phase 1: The Core Loop](./PHASE_1_CORE_LOOP.md) — Capture foundation, daemon, distillation engine, personalization seed, query, Unfade Card.
+> **Next phase:** [Phase 1: Capture & Distill](./PHASE_1_CAPTURE_AND_DISTILL.md) — Capture foundation, daemon, distillation engine, personalization seed, query, Unfade Card.

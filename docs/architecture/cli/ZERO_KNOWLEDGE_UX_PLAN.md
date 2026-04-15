@@ -466,15 +466,17 @@ The MCP server starts automatically with the daemon. The user adds a config snip
 
 ### 5.2 New Tasks Required
 
-| New Task | Description | Phase | File |
+> **Integration status:** Phase 1 tasks (UF-086a/b/c/f/g) have been integrated into [PHASE_1_CAPTURE_AND_DISTILL.md](./PHASE_1_CAPTURE_AND_DISTILL.md) micro-sprints. UF-086b merged into UF-013 (self-healing state detector). UF-086f merged into UF-040 (notification click handler). Phase 2 tasks (UF-086d/e) remain pending for Phase 2 integration.
+
+| New Task | Description | Phase | Status |
 |---|---|---|---|
-| **UF-086a** | Immediate first distill: after backfill in init flow, call distiller for the most recent day with events. Display result in TUI dashboard. If no LLM configured, produce structured summary. | Phase 1 | `src/commands/init.ts`, `src/services/distill/distiller.ts` |
-| **UF-086b** | Self-healing state detector: on every `unfade` invocation, check daemon health, shell hook status, auto-start registration. Silently fix any issues before showing TUI. | Phase 1 | `src/state/detector.ts` |
-| **UF-086c** | TUI quick actions expansion: add `[s]earch`, `[p]rofile`, `[e]xport` to dashboard. `[s]` opens inline search input. `[p]` shows inline profile summary. `[e]` triggers export with y/n confirmation. | Phase 1 | `src/tui/dashboard.tsx` |
-| **UF-086d** | `unfade mcp` hidden command: starts MCP stdio server for IDE integration. Not listed in `--help` but works when invoked. | Phase 2 | `src/commands/mcp.ts` |
-| **UF-086e** | Web UI "Connect AI Tools" section: settings page includes copy-paste MCP config snippets for Claude Code, Cursor, Windsurf, and generic MCP clients. | Phase 2 | `src/server/pages/settings.ts` |
-| **UF-086f** | Notification click handler: clicking "Your Unfade is ready" notification opens web UI distill viewer in default browser. | Phase 1 | `src/services/notification/notifier.ts` |
-| **UF-086g** | User-facing terminology: replace all instances of "daemon" in user-facing strings with "capture engine." Audit all command output, TUI text, web UI text, notifications. "Daemon" remains in code, logs, and developer docs. | Phase 1 | Multiple files |
+| **UF-086a** | Immediate first distill: after backfill in init flow, call distiller for the most recent day with events. Display result in TUI dashboard. If no LLM configured, produce structured summary. | Phase 1 | **Integrated** → Sprint 1D |
+| **UF-086b** | Self-healing state detector: on every `unfade` invocation, check daemon health, shell hook status, auto-start registration. Silently fix any issues before showing TUI. | Phase 1 | **Merged into UF-013** → Sprint 1A |
+| **UF-086c** | TUI quick actions expansion: add `[s]earch`, `[p]rofile`, `[e]xport` to dashboard. `[s]` opens inline search input. `[p]` shows inline profile summary. `[e]` triggers export with y/n confirmation. | Phase 1 | **Integrated** → Sprint 1G |
+| **UF-086d** | `unfade mcp` hidden command: starts MCP stdio server for IDE integration. Not listed in `--help` but works when invoked. | Phase 2 | Pending Phase 2 integration |
+| **UF-086e** | Web UI "Connect AI Tools" section: settings page includes copy-paste MCP config snippets for Claude Code, Cursor, Windsurf, and generic MCP clients. | Phase 2 | Pending Phase 2 integration |
+| **UF-086f** | Notification click handler: clicking "Your Unfade is ready" notification opens web UI distill viewer in default browser. | Phase 1 | **Merged into UF-040** → Sprint 1F |
+| **UF-086g** | User-facing terminology: replace all instances of "daemon" in user-facing strings with "capture engine." Audit all command output, TUI text, web UI text, notifications. "Daemon" remains in code, logs, and developer docs. | Phase 1 | **Integrated** → Sprint 1A |
 
 ### 5.3 Documentation Changes
 

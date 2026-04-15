@@ -328,10 +328,10 @@ Distribution:
 | **CLI framework** | Commander + extra-typings | Lightweight, well-documented, type-safe command definitions |
 | **Terminal UI** | Ink 6.x + React 19 | TUI dashboard (`unfade` no args): status, today's distill, quick actions. Same JSX model as card templates |
 | **Validation** | Zod | Schema-first validation for events, decisions, profile model. Shared between CLI and server |
-| **Bundler** | tsup | Fast ESM bundling via `--bundle` |
+| **Bundler** | tsdown | Rolldown-powered ESM bundling (actively maintained successor to tsup) |
 | **Linting** | Biome | Faster than ESLint+Prettier combined. Single tool for format + lint |
 | **Testing** | Vitest | Jest-compatible API, native ESM, fast watch mode |
-| **Git operations** | isomorphic-git | Pure JS git implementation — no system git dependency for parsing history |
+| **Git operations** | simple-git | Wraps system `git` binary — faster, lower memory than pure JS implementations |
 | **HTTP server** | Hono | Lightweight, fast, middleware-friendly. Runs on `localhost:7654`. Serves both JSON API and HTML pages |
 | **Web UI** | htmx (~14KB) | Server-rendered HTML with htmx for interactivity. No JS build step. Hono renders templates, htmx handles `hx-get`/`hx-post` for dynamic updates |
 | **MCP** | @modelcontextprotocol/sdk | Official SDK. Resources, Tools, Prompts primitives. stdio + Streamable HTTP transports |
@@ -647,7 +647,7 @@ The TypeScript CLI reads the **output** of capture sources (JSONL files in `.unf
 
 | Source | Signal Type | Privacy Sensitivity | Capture Method (in Go daemon) |
 |---|---|---|---|
-| **Git** (primary) | Decisions, explorations, dead ends, reverts | Low — developer chose to commit | fsnotify on `.git/` + go-git for parsing |
+| **Git** (primary) | Decisions, explorations, dead ends, reverts | Low — developer chose to commit | fsnotify on `.git/` + `os/exec` shelling out to system `git` for parsing |
 | **AI sessions** (primary) | Reasoning conversations, suggestion acceptance/modification | Medium — conversation content | File tailing on known log paths |
 | **Terminal** (secondary) | Commands, errors, retry patterns, debugging sessions | Medium — command strings only | preexec/precmd shell hooks via Unix socket (macOS/Linux) or named pipe (Windows) |
 
@@ -791,19 +791,21 @@ Both read from the same `.unfade/` data substrate. Both expose the same 5 Resour
 **Principle:** The developer chooses their LLM provider. Unfade never forces a cloud dependency.
 
 ```
-interface LLMProvider {
-  name: string                                    // "ollama", "openai", "anthropic"
-  synthesize(signals: ExtractedSignals): Promise<DailyDistill>
-  extractDecisions(content: string): Promise<Decision[]>
-  isAvailable(): Promise<boolean>                // Health check
-}
+// Uses Vercel AI SDK (ai) with provider adapters
+import { generateObject } from 'ai';
+import { ollama } from 'ai-sdk-ollama';       // Local default
+import { openai } from '@ai-sdk/openai';       // Cloud opt-in
+import { anthropic } from '@ai-sdk/anthropic'; // Cloud opt-in
+
+// Structured output via generateObject() + Zod schemas
+// No custom LLMProvider interface needed — Vercel AI SDK handles provider abstraction
 ```
 
 | Provider | When Used | Network | Cost |
 |---|---|---|---|
-| **Ollama** (default) | Local model, fully offline | None | $0 |
-| **OpenAI** (opt-in) | Higher quality distillation | Cloud API call | Usage-based |
-| **Anthropic** (opt-in) | Higher quality distillation | Cloud API call | Usage-based |
+| **Ollama** via `ai-sdk-ollama` (default) | Local model, fully offline | None | $0 |
+| **OpenAI** via `@ai-sdk/openai` (opt-in) | Higher quality distillation | Cloud API call | Usage-based |
+| **Anthropic** via `@ai-sdk/anthropic` (opt-in) | Higher quality distillation | Cloud API call | Usage-based |
 
 **Graceful degradation:** If no LLM is available (Ollama not running, no API key configured), `unfade distill` produces a reduced distill from Stage 1+2 output only — structured signals without natural language synthesis. The developer gets value from the raw extraction even without an LLM.
 
@@ -1097,9 +1099,9 @@ Each slice is self-contained. A developer using only Slice 1 gets value. Slices 
     - **Squash-merge workflows:** branch history is flattened. Fingerprint detects squash-merge patterns (single-commit branches with large diffs) and adjusts decision-style estimate, noting reduced confidence.
     - **Monorepos:** per-developer filtering via `git log --author` before analysis. Fingerprint reflects the individual's commits, not the whole repo.
     - **Trunk-based development:** fewer branches ≠ fewer alternatives evaluated. Fingerprint adjusts by weighting commit message analysis (alternatives mentioned in messages) over branch count.
-    - **Shallow clones / partial histories:** detected via `isomorphic-git`. Fingerprint notes "analyzed N of M total commits" and adjusts confidence accordingly.
+    - **Shallow clones / partial histories:** detected via `simple-git`. Fingerprint notes "analyzed N of M total commits" and adjusts confidence accordingly.
     - **Empty repos (<10 commits):** fingerprint shows "Not enough history yet — check back after your first week" instead of nonsensical statistics.
-    - **Large repos (>5000 commits in scan window):** capped at 5000 most recent commits. Uses streaming/batched commit walking via isomorphic-git (process 500 commits at a time, extract stats, discard commit objects before loading the next batch) to keep peak memory under 200MB. Progress bar shows "Scanning git history... 2500/5000 commits" so the developer knows it's working. Fingerprint notes "analyzed 5000 of N total commits (last 12 months)" when capped.
+    - **Large repos (>5000 commits in scan window):** capped at 5000 most recent commits. Uses batched commit walking via simple-git (process 500 commits at a time, extract stats) to keep peak memory under 200MB. Progress bar shows "Scanning git history... 2500/5000 commits" so the developer knows it's working. Fingerprint notes "analyzed 5000 of N total commits (last 12 months)" when capped.
 - `unfade` (no args) — TUI dashboard (Ink): daemon status, today's summary, quick actions `[d]istill [c]ard [o]pen web [q]uit`
 - `unfade open` — opens web UI in browser (`localhost:7654`)
 - First Unfade Card — auto-generated from the fingerprint (no LLM, no Ollama dependency)
@@ -1147,7 +1149,7 @@ The Instant Fingerprint solves this. `unfade init` parses existing git history (
         │
         ▼
 ┌──────────────────────────┐
-│ Git History Analyzer      │    isomorphic-git: walk commits, branches, tags
+│ Git History Analyzer      │    simple-git: walk commits, branches, tags
 │                          │
 │ For each commit:         │    - Count files changed (scope indicator)
 │   - Parse diff stats     │    - Detect reverts (dead ends)
@@ -1219,7 +1221,7 @@ src/
 │   ├── daemon/
 │   │   └── binary.ts                   # Download + verify unfaded binary for current platform
 │   ├── fingerprint/
-│   │   └── calculator.ts              # Reasoning Fingerprint from git history (isomorphic-git)
+│   │   └── calculator.ts              # Reasoning Fingerprint from git history (simple-git)
 │   ├── card/
 │   │   ├── generator.ts               # Card data extraction + rendering pipeline
 │   │   └── templates.ts               # JSX templates for satori
@@ -1232,7 +1234,7 @@ src/
 │   ├── decision.ts                     # Decision Zod schema
 │   └── profile.ts                      # ReasoningModel Zod schema
 └── utils/
-    └── git.ts                          # isomorphic-git helpers (for init, not for daemon)
+    └── git.ts                          # simple-git helpers (for init, not for daemon)
 ```
 
 ### Tests (Slice 1)
@@ -1361,7 +1363,7 @@ daemon/
 ├── main.go                             # Entry point, signal handling, graceful shutdown
 ├── capture/
 │   ├── source.go                       # CaptureSource interface
-│   ├── git.go                          # Git watcher (fsnotify + go-git)
+│   ├── git.go                          # Git watcher (fsnotify + os/exec to system git)
 │   ├── ai_session.go                   # AI session log tailer
 │   └── event.go                        # CaptureEvent struct, JSONL serialization
 ├── platform/
@@ -1390,10 +1392,7 @@ src/
 │   │   ├── linker.ts                   # Stage 2: context linking
 │   │   └── synthesizer.ts             # Stage 3: LLM synthesis
 │   └── llm/
-│       ├── provider.ts                 # LLMProvider interface
-│       ├── ollama.ts                   # Ollama adapter
-│       ├── openai.ts                   # OpenAI adapter
-│       └── anthropic.ts               # Anthropic adapter
+│       └── ai.ts                       # Vercel AI SDK integration (generateObject + provider adapters)
 └── schemas/
     └── distill.ts                      # DailyDistill Zod schema
 ```
@@ -2039,14 +2038,14 @@ The cross-tool constraint is the key barrier: **no IDE vendor will share memory 
 | `docs/product/unfade.md` | Canonical product strategy — problem, research, architecture, competitive landscape, build sequencing | Complete |
 | `docs/product/unfade_support.md` | Competitive analysis, theme scoring, gap analysis, growth strategy | Complete |
 | `docs/architecture/VERTICAL_SLICING_PLAN.md` | This document — architectural triage, vertical slices, cross-cutting concerns | Complete |
-| `docs/architecture/cli/UNFADE_CLI_IMPLEMENTATION_PLAN.md` | Phase index with task/test counts, dependency graph, technology stack | Complete |
-| `docs/architecture/cli/PHASE_0_SCAFFOLDING.md` | Phase 0 tasks (UF-001 → UF-011), tests (T-001 → T-011) | Complete |
-| `docs/architecture/cli/PHASE_1_CAPTURE_AND_DISTILL.md` | Phase 1 tasks (UF-012 → UF-041), tests (T-012 → T-088) | Complete |
+| `docs/architecture/cli/PHASE_0_SCAFFOLDING.md` | Phase 0 tasks (UF-001 → UF-011b), tests (T-001 → T-013) | Complete |
+| `docs/architecture/cli/PHASE_1_CAPTURE_AND_DISTILL.md` | Phase 1 tasks (UF-012 → UF-041, UF-086a/c/g), tests (T-012 → T-102), 7 micro-sprints (1A–1G), Zero-Knowledge UX integrated | Complete |
 | `docs/architecture/cli/PHASE_2_HOOKS_API_AND_MCP.md` | Phase 2 tasks (UF-042 → UF-057), tests (T-089 → T-127) | Complete |
 | `docs/architecture/cli/PHASE_3_CARDS_AND_TERMINAL.md` | Phase 3 tasks (UF-058 → UF-069), tests (T-128 → T-154) | Complete |
 | `docs/architecture/cli/PHASE_4_PERSONALIZATION_AND_AMPLIFICATION.md` | Phase 4 tasks (UF-070 → UF-079), tests (T-155 → T-179) | Complete |
 | `docs/architecture/cli/PHASE_5_ECOSYSTEM_LAUNCH.md` | Phase 5 tasks (UF-080 → UF-093), tests (T-180 → T-202) | Complete |
-| `docs/architecture/cli/UNFADE_CLI_RESEARCH_AND_DESIGN.md` | Pattern extraction, design decisions, architecture rationale | Complete |
+| `docs/architecture/cli/PHASE_6_POST_LAUNCH.md` | Phase 6 tasks (UF-094 → UF-097), post-launch & enterprise prep | Complete |
+| `docs/architecture/cli/UNFADE_CLI_RESEARCH_AND_DESIGN.md` | Pattern extraction, design decisions, architecture rationale, file ownership map | Complete |
 
 ### What Needs to Be Written Next
 
