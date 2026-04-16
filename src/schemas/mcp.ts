@@ -14,6 +14,7 @@ export const McpMetaSchema = z.object({
   degraded: z.boolean().default(false),
   degradedReason: z.string().optional(),
   lastUpdated: z.string().nullable(),
+  personalizationLevel: z.string().optional(),
 });
 
 export type McpMeta = z.infer<typeof McpMetaSchema>;
@@ -150,3 +151,66 @@ export const ProfileOutputSchema = z.object({
 });
 
 export type ProfileOutput = z.infer<typeof ProfileOutputSchema>;
+
+// ---------------------------------------------------------------------------
+// unfade-amplify
+// ---------------------------------------------------------------------------
+
+export const AmplifyInputSchema = z.object({
+  date: z.string().date(),
+});
+
+export type AmplifyInput = z.infer<typeof AmplifyInputSchema>;
+
+export const AmplificationConnectionSchema = z.object({
+  today: z.string(),
+  past: z.object({
+    date: z.string(),
+    decision: z.string(),
+  }),
+  relevance: z.number().min(0).max(1),
+});
+
+export type AmplificationConnection = z.infer<typeof AmplificationConnectionSchema>;
+
+export const AmplifyOutputSchema = z.object({
+  data: z.object({
+    connections: z.array(AmplificationConnectionSchema),
+    date: z.string(),
+  }),
+  _meta: McpMetaSchema,
+});
+
+export type AmplifyOutput = z.infer<typeof AmplifyOutputSchema>;
+
+// ---------------------------------------------------------------------------
+// unfade-similar
+// ---------------------------------------------------------------------------
+
+export const SimilarInputSchema = z.object({
+  problem: z.string().min(1),
+  limit: z.number().int().min(1).max(50).default(10),
+});
+
+export type SimilarInput = z.infer<typeof SimilarInputSchema>;
+
+export const SimilarResultItemSchema = z.object({
+  date: z.string(),
+  decision: z.string(),
+  rationale: z.string(),
+  domain: z.string().optional(),
+  alternativesConsidered: z.number().int().min(0).optional(),
+  relevance: z.number().min(0).max(1),
+});
+
+export type SimilarResultItem = z.infer<typeof SimilarResultItemSchema>;
+
+export const SimilarOutputSchema = z.object({
+  data: z.object({
+    results: z.array(SimilarResultItemSchema),
+    total: z.number().int().min(0),
+  }),
+  _meta: McpMetaSchema,
+});
+
+export type SimilarOutput = z.infer<typeof SimilarOutputSchema>;

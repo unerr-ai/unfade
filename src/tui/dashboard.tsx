@@ -15,12 +15,28 @@ import { DashboardView, type PersonalizationLevel } from "../components/Dashboar
 import { loadConfig } from "../config/manager.js";
 import type { UnfadeConfig } from "../schemas/config.js";
 import type { DailyDistill } from "../schemas/distill.js";
+import type { ReasoningModelV2 } from "../schemas/profile.js";
 import { countEvents } from "../services/capture/event-store.js";
 import { distill } from "../services/distill/distiller.js";
 import type { ReasoningProfile } from "../services/personalization/profile-builder.js";
 import { detectState, type StateDetails } from "../state/detector.js";
 import { logger } from "../utils/logger.js";
 import { getDistillsDir, getProfileDir } from "../utils/paths.js";
+
+/**
+ * Load v2 reasoning profile from disk. Returns null if not v2 or missing.
+ */
+function loadReasoningProfileV2(cwd?: string): ReasoningModelV2 | null {
+  const profilePath = join(getProfileDir(cwd), "reasoning_model.json");
+  if (!existsSync(profilePath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(profilePath, "utf-8"));
+    if (parsed.version === 2) return parsed as ReasoningModelV2;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Data loaders
@@ -227,6 +243,7 @@ function App({ config }: { config: UnfadeConfig }): React.ReactElement | null {
     label: "New",
     distillCount: 0,
   });
+  const [reasoningProfile, setReasoningProfile] = useState<ReasoningModelV2 | null>(null);
 
   useEffect(() => {
     // Detect state
@@ -238,6 +255,7 @@ function App({ config }: { config: UnfadeConfig }): React.ReactElement | null {
     setTodayEventCount(countEvents(today));
     setLatestDistill(loadLatestDistill());
     setPersonalization(loadPersonalizationLevel());
+    setReasoningProfile(loadReasoningProfileV2());
   }, []);
 
   if (!state) {
@@ -250,6 +268,7 @@ function App({ config }: { config: UnfadeConfig }): React.ReactElement | null {
       todayEventCount={todayEventCount}
       latestDistill={latestDistill}
       personalizationLevel={personalization}
+      reasoningProfile={reasoningProfile}
       onDistill={async () => {
         const today = new Date().toISOString().slice(0, 10);
         const result = await distill(today, config);
@@ -257,6 +276,7 @@ function App({ config }: { config: UnfadeConfig }): React.ReactElement | null {
           setLatestDistill(result.distill);
           setTodayEventCount(countEvents(today));
           setPersonalization(loadPersonalizationLevel());
+          setReasoningProfile(loadReasoningProfileV2());
           return result.distill;
         }
         logger.info("No events today. Nothing to distill.");

@@ -8,10 +8,12 @@ import { existsSync } from "node:fs";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadConfig } from "../../config/manager.js";
+import { getAmplification } from "../../tools/unfade-amplify.js";
 import { getRecentContext } from "../../tools/unfade-context.js";
 import { getDecisions } from "../../tools/unfade-decisions.js";
 import { getProfile } from "../../tools/unfade-profile.js";
 import { queryEvents } from "../../tools/unfade-query.js";
+import { getSimilar } from "../../tools/unfade-similar.js";
 import { logger } from "../../utils/logger.js";
 import { getProjectDataDir } from "../../utils/paths.js";
 import { distill } from "../distill/distiller.js";
@@ -53,7 +55,7 @@ function notInitializedResponse(): { content: { type: "text"; text: string }[] }
 }
 
 /**
- * Register all 5 MCP tools on the server.
+ * Register all 7 MCP tools on the server.
  */
 export function registerTools(server: McpServer): void {
   // 1. unfade_query — Semantic search across reasoning history
@@ -324,6 +326,93 @@ export function registerTools(server: McpServer): void {
                   durationMs: 0,
                   degraded: true,
                   degradedReason: err instanceof Error ? err.message : "Distillation failed",
+                  lastUpdated: null,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // 6. unfade_amplify — Cross-temporal connection detection
+  server.tool(
+    "unfade_amplify",
+    "Detect cross-temporal connections — find past decisions similar to today's reasoning",
+    {
+      date: z.string().date().describe("Date to amplify (YYYY-MM-DD)"),
+    },
+    (args) => {
+      if (!isInitialized()) return notInitializedResponse();
+
+      try {
+        const result = getAmplification(args.date);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        logger.error("MCP unfade_amplify error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: { connections: [], date: args.date },
+                _meta: {
+                  tool: "unfade-amplify",
+                  durationMs: 0,
+                  degraded: true,
+                  degradedReason: err instanceof Error ? err.message : "Amplification failed",
+                  lastUpdated: null,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // 7. unfade_similar — Find analogous past decisions
+  server.tool(
+    "unfade_similar",
+    "Search past decisions for analogous reasoning — find what you decided before about similar problems",
+    {
+      problem: z.string().describe("Problem or decision description to search for"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(10)
+        .describe("Maximum number of results (1-50, default 10)"),
+    },
+    (args) => {
+      if (!isInitialized()) return notInitializedResponse();
+
+      try {
+        const result = getSimilar(args.problem, args.limit ?? 10);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        logger.error("MCP unfade_similar error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: { results: [], total: 0 },
+                _meta: {
+                  tool: "unfade-similar",
+                  durationMs: 0,
+                  degraded: true,
+                  degradedReason: err instanceof Error ? err.message : "Similar search failed",
                   lastUpdated: null,
                 },
               }),

@@ -46,25 +46,59 @@ describe("Profile page (GET /profile)", () => {
     expect(html).toContain("Not enough data");
   });
 
-  it("shows domain distribution when profile exists", async () => {
+  it("shows domain distribution when v2 profile exists", async () => {
     const profileDir = join(tmpDir, ".unfade", "profile");
     mkdirSync(profileDir, { recursive: true });
     writeFileSync(
       join(profileDir, "reasoning_model.json"),
       JSON.stringify({
-        version: 1,
-        updatedAt: "2026-04-16T00:00:00Z",
-        distillCount: 5,
-        avgAlternativesEvaluated: 2.5,
-        aiAcceptanceRate: 0.7,
-        aiModificationRate: 0.2,
-        avgDecisionsPerDay: 3.0,
-        avgDeadEndsPerDay: 1.0,
+        version: 2,
+        lastUpdated: "2026-04-16T00:00:00Z",
+        dataPoints: 10,
+        decisionStyle: {
+          avgAlternativesEvaluated: 2.5,
+          medianAlternativesEvaluated: 2.0,
+          explorationDepthMinutes: { overall: 10, byDomain: {} },
+          aiAcceptanceRate: 0.7,
+          aiModificationRate: 0.2,
+          aiModificationByDomain: {},
+        },
+        tradeOffPreferences: [],
         domainDistribution: [
-          { domain: "backend", frequency: 10, lastSeen: "2026-04-16" },
-          { domain: "frontend", frequency: 5, lastSeen: "2026-04-15" },
+          {
+            domain: "backend",
+            frequency: 10,
+            percentageOfTotal: 0.67,
+            lastSeen: "2026-04-16",
+            depth: "deep",
+            depthTrend: "stable",
+            avgAlternativesInDomain: 2.5,
+          },
+          {
+            domain: "frontend",
+            frequency: 5,
+            percentageOfTotal: 0.33,
+            lastSeen: "2026-04-15",
+            depth: "moderate",
+            depthTrend: "stable",
+            avgAlternativesInDomain: 2.0,
+          },
         ],
-        patterns: ["Explores 2+ alternatives before deciding"],
+        patterns: [
+          {
+            pattern: "Explores 2+ alternatives before deciding",
+            confidence: 0.8,
+            observedSince: "2026-03-01",
+            lastObserved: "2026-04-15",
+            examples: 5,
+            category: "decision_style",
+          },
+        ],
+        temporalPatterns: {
+          mostProductiveHours: [],
+          avgDecisionsPerDay: 3.0,
+          peakDecisionDays: [],
+        },
       }),
     );
 
@@ -88,7 +122,43 @@ describe("Profile page (GET /profile)", () => {
     expect(html).not.toContain("Not enough data");
   });
 
-  it("includes AI acceptance and modification rates", async () => {
+  it("includes AI acceptance and modification rates when v2 profile exists", async () => {
+    const profileDir = join(tmpDir, ".unfade", "profile");
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(
+      join(profileDir, "reasoning_model.json"),
+      JSON.stringify({
+        version: 2,
+        lastUpdated: "2026-04-16T00:00:00Z",
+        dataPoints: 5,
+        decisionStyle: {
+          avgAlternativesEvaluated: 2.0,
+          medianAlternativesEvaluated: 2.0,
+          explorationDepthMinutes: { overall: 0, byDomain: {} },
+          aiAcceptanceRate: 0.7,
+          aiModificationRate: 0.2,
+          aiModificationByDomain: {},
+        },
+        tradeOffPreferences: [],
+        domainDistribution: [],
+        patterns: [],
+        temporalPatterns: {
+          mostProductiveHours: [],
+          avgDecisionsPerDay: 2.0,
+          peakDecisionDays: [],
+        },
+      }),
+    );
+
+    vi.doMock("../../../src/utils/paths.js", async (importOriginal) => {
+      const original = (await importOriginal()) as Record<string, unknown>;
+      return {
+        ...original,
+        getProfileDir: () => profileDir,
+      };
+    });
+
+    vi.resetModules();
     const { createApp } = await import("../../../src/server/http.js");
     const app = createApp();
     const res = await app.request("/profile");

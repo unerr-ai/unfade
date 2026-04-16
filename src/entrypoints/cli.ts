@@ -5,9 +5,11 @@
 import { Command } from "@commander-js/extra-typings";
 import { daemonStatusCommand, daemonStopCommand } from "../commands/daemon.js";
 import { distillCommand } from "../commands/distill.js";
+import { exportCommand } from "../commands/export.js";
 import { initCommand } from "../commands/init.js";
 import { mcpCommand } from "../commands/mcp.js";
 import { openCommand } from "../commands/open.js";
+import { publishCommand } from "../commands/publish.js";
 import { queryCommand } from "../commands/query.js";
 import { logger } from "../utils/logger.js";
 
@@ -96,8 +98,17 @@ program
 program
   .command("export")
   .description("Export .unfade/ as portable .tar.gz")
-  .action(() => {
-    logger.info("unfade export: not implemented yet");
+  .option("--output <path>", "Output file path (default: ./unfade-export-YYYY-MM-DD.tar.gz)")
+  .action(async (opts) => {
+    await exportCommand({ output: opts.output, json: program.opts().json ?? false });
+  });
+
+program
+  .command("publish")
+  .description("Generate Thinking Graph static site")
+  .option("--output <dir>", "Custom output directory (default: .unfade/site/)")
+  .action(async (opts) => {
+    await publishCommand({ output: opts.output });
   });
 
 program
@@ -107,7 +118,7 @@ program
   .option("--backfill <days>", "Backfill N past days")
   .option("--provider <name>", "Override LLM provider (ollama|openai|anthropic)")
   .action(async (opts) => {
-    await distillCommand(opts);
+    await distillCommand({ ...opts, json: program.opts().json ?? false });
   });
 
 const daemonCmd = program.command("daemon").description("Manage the capture engine");

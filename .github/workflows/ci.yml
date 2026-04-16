@@ -7,26 +7,66 @@ on:
     branches: [main]
 
 jobs:
-  typescript:
-    name: TypeScript (build + lint + test)
+  test:
+    name: Lint, Typecheck & Test
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: pnpm
+          node-version: "20"
+          cache: "pnpm"
 
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run linter
+        run: pnpm lint
+
+      - name: Run type check
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify dist output
+        run: |
+          test -f dist/cli.mjs || (echo "dist/cli.mjs not found" && exit 1)
+          echo "Build artifact size:"
+          du -sh dist/
 
   go-daemon:
     name: Go Daemon (build + vet)
@@ -34,6 +74,7 @@ jobs:
     defaults:
       run:
         working-directory: daemon
+
     steps:
       - uses: actions/checkout@v4
 

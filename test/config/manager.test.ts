@@ -27,7 +27,7 @@ describe("loadConfig", () => {
 
   it("returns valid config with all defaults from empty input", () => {
     const config = loadConfig({ userConfigDir: userDir, projectDataDir: projectDir });
-    expect(config.version).toBe(1);
+    expect(config.version).toBe(2);
     expect(config.capture.sources.git).toBe(true);
     expect(config.capture.sources.aiSession).toBe(true);
     expect(config.capture.sources.terminal).toBe(false);
@@ -74,13 +74,13 @@ describe("loadConfig", () => {
   it("ignores malformed config files gracefully", () => {
     writeFileSync(join(userDir, "config.json"), "not json at all");
     const config = loadConfig({ userConfigDir: userDir, projectDataDir: projectDir });
-    expect(config.version).toBe(1); // still valid defaults
+    expect(config.version).toBe(2); // still valid defaults
   });
 
   it("ignores config files that are arrays", () => {
     writeFileSync(join(projectDir, "config.json"), JSON.stringify([1, 2, 3]));
     const config = loadConfig({ userConfigDir: userDir, projectDataDir: projectDir });
-    expect(config.version).toBe(1);
+    expect(config.version).toBe(2);
   });
 
   it("handles missing config directories gracefully", () => {
@@ -88,7 +88,7 @@ describe("loadConfig", () => {
       userConfigDir: "/tmp/nonexistent-unfade-dir",
       projectDataDir: "/tmp/nonexistent-unfade-proj",
     });
-    expect(config.version).toBe(1);
+    expect(config.version).toBe(2);
   });
 
   it("coerces env var boolean and number values", () => {

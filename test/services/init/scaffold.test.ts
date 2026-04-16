@@ -41,7 +41,7 @@ describe("scaffold", () => {
     expect(existsSync(configPath)).toBe(true);
 
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    expect(config.version).toBe(1);
+    expect(config.version).toBe(2);
     expect(config.capture.sources.git).toBe(true);
     expect(config.distill.provider).toBe("ollama");
   });

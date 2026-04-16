@@ -9,8 +9,10 @@ import type React from "react";
 import { useCallback, useState } from "react";
 import { USER_TERMS } from "../constants/terminology.js";
 import type { DailyDistill } from "../schemas/distill.js";
+import type { ReasoningModelV2 } from "../schemas/profile.js";
 import type { StateDetails } from "../state/detector.js";
 import { DistillView } from "./DistillView.js";
+import { ProfileCard } from "./ProfileCard.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -23,6 +25,7 @@ interface DashboardViewProps {
   todayEventCount: number;
   latestDistill: DailyDistill | null;
   personalizationLevel: PersonalizationLevel;
+  reasoningProfile: ReasoningModelV2 | null;
   onDistill: () => Promise<DailyDistill | null>;
   onOpenWeb: () => void;
 }
@@ -149,6 +152,7 @@ export function DashboardView({
   todayEventCount,
   latestDistill,
   personalizationLevel,
+  reasoningProfile,
   onDistill,
   onOpenWeb,
 }: DashboardViewProps): React.ReactElement {
@@ -237,6 +241,9 @@ export function DashboardView({
       <Box marginTop={0}>
         <PersonalizationIndicator level={personalizationLevel} />
       </Box>
+
+      {/* Reasoning profile card */}
+      <ProfileCard profile={reasoningProfile} />
 
       {/* Latest distill summary */}
       <DistillSummary distill={latestDistill} />

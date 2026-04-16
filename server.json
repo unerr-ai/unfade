@@ -1,14 +1,25 @@
 {
   "name": "unfade",
-  "description": "Developer reasoning context server — passively captures engineering decisions, trade-offs, and patterns from your workflow. Makes every AI tool aware of your prior reasoning.",
+  "description": "Engineering reasoning capture, distillation, and personalization",
   "version": "0.1.0",
-  "capabilities": ["resources", "tools", "prompts"],
+  "transport": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["unfade", "mcp"]
+  },
+  "capabilities": {
+    "tools": true,
+    "resources": true,
+    "prompts": true
+  },
   "tools": [
     "unfade_query",
-    "unfade_distill",
-    "unfade_profile",
     "unfade_context",
-    "unfade_decisions"
+    "unfade_decisions",
+    "unfade_profile",
+    "unfade_distill",
+    "unfade_similar",
+    "unfade_amplify"
   ],
   "resources": [
     "unfade://context/recent",

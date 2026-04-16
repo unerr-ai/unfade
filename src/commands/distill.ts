@@ -9,12 +9,14 @@ import type { UnfadeConfig } from "../schemas/config.js";
 import type { DailyDistill } from "../schemas/distill.js";
 import { backfill, distill } from "../services/distill/distiller.js";
 import { createLLMProvider } from "../services/distill/providers/ai.js";
+import { handleCliError } from "../utils/cli-error.js";
 import { logger } from "../utils/logger.js";
 
 interface DistillCommandOptions {
   date?: string;
   backfill?: string;
   provider?: string;
+  json?: boolean;
 }
 
 /**
@@ -66,6 +68,15 @@ async function resolveProvider(providerOverride: string | undefined, config: Unf
  * Execute the `unfade distill` command.
  */
 export async function distillCommand(options: DistillCommandOptions): Promise<void> {
+  const startMs = Date.now();
+  try {
+    return await _distillCommand(options, startMs);
+  } catch (err) {
+    handleCliError(err, "distill");
+  }
+}
+
+async function _distillCommand(options: DistillCommandOptions, startMs: number): Promise<void> {
   const config = loadConfig();
 
   // Resolve provider override if given
@@ -84,7 +95,26 @@ export async function distillCommand(options: DistillCommandOptions): Promise<vo
     const results = await backfill(days, config, { provider, silent: true });
 
     if (results.length === 0) {
-      logger.info("No days with events found in backfill range.");
+      if (options.json) {
+        process.stdout.write(
+          `${JSON.stringify({ data: [], _meta: { tool: "distill", durationMs: Date.now() - startMs } })}\n`,
+        );
+      } else {
+        logger.info("No days with events found in backfill range.");
+      }
+      return;
+    }
+
+    if (options.json) {
+      const data = results.map((r) => ({
+        date: r.date,
+        distill: r.distill,
+        path: r.path,
+        skipped: r.skipped,
+      }));
+      process.stdout.write(
+        `${JSON.stringify({ data, _meta: { tool: "distill", durationMs: Date.now() - startMs } })}\n`,
+      );
       return;
     }
 
@@ -105,7 +135,26 @@ export async function distillCommand(options: DistillCommandOptions): Promise<vo
   const result = await distill(date, config, { provider });
 
   if (!result) {
-    logger.info(`No events for ${date}. Nothing to distill.`);
+    if (options.json) {
+      process.stdout.write(
+        `${JSON.stringify({ data: null, _meta: { tool: "distill", durationMs: Date.now() - startMs } })}\n`,
+      );
+    } else {
+      logger.info(`No events for ${date}. Nothing to distill.`);
+    }
+    return;
+  }
+
+  if (options.json) {
+    const data = {
+      date: result.date,
+      distill: result.distill,
+      path: result.path,
+      skipped: result.skipped,
+    };
+    process.stdout.write(
+      `${JSON.stringify({ data, _meta: { tool: "distill", durationMs: Date.now() - startMs } })}\n`,
+    );
     return;
   }
 

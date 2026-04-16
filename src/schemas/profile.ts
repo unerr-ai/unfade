@@ -1,26 +1,104 @@
 // FILE: src/schemas/profile.ts
-// ReasoningModel — the developer's reasoning identity profile.
+// ReasoningModel v2 — the developer's reasoning identity profile.
 // Built up over time from captured decisions, trade-offs, and patterns.
+// v1 interface lives in profile-builder.ts for backward compatibility.
 
 import { z } from "zod";
 
-export const ReasoningModelSchema = z.object({
-  decisionStyle: z.enum(["deliberate", "intuitive", "data-driven", "consensus", "mixed"]),
-  tradeOffWeights: z.record(z.string(), z.number().min(0).max(1)),
-  domainDepth: z.record(z.string(), z.enum(["novice", "intermediate", "advanced", "expert"])),
-  explorationHabits: z.object({
-    triesToAlternatives: z.number().min(0),
-    revertFrequency: z.number().min(0),
-    prototypeBeforeCommit: z.boolean(),
-  }),
-  blindSpots: z.array(z.string()),
-  failurePatterns: z.array(
-    z.object({
-      pattern: z.string(),
-      frequency: z.number().min(0),
-      lastOccurred: z.string().datetime(),
-    }),
-  ),
+// ---------------------------------------------------------------------------
+// Pattern — detected reasoning pattern with confidence
+// ---------------------------------------------------------------------------
+
+export const PatternCategorySchema = z.enum([
+  "decision_style",
+  "trade_off",
+  "domain",
+  "ai_interaction",
+  "exploration",
+]);
+
+export type PatternCategory = z.infer<typeof PatternCategorySchema>;
+
+export const PatternV2Schema = z.object({
+  pattern: z.string(),
+  confidence: z.number().min(0).max(1),
+  observedSince: z.string(),
+  lastObserved: z.string(),
+  examples: z.number().int().min(0),
+  category: PatternCategorySchema,
 });
 
-export type ReasoningModel = z.infer<typeof ReasoningModelSchema>;
+export type PatternV2 = z.infer<typeof PatternV2Schema>;
+
+// ---------------------------------------------------------------------------
+// DomainDistributionV2 — domain tracking with depth and trend
+// ---------------------------------------------------------------------------
+
+export const DepthLevelSchema = z.enum(["shallow", "moderate", "deep"]);
+export type DepthLevel = z.infer<typeof DepthLevelSchema>;
+
+export const DepthTrendSchema = z.enum(["stable", "deepening", "broadening"]);
+export type DepthTrend = z.infer<typeof DepthTrendSchema>;
+
+export const DomainDistributionV2Schema = z.object({
+  domain: z.string(),
+  frequency: z.number().int().min(0),
+  percentageOfTotal: z.number().min(0).max(1),
+  lastSeen: z.string(),
+  depth: DepthLevelSchema,
+  depthTrend: DepthTrendSchema,
+  avgAlternativesInDomain: z.number().min(0),
+});
+
+export type DomainDistributionV2 = z.infer<typeof DomainDistributionV2Schema>;
+
+// ---------------------------------------------------------------------------
+// TradeOffPreference — consistent trade-off pattern
+// ---------------------------------------------------------------------------
+
+export const TradeOffPreferenceSchema = z.object({
+  preference: z.string(),
+  confidence: z.number().min(0).max(1),
+  supportingDecisions: z.number().int().min(0),
+  contradictingDecisions: z.number().int().min(0),
+  firstObserved: z.string(),
+  lastObserved: z.string(),
+});
+
+export type TradeOffPreference = z.infer<typeof TradeOffPreferenceSchema>;
+
+// ---------------------------------------------------------------------------
+// ReasoningModelV2 — full personalization profile (on-disk format)
+// ---------------------------------------------------------------------------
+
+export const ReasoningModelV2Schema = z.object({
+  version: z.literal(2),
+  lastUpdated: z.string(),
+  dataPoints: z.number().int().min(0),
+
+  decisionStyle: z.object({
+    avgAlternativesEvaluated: z.number().min(0),
+    medianAlternativesEvaluated: z.number().min(0),
+    explorationDepthMinutes: z.object({
+      overall: z.number().min(0),
+      byDomain: z.record(z.string(), z.number().min(0)),
+    }),
+    aiAcceptanceRate: z.number().min(0).max(1),
+    aiModificationRate: z.number().min(0).max(1),
+    aiModificationByDomain: z.record(z.string(), z.number().min(0).max(1)),
+  }),
+
+  tradeOffPreferences: z.array(TradeOffPreferenceSchema),
+
+  domainDistribution: z.array(DomainDistributionV2Schema),
+
+  patterns: z.array(PatternV2Schema),
+
+  temporalPatterns: z.object({
+    mostProductiveHours: z.array(z.number().int().min(0).max(23)),
+    avgDecisionsPerDay: z.number().min(0),
+    peakDecisionDays: z.array(z.string()),
+  }),
+});
+
+export type ReasoningModelV2 = z.infer<typeof ReasoningModelV2Schema>;

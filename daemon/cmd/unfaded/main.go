@@ -89,10 +89,12 @@ func main() {
 
 	// 4. Start capture orchestrator.
 	eventsDir := resolveEventsDir(projectDir)
+	terminalSocket := filepath.Join(stateDir, "terminal.sock")
 	orchestrator := capture.NewOrchestrator(capture.OrchestratorConfig{
-		ProjectDir: projectDir,
-		EventsDir:  eventsDir,
-		Logger:     log,
+		ProjectDir:     projectDir,
+		EventsDir:      eventsDir,
+		Logger:         log,
+		TerminalSocket: terminalSocket,
 	})
 	if projectDir != "" {
 		if err := orchestrator.Start(); err != nil {

@@ -13,13 +13,18 @@ import type { UnfadeConfig } from "../schemas/config.js";
 import { mountMcpHttp } from "../services/mcp/server.js";
 import { logger } from "../utils/logger.js";
 import { getStateDir } from "../utils/paths.js";
+import { cardsPage } from "./pages/cards.js";
 import { dashboardPage } from "./pages/dashboard.js";
 import { distillPage } from "./pages/distill.js";
 import { profilePage } from "./pages/profile.js";
+import { searchPage } from "./pages/search.js";
 import { settingsPage } from "./pages/settings.js";
+import { amplifyRoutes } from "./routes/amplify.js";
+import { cardsRoutes } from "./routes/cards.js";
 import { contextRoutes } from "./routes/context.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { distillRoutes } from "./routes/distill.js";
+import { feedbackRoutes } from "./routes/feedback.js";
 import { profileRoutes } from "./routes/profile.js";
 import { queryRoutes } from "./routes/query.js";
 
@@ -93,12 +98,17 @@ export function createApp(): Hono {
   app.route("/unfade", decisionsRoutes);
   app.route("/unfade", profileRoutes);
   app.route("/unfade", distillRoutes);
+  app.route("/unfade", cardsRoutes);
+  app.route("/unfade", amplifyRoutes);
+  app.route("/unfade", feedbackRoutes);
 
   // Mount Web UI pages (server-rendered HTML + htmx)
   app.route("", dashboardPage);
   app.route("", distillPage);
   app.route("", profilePage);
   app.route("", settingsPage);
+  app.route("", cardsPage);
+  app.route("", searchPage);
 
   // Mount MCP Streamable HTTP transport at /mcp
   mountMcpHttp(app);

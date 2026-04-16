@@ -42,7 +42,7 @@ describe("UnfadeConfigSchema", () => {
     const result = UnfadeConfigSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.version).toBe(1);
+      expect(result.data.version).toBe(2);
       expect(result.data.capture.sources.git).toBe(true);
       expect(result.data.capture.sources.aiSession).toBe(true);
       expect(result.data.capture.sources.terminal).toBe(false);

@@ -36,12 +36,17 @@ const NotificationSchema = z.object({
   sound: z.boolean().default(false),
 });
 
+const SiteSchema = z.object({
+  outputDir: z.string().default(".unfade/site"),
+});
+
 export const UnfadeConfigSchema = z.object({
-  version: z.literal(1).default(1),
+  version: z.union([z.literal(1), z.literal(2)]).default(2),
   capture: CaptureSchema.default(() => CaptureSchema.parse({})),
   distill: DistillSchema.default(() => DistillSchema.parse({})),
   mcp: McpSchema.default(() => McpSchema.parse({})),
   notification: NotificationSchema.default(() => NotificationSchema.parse({})),
+  site: SiteSchema.default(() => SiteSchema.parse({})),
 });
 
 export type UnfadeConfig = z.infer<typeof UnfadeConfigSchema>;

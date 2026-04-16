@@ -53,7 +53,7 @@ unfade_preexec() {
 unfade_precmd() {
   local exit_code=$?
   if [[ -n "$_unfade_cmd" ]]; then
-    echo '{"cmd":"'"$_unfade_cmd"'","exit":'$exit_code',"duration":'$(($(date +%s)-_unfade_cmd_start))',"cwd":"'"$PWD"'"}' | ${sendBin} --raw &
+    echo '{"cmd":"'"$_unfade_cmd"'","exit":'$exit_code',"duration":'$(($(date +%s)-_unfade_cmd_start))',"cwd":"'"$PWD"'"}' | ${sendBin} --raw 2>/dev/null &
     unset _unfade_cmd _unfade_cmd_start
   fi
 }
@@ -78,7 +78,7 @@ _unfade_preexec() {
 _unfade_precmd() {
   local exit_code=$?
   if [[ -n "$_unfade_cmd" ]]; then
-    echo '{"cmd":"'"$_unfade_cmd"'","exit":'$exit_code',"duration":'$(($(date +%s)-_unfade_cmd_start))',"cwd":"'"$PWD"'"}' | ${sendBin} --raw &
+    echo '{"cmd":"'"$_unfade_cmd"'","exit":'$exit_code',"duration":'$(($(date +%s)-_unfade_cmd_start))',"cwd":"'"$PWD"'"}' | ${sendBin} --raw 2>/dev/null &
     unset _unfade_cmd _unfade_cmd_start
   fi
 }
@@ -101,13 +101,38 @@ end
 function __unfade_precmd --on-event fish_postexec
   set -l exit_code $status
   if test -n "$_unfade_cmd"
-    echo '{"cmd":"'$_unfade_cmd'","exit":'$exit_code',"duration":'(math (date +%s) - $_unfade_cmd_start)',"cwd":"'$PWD'"}' | ${sendBin} --raw &
+    echo '{"cmd":"'$_unfade_cmd'","exit":'$exit_code',"duration":'(math (date +%s) - $_unfade_cmd_start)',"cwd":"'$PWD'"}' | ${sendBin} --raw 2>/dev/null &
     set -e _unfade_cmd
     set -e _unfade_cmd_start
   end
 end
 ${HOOK_END_MARKER}
 `;
+}
+
+/**
+ * Generate hook code for a given shell.
+ * Exported for testing and dry-run display.
+ */
+export function generateHookCode(shell: "zsh" | "bash" | "fish", sendBinPath: string): string {
+  switch (shell) {
+    case "zsh":
+      return zshHook(sendBinPath);
+    case "bash":
+      return bashHook(sendBinPath);
+    case "fish":
+      return fishHook(sendBinPath);
+  }
+}
+
+/**
+ * Check if shell hooks are already installed for the given shell.
+ */
+export function isHookInstalled(shell: "zsh" | "bash" | "fish"): boolean {
+  const rc = rcFilePath(shell);
+  if (!existsSync(rc)) return false;
+  const content = readFileSync(rc, "utf-8");
+  return content.includes(HOOK_MARKER);
 }
 
 export interface ShellHookResult {

@@ -1,0 +1,21 @@
+{
+  "name": "unfade-memory",
+  "description": "Persistent reasoning memory for AI agents",
+  "author": "unfade",
+  "version": "0.1.0",
+  "mcp": {
+    "command": "npx",
+    "args": ["unfade", "mcp"],
+    "transport": "stdio"
+  },
+  "tools": [
+    "unfade_query",
+    "unfade_context",
+    "unfade_decisions",
+    "unfade_profile",
+    "unfade_distill",
+    "unfade_similar",
+    "unfade_amplify"
+  ],
+  "install": "npx unfade"
+}

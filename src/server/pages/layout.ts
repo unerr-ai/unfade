@@ -292,6 +292,8 @@ export function layout(title: string, content: string): string {
     <a href="/">Dashboard</a>
     <a href="/distill">Distill</a>
     <a href="/profile">Profile</a>
+    <a href="/cards">Cards</a>
+    <a href="/search">Search</a>
     <a href="/settings">Settings</a>
   </nav>
   <main>

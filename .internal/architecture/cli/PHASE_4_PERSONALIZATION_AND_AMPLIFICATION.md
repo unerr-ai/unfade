@@ -10,7 +10,7 @@
 >
 > **Foundation doc:** [Research & Design](./UNFADE_CLI_RESEARCH_AND_DESIGN.md)
 >
-> **Last updated:** 2026-04-14
+> **Last updated:** 2026-04-16
 
 ---
 
@@ -21,7 +21,7 @@
 - [3. Research](#3-research)
 - [4. Architecture](#4-architecture)
 - [5. Design Principles](#5-design-principles)
-- [6. Implementation Plan](#6-implementation-plan)
+- [6. Implementation Plan (Micro-Sprints 4A–4C)](#6-implementation-plan-micro-sprints-4a4c)
 - [7. Success Metrics](#7-success-metrics)
 - [8. Risk Assessment](#8-risk-assessment)
 
@@ -231,34 +231,32 @@ Your exploration depth varies by domain:
 
 ---
 
----
+## 6. Implementation Plan (Micro-Sprints 4A–4C)
 
-## 5b. Execution Guide (Day 4: The Moat — Personalization & Amplification)
+### Phase 4 Boundary
 
-> **Sourced from:** Master Execution Blueprint — consolidated tasks with acid tests, strict contracts, and agent directives for AI-agent-driven execution.
+> **Phase 3 delivers:** Amplification v1 (cross-temporal connections), `unfade_similar` MCP tool, `unfade_amplify` MCP tool, Web UI `/search` page, card generation pipeline, terminal capture, debugging session detection.
+>
+> **Phase 4 adds:** Personalization engine (pattern detection, domain tracking, profile building), ReasoningModelV2, personalized distills, amplification v2 (cross-domain), profile visualization v2, enhanced similar-decision search with personalization weighting, pattern feedback mechanism.
 
-### Acid Test
+#### TypeScript READS/WRITES (Phase 4)
 
-```
-# Personalization test
-unfade distill
-cat .unfade/distills/YYYY-MM-DD.md
-→ PERSONALIZATION section with baseline comparisons
+| Component | Reads | Writes |
+|---|---|---|
+| Pattern detector | `.unfade/events/*.jsonl`, `.unfade/distills/*.md` | (in-memory patterns → profile builder) |
+| Domain tracker | `.unfade/events/*.jsonl`, `.unfade/profile/reasoning_model.json` | (in-memory domain data → profile builder) |
+| Profile builder | Pattern detector output, domain tracker output, `.unfade/profile/reasoning_model.json` (v1 or v2) | `.unfade/profile/reasoning_model.json` (v2) |
+| Profile migration | `.unfade/profile/reasoning_model.json` (v1), `.unfade/events/*.jsonl` | `.unfade/profile/reasoning_model.json` (v2), `.unfade/profile/reasoning_model.v1.backup.json` |
+| Personalized distill | `.unfade/profile/reasoning_model.json` (v2) | PERSONALIZATION section in `.unfade/distills/YYYY-MM-DD.md` |
+| Amplifier v2 | `.unfade/graph/decisions_index.json`, `.unfade/distills/*.md`, `.unfade/profile/reasoning_model.json` | `.unfade/amplification/connections.jsonl`, `.unfade/graph/decisions_index.json` |
+| Pattern feedback | POST `/feedback` input | `.unfade/amplification/feedback.jsonl` |
+| Profile web UI v2 | `.unfade/profile/reasoning_model.json` (v2) | HTTP response (HTML) |
+| ProfileCard TUI | `.unfade/profile/reasoning_model.json` (v2) | stderr (Ink render) |
+| Enhanced search | `.unfade/graph/decisions_index.json`, `.unfade/profile/reasoning_model.json` | HTTP response (HTML) |
 
-# Amplification test
-→ CONNECTIONS section with at least one cross-temporal link (use --backfill data)
+#### Key Data Contracts
 
-# MCP test
-# In Claude Code with Unfade MCP:
-> "Are there similar decisions I've made before about caching?"
-→ Agent calls unfade_similar and returns relevant past decisions
-
-# Profile test
-open http://localhost:7654/profile
-→ Enhanced profile with decision style, domains, trade-off preferences
-```
-
-### Strict Contracts
+**ReasoningModelV2 schema:** Defined in Section 4.2 above. Profile builder MUST produce this exact shape. All consumers (distill, web UI, TUI, MCP tools) read this schema.
 
 **decisions_index.json (inverted index for O(1) amplification lookups):**
 
@@ -281,7 +279,7 @@ open http://localhost:7654/profile
 }
 ```
 
-**Amplification matching rules (conservative v1):**
+**Amplification matching rules (conservative):**
 ```
 For each new decision:
   1. Extract domain + keywords
@@ -319,51 +317,6 @@ Non-judgmental — may be intentional expertise. Dismissable via feedback.
 }
 ```
 
-### Consolidated Tasks (4) with Agent Directives
-
-#### Task 4.1: Personalization Engine
-
-Evolve the reasoning profile from a seed to a learning model. Each distillation updates the profile incrementally.
-
-**Agent directive:** "Build `src/services/personalization/engine.ts`. The engine takes the current `ReasoningModel` and a new `DailyDistill` and produces an updated `ReasoningModel`. Update rules: `avg_alternatives_evaluated` is a running average (weighted: new data gets 2x weight of historical). `convergence_speed` recalculated from last 30 days. `domain_depth` incremented per domain. `exploration_habits` updated from dead ends and AI acceptance patterns. `trade_off_weights` updated from consistent trade-off direction signals. Write updated model to `profile/reasoning_model.json`. Also enhance the distill pipeline's Stage 3 (synthesizer) to include a PERSONALIZATION section in the distill output: compare today's metrics against the profile baseline. E.g., 'Alternatives evaluated: 4 (your avg: 3.2 ↑)', 'New domain: security (first time in 30 days)'."
-
-#### Task 4.2: Amplification Engine
-
-Detect cross-temporal connections between today's decisions and past reasoning.
-
-**Agent directive:** "Build `src/services/distill/amplifier.ts`. After distillation produces new decisions, the amplifier: (1) Builds/updates `graph/decisions_index.json` — inverted index by domain, keyword, and file path with line offsets into decisions.jsonl. (2) For each new decision, looks up candidates via set intersection on the index. (3) Scores candidates (require ≥2 signal matches, score > 0.3). (4) For high-confidence matches, generates a connection insight (simple template: 'On [date], you [past_decision]. Today you [today_decision]. [similarity note]'). (5) Writes connections to `amplification/connections.jsonl`. (6) Appends a CONNECTIONS section to the day's distill markdown. Build `src/services/personalization/matcher.ts` for the matching logic. Keep matching conservative — false positives destroy trust."
-
-#### Task 4.3: Blind Spot Detection + Feedback
-
-Identify domains where the developer decides frequently but explores shallowly. Provide a mechanism to mark surfaced connections as helpful/unhelpful.
-
-**Agent directive:** "Extend the personalization engine to detect blind spots after each distillation. Scan `domain_depth` in the profile: for each domain with `decision_count >= 5`, compute avg alternatives per decision for that domain. If avg < 1.5, flag as blind spot candidate. Compute severity: `decision_count × (1 / avg_alternatives)`. Add to the distill's PERSONALIZATION section. For feedback: add `POST /feedback` HTTP endpoint — accepts `{ connection_id: string, helpful: boolean }`. Store feedback in `amplification/feedback.jsonl`. Future amplification runs read feedback to adjust matching thresholds (if >30% of connections for a domain are marked unhelpful, raise the threshold for that domain)."
-
-#### Task 4.4: Web UI /search + MCP Tools
-
-Search page for querying reasoning history, and MCP tools for AI agent access to amplification.
-
-**Agent directive:** "Build `src/server/pages/search.ts` — GET /search renders HTML page with: search input (`hx-get='/query?q=...' hx-trigger='keyup changed delay:300ms'`), results list (decisions with date, domain, rationale), similar decisions panel. The search is live — htmx fires on each keystroke with debounce. Wire up `unfade_amplify` and `unfade_similar` MCP tools in `src/mcp/tools.ts`: `unfade_amplify()` reads connections.jsonl and returns recent connections. `unfade_similar(context: string)` extracts keywords from the context, queries the decisions index, returns top 5 similar past decisions. Update `src/server/routes/amplify.ts` and `src/server/routes/similar.ts` HTTP endpoints to use the same amplification/matching logic."
-
-## 6. Implementation Plan
-
-### Sprint 7: Personalization Engine v1
-
-> **Goal:** Full personalization engine with pattern detection, domain tracking, and profile display. Distills include personalized observations. Context delivery adapts to developer's style.
-
-| Task | Description | File | Status |
-|---|---|---|---|
-| **UF-070** | Pattern detector v2: analyze accumulated decisions for recurring patterns — decision breadth, exploration depth by domain, AI interaction style, trade-off preferences. Output patterns with confidence scores | `src/services/personalization/pattern-detector.ts` | [ ] |
-| **UF-071** | Domain tracker v2: track expertise evolution over time — frequency, depth progression (shallow → moderate → deep), cross-domain connections, complexity trends | `src/services/personalization/domain-tracker.ts` | [ ] |
-| **UF-072** | Profile builder v2: upgrade `reasoning_model.json` to v2 schema — merge new data with running averages, apply temporal decay (recent data weighted 2x), detect trade-off preferences from decision history, calculate confidence scores | `src/services/personalization/profile-builder.ts` | [ ] |
-| **UF-073** | Personalization in distill: add PERSONALIZATION section to Daily Distill — decision style summary, domain depth comparison, emerging patterns (>0.7 confidence), comparison to personal baseline | `src/services/distill/distiller.ts` | [ ] |
-| **UF-074** | Profile web UI page (v2): enhanced `/profile` page with decision style radar, domain distribution chart, top patterns with confidence bars, temporal activity heatmap, AI interaction summary. TUI dashboard shows profile summary inline (decision style, top domain, AI collab rate). MCP tool `unfade_profile` and HTTP endpoint `/profile` remain available | `src/server/pages/profile.ts` | [ ] |
-| **UF-075** | ProfileCard Ink component: visual reasoning profile with domain bars, pattern list, decision style indicators, trend arrows for evolving metrics — displayed in TUI dashboard | `src/components/ProfileCard.tsx` | [ ] |
-| **UF-076** | Enhanced similar-decision search: weighted similarity using personalization — match by domain, decision style, trade-off pattern, not just keywords. Web UI `/search` page (added in Phase 3) enhanced with personalization weighting. MCP tool `unfade_similar` is the primary agent consumption path. `unfade query "..."` CLI covers both keyword and similar search from terminal | `src/server/pages/search.ts` | [ ] |
-| **UF-077** | Profile migration: v1 → v2 schema migration for `reasoning_model.json`. Preserve accumulated data, compute new fields from historical events | `src/config/migrations.ts` | [ ] |
-| **UF-078** | Amplification v2: cross-temporal AND cross-domain connection surfacing — "You made a caching decision today. Your auth token storage decision last week used similar trade-off reasoning (simplicity over flexibility)" | `src/services/distill/amplifier.ts` | [ ] |
-| **UF-079** | Pattern feedback: web UI `/profile` page includes "correct this" buttons on each pattern — developer marks patterns as accurate/inaccurate, feedback adjusts confidence scores. Also accessible via `unfade_profile --correct` MCP tool | `src/services/personalization/profile-builder.ts` | [ ] |
-
 #### File Tree Changes (Phase 4)
 
 - **Removed:** `src/commands/profile.ts` — profile visualization moved to web UI `/profile` page
@@ -371,35 +324,145 @@ Search page for querying reasoning history, and MCP tools for AI agent access to
 - **Added:** `src/server/pages/profile.ts` — enhanced with personalization v2 data (decision style radar, domain distribution, patterns)
 - **Note:** `src/server/pages/search.ts` was added in Phase 3; enhanced here with personalization weighting
 
+---
+
+### Sprint 4A — Personalization Engine Core (TypeScript, 4 tasks)
+
+> **Objective:** Build the pure algorithmic core — pattern detector, domain tracker, profile builder, and v1→v2 migration. No UI, no MCP, no distill integration. Output: `reasoning_model.json` v2 written correctly from accumulated events.
+
+**Acid test:**
+```bash
+pnpm test -- --grep "pattern-detector|domain-tracker|profile-builder|migrations"
+# All 14 tests pass
+
+# Verify profile migration
+node -e "
+  const fs = require('fs');
+  const v1 = { version: 1, dataPoints: 10 };
+  fs.writeFileSync('.unfade/profile/reasoning_model.json', JSON.stringify(v1));
+"
+# Run migration → produces v2 with all new fields computed from events
+cat .unfade/profile/reasoning_model.json | jq '.version' # → 2
+ls .unfade/profile/reasoning_model.v1.backup.json # → exists
+```
+
+| Task | Description | File | Status |
+|---|---|---|---|
+| **UF-070** | Pattern detector v2: analyze accumulated decisions for recurring patterns — decision breadth, exploration depth by domain, AI interaction style, trade-off preferences. Output patterns with confidence scores. Patterns only surface at >0.7 confidence | `src/services/personalization/pattern-detector.ts` | [x] |
+| **UF-071** | Domain tracker v2: track expertise evolution over time — frequency, depth progression (shallow → moderate → deep), cross-domain connections, complexity trends. Calculate depth trend (stable/deepening/broadening) | `src/services/personalization/domain-tracker.ts` | [x] |
+| **UF-072** | Profile builder v2: upgrade `reasoning_model.json` to v2 schema (Section 4.2) — merge new data with running averages, apply temporal decay (recent data weighted 2x), detect trade-off preferences from decision history, calculate confidence scores. Consumes pattern detector + domain tracker output | `src/services/personalization/profile-builder.ts` | [x] |
+| **UF-077** | Profile migration: v1 → v2 schema migration for `reasoning_model.json`. Preserve accumulated data, compute new fields from historical events. Write backup to `reasoning_model.v1.backup.json` | `src/config/migrations.ts` | [x] |
+
+> **Agent Directive:** "You are building the personalization engine core — pure algorithmic logic with NO UI and NO HTTP/MCP integration. UF-070 pattern-detector takes an array of decisions and returns detected patterns with confidence scores. UF-071 domain-tracker takes decisions and returns domain distribution with depth/trend data. UF-072 profile-builder orchestrates both, merges with existing profile, applies temporal decay, and writes `reasoning_model.json` v2 (schema in Section 4.2 of this doc). UF-077 handles migration from v1→v2 with backup. All modules are pure functions over data — no side effects beyond file I/O to `.unfade/profile/`. Import schemas from `src/schemas/`. Use `src/utils/paths.ts` for all path resolution."
+
+**Strict Contracts:**
+- Pattern detector input: `Decision[]` → output: `Pattern[]` (with confidence, category, examples count)
+- Domain tracker input: `Decision[]` → output: `DomainDistribution[]` (with depth, depthTrend, frequency)
+- Profile builder input: `Pattern[]` + `DomainDistribution[]` + existing `ReasoningModelV2 | null` → output: `ReasoningModelV2` written to disk
+- Migration: reads v1, produces v2, writes backup — non-destructive
+
+---
+
+### Sprint 4B — Distill & Amplification Pipeline (TypeScript, 3 tasks)
+
+> **Objective:** Wire personalization into the distill pipeline and upgrade amplification to cross-domain. Add feedback mechanism. Output: distills contain PERSONALIZATION section, amplification surfaces cross-domain connections, feedback adjusts thresholds.
+
+**Acid test:**
+```bash
+pnpm test -- --grep "distiller|amplifier|feedback"
+# All 6 tests pass
+
+unfade distill
+cat .unfade/distills/YYYY-MM-DD.md
+# → Contains PERSONALIZATION section with baseline comparisons
+# → Contains CONNECTIONS section with cross-domain links (if data exists)
+
+curl -X POST http://localhost:7654/feedback \
+  -H 'Content-Type: application/json' \
+  -d '{"connection_id":"conn-001","helpful":false}'
+# → 200 OK, feedback stored in .unfade/amplification/feedback.jsonl
+```
+
+| Task | Description | File | Status |
+|---|---|---|---|
+| **UF-073** | Personalization in distill: add PERSONALIZATION section to Daily Distill — decision style summary, domain depth comparison, emerging patterns (>0.7 confidence), comparison to personal baseline. Reads `reasoning_model.json` v2 | `src/services/distill/distiller.ts` | [x] |
+| **UF-078** | Amplification v2: cross-temporal AND cross-domain connection surfacing. Builds/updates `graph/decisions_index.json` inverted index. Uses matching rules (≥2 signals, score > 0.3). Generates connection insights. Writes to `amplification/connections.jsonl`. Appends CONNECTIONS section to distill | `src/services/distill/amplifier.ts` | [x] |
+| **UF-079** | Pattern feedback mechanism: `POST /feedback` HTTP endpoint accepts `{ connection_id, helpful }`. Stores in `amplification/feedback.jsonl`. Future amplification reads feedback to adjust matching thresholds (>30% unhelpful for a domain → raise threshold). Blind spot detection: domains with `decision_count ≥ 5` and `avg_alternatives < 1.5` flagged in PERSONALIZATION section | `src/services/personalization/feedback.ts`, `src/server/routes/feedback.ts` | [x] |
+
+> **Agent Directive:** "You are wiring the personalization engine (Sprint 4A) into the distill pipeline and upgrading amplification. UF-073 modifies the existing distiller to read `reasoning_model.json` v2 and append a PERSONALIZATION section after Stage 3 synthesis. UF-078 upgrades the existing amplifier (from Phase 3) to support cross-domain matching using the decisions_index.json inverted index — use the matching rules from Phase 4 Boundary. UF-079 adds the feedback loop: HTTP POST endpoint + JSONL storage + threshold adjustment. Also adds blind spot detection logic to the personalization section. All I/O paths via `src/utils/paths.ts`. Feedback JSONL schema: `{ connection_id: string, helpful: boolean, timestamp: string, domain?: string }`."
+
+**Strict Contracts:**
+- Personalized distill reads `ReasoningModelV2` → appends markdown section with decision style, domain comparison, emerging patterns
+- Amplifier v2 reads/writes `decisions_index.json` (schema in Phase 4 Boundary) + writes `connections.jsonl` (connection schema in Phase 4 Boundary)
+- Feedback endpoint: `POST /feedback` → `{ connection_id: string, helpful: boolean }` → stored in `feedback.jsonl`
+- Blind spot: `decision_count ≥ 5 AND avg_alternatives < 1.5` → severity formula in Phase 4 Boundary
+
+---
+
+### Sprint 4C — UI & MCP Exposure (TypeScript, 3 tasks)
+
+> **Objective:** Surface personalization to users via web UI, TUI, and enhanced MCP tools. Output: `/profile` page shows full reasoning profile v2, ProfileCard in TUI dashboard, `/search` page uses personalization weighting.
+
+**Acid test:**
+```bash
+pnpm test -- --grep "profile.test|search.test|ProfileCard"
+# All 5 tests pass
+
+open http://localhost:7654/profile
+# → Decision style radar, domain distribution, patterns with confidence bars
+
+unfade dash
+# → ProfileCard visible with domain bars, decision style, trend arrows
+
+# In Claude Code with Unfade MCP:
+> "Are there similar decisions I've made before about caching?"
+# → Agent calls unfade_similar → returns personalization-weighted results
+```
+
+| Task | Description | File | Status |
+|---|---|---|---|
+| **UF-074** | Profile web UI page (v2): enhanced `/profile` page with decision style radar, domain distribution chart, top patterns with confidence bars, temporal activity heatmap, AI interaction summary. MCP tool `unfade_profile` and HTTP endpoint `/profile` remain available | `src/server/pages/profile.ts` | [x] |
+| **UF-075** | ProfileCard Ink component: visual reasoning profile with domain bars, pattern list, decision style indicators, trend arrows for evolving metrics — displayed in TUI dashboard | `src/components/ProfileCard.tsx` | [x] |
+| **UF-076** | Enhanced similar-decision search: weighted similarity using personalization — match by domain, decision style, trade-off pattern, not just keywords. Web UI `/search` page (added in Phase 3) enhanced with personalization weighting. MCP tool `unfade_similar` is the primary agent consumption path. `unfade query "..."` CLI covers both keyword and similar search from terminal | `src/server/pages/search.ts`, `src/services/distill/amplifier.ts` | [x] |
+
+> **Agent Directive:** "You are building the user-facing layer for personalization. UF-074 enhances the existing `/profile` web UI page to display ReasoningModelV2 data — decision style radar (htmx partial), domain distribution chart, patterns with confidence bars, temporal heatmap. UF-075 builds a ProfileCard Ink component for the TUI dashboard — reads `reasoning_model.json` v2 and renders domain bars, pattern list, decision style summary, trend arrows. UF-076 enhances the existing `/search` page (from Phase 3) with personalization-weighted matching: when computing similarity, weight by domain relevance from profile, decision style match, and trade-off pattern overlap. All rendering to stderr (TUI) or HTTP response (web). stdout is sacred — MCP only."
+
+**Strict Contracts:**
+- Profile page reads `ReasoningModelV2` → renders HTML with htmx partials. Same data available via `unfade_profile` MCP tool (existing) and `GET /profile` HTTP endpoint
+- ProfileCard reads `ReasoningModelV2` → renders to stderr via Ink. Shows: top 3 domains with bars, decision style (breadth + AI rate), active patterns count, trend arrows
+- Enhanced search: similarity score = `keyword_match * 0.4 + domain_match * 0.3 + style_match * 0.2 + tradeoff_match * 0.1` (personalization weights)
+
+---
+
 ### Tests
 
-| Test | What It Validates | File |
-|---|---|---|
-| **T-155** | Pattern detector: detects "high alternatives evaluator" pattern from decision history | `test/services/personalization/pattern-detector.test.ts` |
-| **T-156** | Pattern detector: detects trade-off preference from consistent choices | `test/services/personalization/pattern-detector.test.ts` |
-| **T-157** | Pattern detector: confidence increases with more supporting examples | `test/services/personalization/pattern-detector.test.ts` |
-| **T-158** | Pattern detector: contradicting evidence reduces confidence | `test/services/personalization/pattern-detector.test.ts` |
-| **T-159** | Pattern detector: returns no patterns below 0.7 confidence | `test/services/personalization/pattern-detector.test.ts` |
-| **T-160** | Pattern detector: detects AI modification rate by domain | `test/services/personalization/pattern-detector.test.ts` |
-| **T-161** | Domain tracker: tracks frequency distribution across domains | `test/services/personalization/domain-tracker.test.ts` |
-| **T-162** | Domain tracker: detects depth progression (shallow → moderate → deep) | `test/services/personalization/domain-tracker.test.ts` |
-| **T-163** | Domain tracker: identifies cross-domain connections | `test/services/personalization/domain-tracker.test.ts` |
-| **T-164** | Domain tracker: calculates depth trend (stable/deepening/broadening) | `test/services/personalization/domain-tracker.test.ts` |
-| **T-165** | Profile builder v2: merges new data with running averages | `test/services/personalization/profile-builder.test.ts` |
-| **T-166** | Profile builder v2: applies temporal decay (recent data weighted higher) | `test/services/personalization/profile-builder.test.ts` |
-| **T-167** | Profile builder v2: detects trade-off preferences from history | `test/services/personalization/profile-builder.test.ts` |
-| **T-168** | Profile builder v2: handles v1 → v2 migration | `test/services/personalization/profile-builder.test.ts` |
-| **T-169** | Profile builder v2: correction feedback adjusts confidence | `test/services/personalization/profile-builder.test.ts` |
-| **T-170** | Personalized distill: includes PERSONALIZATION section | `test/services/distill/distiller.test.ts` |
-| **T-171** | Personalized distill: comparison to personal baseline | `test/services/distill/distiller.test.ts` |
-| **T-172** | Personalized distill: only shows patterns above 0.7 confidence | `test/services/distill/distiller.test.ts` |
-| **T-173** | Web UI profile page: displays decision style summary | `test/server/pages/profile.test.ts` |
-| **T-174** | Web UI profile page: displays domain distribution | `test/server/pages/profile.test.ts` |
-| **T-175** | Web UI profile page: displays patterns with confidence | `test/server/pages/profile.test.ts` |
-| **T-176** | Web UI search page + MCP tool `unfade_similar`: uses personalization for weighted matching | `test/server/pages/search.test.ts` |
-| **T-177** | Web UI search page + MCP tool `unfade_similar`: finds cross-domain similar decisions | `test/server/pages/search.test.ts` |
-| **T-178** | Amplification v2: surfaces cross-domain connection | `test/services/distill/amplifier.test.ts` |
-| **T-179** | Amplification v2: includes trade-off reasoning comparison | `test/services/distill/amplifier.test.ts` |
+| Sprint | Test | What It Validates | File |
+|---|---|---|---|
+| 4A | **T-186** | Pattern detector: detects "high alternatives evaluator" pattern from decision history | `test/services/personalization/pattern-detector.test.ts` |
+| 4A | **T-187** | Pattern detector: detects trade-off preference from consistent choices | `test/services/personalization/pattern-detector.test.ts` |
+| 4A | **T-188** | Pattern detector: confidence increases with more supporting examples | `test/services/personalization/pattern-detector.test.ts` |
+| 4A | **T-189** | Pattern detector: contradicting evidence reduces confidence | `test/services/personalization/pattern-detector.test.ts` |
+| 4A | **T-190** | Pattern detector: returns no patterns below 0.7 confidence | `test/services/personalization/pattern-detector.test.ts` |
+| 4A | **T-191** | Pattern detector: detects AI modification rate by domain | `test/services/personalization/pattern-detector.test.ts` |
+| 4A | **T-192** | Domain tracker: tracks frequency distribution across domains | `test/services/personalization/domain-tracker.test.ts` |
+| 4A | **T-193** | Domain tracker: detects depth progression (shallow → moderate → deep) | `test/services/personalization/domain-tracker.test.ts` |
+| 4A | **T-194** | Domain tracker: identifies cross-domain connections | `test/services/personalization/domain-tracker.test.ts` |
+| 4A | **T-195** | Domain tracker: calculates depth trend (stable/deepening/broadening) | `test/services/personalization/domain-tracker.test.ts` |
+| 4A | **T-196** | Profile builder v2: merges new data with running averages | `test/services/personalization/profile-builder.test.ts` |
+| 4A | **T-197** | Profile builder v2: applies temporal decay (recent data weighted higher) | `test/services/personalization/profile-builder.test.ts` |
+| 4A | **T-198** | Profile builder v2: detects trade-off preferences from history | `test/services/personalization/profile-builder.test.ts` |
+| 4A | **T-199** | Profile builder v2: handles v1 → v2 migration | `test/services/personalization/profile-builder.test.ts` |
+| 4B | **T-200** | Personalized distill: includes PERSONALIZATION section | `test/services/distill/personalized-distiller.test.ts` |
+| 4B | **T-201** | Personalized distill: comparison to personal baseline | `test/services/distill/personalized-distiller.test.ts` |
+| 4B | **T-202** | Personalized distill: only shows patterns above 0.7 confidence | `test/services/distill/personalized-distiller.test.ts` |
+| 4B | **T-203** | Amplification v2: surfaces cross-domain connection | `test/services/distill/amplifier-v2.test.ts` |
+| 4B | **T-204** | Amplification v2: includes trade-off reasoning comparison | `test/services/distill/amplifier-v2.test.ts` |
+| 4B | **T-205** | Pattern feedback: correction adjusts confidence scores | `test/services/personalization/feedback.test.ts` |
+| 4C | **T-206** | Web UI profile page: displays decision style summary | `test/server/pages/profile-v2.test.ts` |
+| 4C | **T-207** | Web UI profile page: displays domain distribution | `test/server/pages/profile-v2.test.ts` |
+| 4C | **T-208** | Web UI profile page: displays patterns with confidence | `test/server/pages/profile-v2.test.ts` |
+| 4C | **T-209** | Web UI search page + MCP tool `unfade_similar`: uses personalization for weighted matching | `test/services/distill/personalized-search.test.ts` |
+| 4C | **T-210** | Web UI search page + MCP tool `unfade_similar`: finds cross-domain similar decisions | `test/services/distill/personalized-search.test.ts` |
 
 ---
 
@@ -414,7 +477,7 @@ Search page for querying reasoning history, and MCP tools for AI agent access to
 | **Distill improvement** | N/A | Personalized distills rated higher quality than pre-personalization distills | A/B comparison |
 | **Context shaping accuracy** | N/A | Shaped MCP context leads to better AI responses (qualitative) | Before/after comparison |
 | **Data points per profile** | N/A | >50 decision observations for confident patterns | `reasoning_model.json` dataPoints field |
-| **Test count** | 154 (Phase 3) | 179+ tests, all passing | `pnpm test` |
+| **Test count** | 185+ (Phase 3) | 210+ tests, all passing | `pnpm test` |
 
 ---
 

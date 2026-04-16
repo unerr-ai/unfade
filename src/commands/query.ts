@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { QueryOutput } from "../schemas/mcp.js";
 import { queryEvents } from "../tools/unfade-query.js";
+import { handleCliError } from "../utils/cli-error.js";
 import { logger } from "../utils/logger.js";
 import { getStateDir } from "../utils/paths.js";
 
@@ -104,24 +105,28 @@ function formatResults(result: QueryOutput): void {
  * Execute the `unfade query` command.
  */
 export async function queryCommand(search: string, options: QueryCommandOptions): Promise<void> {
-  // Try HTTP API first
-  const serverUrl = readServerUrl();
-  let result: QueryOutput | null = null;
+  try {
+    // Try HTTP API first
+    const serverUrl = readServerUrl();
+    let result: QueryOutput | null = null;
 
-  if (serverUrl) {
-    result = await queryViaHttp(serverUrl, search, options);
-  }
+    if (serverUrl) {
+      result = await queryViaHttp(serverUrl, search, options);
+    }
 
-  // Fall back to direct file read
-  if (!result) {
-    result = queryDirect(search, options);
-  }
+    // Fall back to direct file read
+    if (!result) {
+      result = queryDirect(search, options);
+    }
 
-  // Output
-  if (options.json) {
-    // --json: raw JSON to stdout
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  } else {
-    formatResults(result);
+    // Output
+    if (options.json) {
+      // --json: raw JSON to stdout
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      formatResults(result);
+    }
+  } catch (err) {
+    handleCliError(err, "query");
   }
 }

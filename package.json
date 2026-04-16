@@ -1,11 +1,16 @@
 {
   "name": "unfade",
   "version": "0.1.0",
-  "description": "Passively capture engineering reasoning from developer workflows",
+  "description": "Passively capture engineering reasoning from developer workflows. Your AI tools remember how you think.",
   "type": "module",
   "bin": {
     "unfade": "./dist/cli.mjs"
   },
+  "files": [
+    "dist/",
+    "skills/",
+    "server.json"
+  ],
   "scripts": {
     "build": "tsdown",
     "dev": "tsx watch src/entrypoints/cli.ts",
@@ -14,6 +19,22 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "keywords": [
+    "unfade",
+    "reasoning",
+    "mcp",
+    "ai",
+    "developer-tools",
+    "distill",
+    "capture",
+    "thinking-graph",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unerr-ai/unfade.git"
+  },
+  "homepage": "https://github.com/unerr-ai/unfade#readme",
   "engines": {
     "node": ">=20.0.0"
   },
@@ -21,6 +42,7 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "@biomejs/biome",
+      "@resvg/resvg-js",
       "esbuild"
     ]
   },
@@ -30,6 +52,7 @@
     "@commander-js/extra-typings": "^14.0.0",
     "@hono/node-server": "^1.19.14",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@resvg/resvg-js": "^2.6.2",
     "ai": "^6.0.162",
     "commander": "^14.0.0",
     "hono": "^4.12.14",
@@ -38,6 +61,7 @@
     "ollama-ai-provider": "^1.2.0",
     "picocolors": "^1.1.0",
     "react": "^19.2.5",
+    "satori": "^0.26.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

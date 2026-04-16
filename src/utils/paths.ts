@@ -74,6 +74,11 @@ export function getGraphDir(cwd?: string): string {
   return join(getProjectDataDir(cwd), "graph");
 }
 
+/** `.unfade/amplification/` — connection and feedback data. */
+export function getAmplificationDir(cwd?: string): string {
+  return join(getProjectDataDir(cwd), "amplification");
+}
+
 /** `.unfade/cache/` — temporary computation cache. */
 export function getCacheDir(cwd?: string): string {
   return join(getProjectDataDir(cwd), "cache");
@@ -87,6 +92,16 @@ export function getLogsDir(cwd?: string): string {
 /** `.unfade/bin/` — daemon binaries (unfaded, unfade-send). */
 export function getBinDir(cwd?: string): string {
   return join(getProjectDataDir(cwd), "bin");
+}
+
+/** `.unfade/cards/` — generated Unfade Card PNG images. */
+export function getCardsDir(cwd?: string): string {
+  return join(getProjectDataDir(cwd), "cards");
+}
+
+/** `.unfade/site/` — generated Thinking Graph static site. */
+export function getSiteDir(cwd?: string): string {
+  return join(getProjectDataDir(cwd), "site");
 }
 
 /** `~/.unfade/state/` — user-level global state (repos.json, etc). */
