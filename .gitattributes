@@ -1,0 +1,20 @@
+# Normalize line endings
+* text=auto eol=lf
+
+# Source files
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.go text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Lock files — don't show diffs
+pnpm-lock.yaml -diff
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary
