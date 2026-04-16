@@ -146,14 +146,14 @@ make clean        # Remove binaries
 ## Key Documents
 
 ### Product
-- `docs/product/unfade.md` — Full product strategy
-- `docs/product/unfade_support.md` — Competitive analysis and prioritization
+- `.internal/product/unfade.md` — Full product strategy
+- `.internal/product/unfade_support.md` — Competitive analysis and prioritization
 
 ### Architecture
-- `docs/architecture/VERTICAL_SLICING_PLAN.md` — Overall build sequencing
-- `docs/architecture/cli/PHASE_0_SCAFFOLDING.md` — Scaffolding, config, paths, logger
-- `docs/architecture/cli/PHASE_1_CAPTURE_AND_DISTILL.md` — Events, distillation, LLM providers
-- `docs/architecture/cli/PHASE_2_HOOKS_API_AND_MCP.md` — MCP server, HTTP API, git hooks
-- `docs/architecture/cli/PHASE_3_CARDS_AND_TERMINAL.md` — Unfade Cards, TUI dashboard, web UI
-- `docs/architecture/cli/PHASE_4_PERSONALIZATION_AND_AMPLIFICATION.md` — Profile v2, patterns, amplification
-- `docs/architecture/cli/PHASE_5_ECOSYSTEM_LAUNCH.md` — Config migration, error handling, E2E, launch prep
+- `.internal/architecture/VERTICAL_SLICING_PLAN.md` — Overall build sequencing
+- `.internal/architecture/cli/PHASE_0_SCAFFOLDING.md` — Scaffolding, config, paths, logger
+- `.internal/architecture/cli/PHASE_1_CAPTURE_AND_DISTILL.md` — Events, distillation, LLM providers
+- `.internal/architecture/cli/PHASE_2_HOOKS_API_AND_MCP.md` — MCP server, HTTP API, git hooks
+- `.internal/architecture/cli/PHASE_3_CARDS_AND_TERMINAL.md` — Unfade Cards, TUI dashboard, web UI
+- `.internal/architecture/cli/PHASE_4_PERSONALIZATION_AND_AMPLIFICATION.md` — Profile v2, patterns, amplification
+- `.internal/architecture/cli/PHASE_5_ECOSYSTEM_LAUNCH.md` — Config migration, error handling, E2E, launch prep

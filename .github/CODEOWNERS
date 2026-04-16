@@ -1,0 +1,8 @@
+# Default owners for everything in the repo
+* @unerr-ai/core
+
+# Go capture engine
+/daemon/ @unerr-ai/core
+
+# CI/CD
+/.github/ @unerr-ai/core

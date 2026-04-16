@@ -32,6 +32,9 @@ daemon/vendor/
 # Created by `unfade init` — user-specific, never committed
 .unfade/
 
+# --- Internal docs (strategy, architecture — not for public repo) ---
+.internal/
+
 # --- IDE ---
 .idea/
 .vscode/
