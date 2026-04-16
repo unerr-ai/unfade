@@ -6,7 +6,9 @@ import { Command } from "@commander-js/extra-typings";
 import { daemonStatusCommand, daemonStopCommand } from "../commands/daemon.js";
 import { distillCommand } from "../commands/distill.js";
 import { initCommand } from "../commands/init.js";
+import { mcpCommand } from "../commands/mcp.js";
 import { openCommand } from "../commands/open.js";
+import { queryCommand } from "../commands/query.js";
 import { logger } from "../utils/logger.js";
 
 const program = new Command()
@@ -45,9 +47,48 @@ program
 program
   .command("query")
   .description("Semantic search across reasoning history")
-  .argument("[search]", "Search query")
-  .action((_search) => {
-    logger.info("unfade query: not implemented yet");
+  .argument("<search>", "Search query")
+  .option("--from <date>", "Start date (YYYY-MM-DD)")
+  .option("--to <date>", "End date (YYYY-MM-DD)")
+  .option("--limit <n>", "Max results (default: 10)")
+  .action(async (search, opts) => {
+    await queryCommand(search, {
+      from: opts.from,
+      to: opts.to,
+      limit: opts.limit,
+      json: program.opts().json ?? false,
+    });
+  });
+
+program
+  .command("server")
+  .description("Start the local HTTP API server")
+  .option("--port <port>", "Override HTTP port (default: 7654)")
+  .action(async (opts) => {
+    const { bootstrapServer } = await import("../services/daemon/server-bootstrap.js");
+    if (opts.port) {
+      process.env.UNFADE_MCP__HTTP_PORT = opts.port;
+    }
+    const server = await bootstrapServer();
+    logger.info(`Server running on ${server.info.transport.http}`);
+    // Keep process alive
+    process.on("SIGINT", () => {
+      server.close();
+      process.exit(0);
+    });
+    process.on("SIGTERM", () => {
+      server.close();
+      process.exit(0);
+    });
+  });
+
+// --- MCP (hidden — IDE integration only) ---
+
+program
+  .command("mcp", { hidden: true })
+  .description("Start MCP stdio server for IDE integration")
+  .action(async () => {
+    await mcpCommand();
   });
 
 // --- Power User Commands ---
