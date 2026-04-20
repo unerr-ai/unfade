@@ -70,9 +70,9 @@
     "@types/node-notifier": "^8.0.5",
     "@types/react": "^19.2.14",
     "ink-testing-library": "^4.0.0",
-    "tsdown": "^0.21.8",
+    "tsdown": "^0.21.9",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2",
+    "typescript": "^6.0.3",
     "vitest": "^4.1.4"
   }
 }
