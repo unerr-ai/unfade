@@ -1,1 +1,5 @@
+packages:
+  - "."
+  - "packages/*"
+
 approveBuildsPackages: '@biomejs/biome,esbuild'

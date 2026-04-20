@@ -52,14 +52,19 @@ describe("registerTools", () => {
     }) as typeof server.tool;
 
     registerTools(server);
-    expect(registered).toHaveLength(7);
+    expect(registered).toHaveLength(12);
     expect(registered).toContain("unfade_query");
     expect(registered).toContain("unfade_context");
     expect(registered).toContain("unfade_decisions");
     expect(registered).toContain("unfade_profile");
     expect(registered).toContain("unfade_distill");
+    expect(registered).toContain("unfade_log");
     expect(registered).toContain("unfade_amplify");
     expect(registered).toContain("unfade_similar");
+    expect(registered).toContain("unfade_comprehension");
+    expect(registered).toContain("unfade_efficiency");
+    expect(registered).toContain("unfade_costs");
+    expect(registered).toContain("unfade_coach");
   });
 });
 

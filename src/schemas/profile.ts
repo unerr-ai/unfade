@@ -68,6 +68,33 @@ export const TradeOffPreferenceSchema = z.object({
 export type TradeOffPreference = z.infer<typeof TradeOffPreferenceSchema>;
 
 // ---------------------------------------------------------------------------
+// Identity Labels — behavioral patterns surfaced as named identity traits
+// ---------------------------------------------------------------------------
+
+export const IdentityLabelSchema = z.object({
+  label: z.string(),
+  confidence: z.number().min(0).max(1),
+  since: z.string(),
+  category: PatternCategorySchema,
+});
+
+export type IdentityLabel = z.infer<typeof IdentityLabelSchema>;
+
+// ---------------------------------------------------------------------------
+// UIF Metrics — Unfade Intelligence Framework scores
+// ---------------------------------------------------------------------------
+
+export const UifMetricsSchema = z.object({
+  rdi: z.number().min(0).max(100).nullable().optional(),
+  dcs: z.number().min(0).max(100).nullable().optional(),
+  aq: z.number().min(0).max(100).nullable().optional(),
+  cwi: z.number().min(-10).max(10).nullable().optional(),
+  apiScore: z.number().min(0).max(100).nullable().optional(),
+});
+
+export type UifMetrics = z.infer<typeof UifMetricsSchema>;
+
+// ---------------------------------------------------------------------------
 // ReasoningModelV2 — full personalization profile (on-disk format)
 // ---------------------------------------------------------------------------
 
@@ -99,6 +126,25 @@ export const ReasoningModelV2Schema = z.object({
     avgDecisionsPerDay: z.number().min(0),
     peakDecisionDays: z.array(z.string()),
   }),
+
+  uifMetrics: UifMetricsSchema.optional(),
+  identityLabels: z.array(IdentityLabelSchema).optional(),
+
+  directionPatterns: z
+    .object({
+      runningAverageHDS: z.number().min(0).max(1),
+      trend: z.enum(["improving", "stable", "declining"]),
+      commonSignals: z.array(z.string()),
+      byDomain: z.record(
+        z.string(),
+        z.object({
+          avgHDS: z.number().min(0).max(1),
+          decisionCount: z.number().int().min(0),
+        }),
+      ),
+      dataPoints: z.number().int().min(0),
+    })
+    .optional(),
 });
 
 export type ReasoningModelV2 = z.infer<typeof ReasoningModelV2Schema>;

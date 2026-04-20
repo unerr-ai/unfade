@@ -4,6 +4,8 @@ import { UnfadeConfigSchema } from "../../../../src/schemas/config.js";
 import {
   checkOllamaReady,
   createLLMProvider,
+  normalizeOllamaOriginForChecks,
+  normalizeOpenAICompatibleApiBase,
 } from "../../../../src/services/distill/providers/ai.js";
 
 describe("createLLMProvider", () => {
@@ -47,5 +49,40 @@ describe("checkOllamaReady", () => {
     const result = await checkOllamaReady("http://localhost:19999");
     expect(result.ready).toBe(false);
     expect(result.reason).toBeDefined();
+  });
+
+  it("accepts api base with /api suffix (matches distill.apiBase)", async () => {
+    const result = await checkOllamaReady("http://localhost:19999/api", "m");
+    expect(result.ready).toBe(false);
+  });
+});
+
+describe("normalizeOllamaOriginForChecks", () => {
+  it("strips /api suffix", () => {
+    expect(normalizeOllamaOriginForChecks("http://127.0.0.1:11434/api")).toBe(
+      "http://127.0.0.1:11434",
+    );
+  });
+
+  it("defaults to localhost when empty", () => {
+    expect(normalizeOllamaOriginForChecks(undefined)).toBe("http://localhost:11434");
+  });
+});
+
+describe("normalizeOpenAICompatibleApiBase", () => {
+  it("strips Fireworks-style …/v1/chat/completions suffix", () => {
+    expect(
+      normalizeOpenAICompatibleApiBase("https://api.fireworks.ai/inference/v1/chat/completions"),
+    ).toBe("https://api.fireworks.ai/inference/v1");
+  });
+
+  it("strips trailing /chat/completions without v1 prefix", () => {
+    expect(normalizeOpenAICompatibleApiBase("http://localhost:8080/chat/completions")).toBe(
+      "http://localhost:8080",
+    );
+  });
+
+  it("returns undefined for blank input", () => {
+    expect(normalizeOpenAICompatibleApiBase("  ")).toBeUndefined();
   });
 });

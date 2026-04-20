@@ -1,4 +1,4 @@
-// T-146: Web UI — GET / returns dashboard HTML page with status and distill summary
+// T-146: Web UI — GET / returns Home page with new shell (Phase 7 rewrite)
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -28,22 +28,23 @@ afterEach(() => {
   } catch {}
 });
 
-describe("Dashboard page (GET /)", () => {
-  it("returns HTML with status and stat grid", async () => {
+describe("Home page (GET /)", () => {
+  it("returns HTML with new shell structure", async () => {
     const app = createApp();
     const res = await app.request("/");
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("<html");
-    expect(html).toContain("Dashboard");
-    expect(html).toContain("stat-grid");
+    expect(html).toContain("Home");
+    expect(html).toContain("sidebar");
   });
 
-  it("includes reasoning signals count", async () => {
+  it("includes SSE connection in layout", async () => {
     const app = createApp();
     const res = await app.request("/");
     const html = await res.text();
-    expect(html).toContain("reasoning signals");
+    expect(html).toContain("EventSource");
+    expect(html).toContain("/api/stream");
   });
 
   it("includes htmx script tag", async () => {
@@ -53,19 +54,20 @@ describe("Dashboard page (GET /)", () => {
     expect(html).toContain("htmx.org");
   });
 
-  it("includes nav bar links", async () => {
+  it("includes sidebar nav links", async () => {
     const app = createApp();
     const res = await app.request("/");
     const html = await res.text();
-    expect(html).toContain('href="/distill"');
-    expect(html).toContain('href="/profile"');
+    expect(html).toContain('href="/intelligence"');
+    expect(html).toContain('href="/coach"');
     expect(html).toContain('href="/settings"');
+    expect(html).toContain('href="/portfolio"');
   });
 
-  it("shows distill empty state when no distills exist", async () => {
+  it("shows loading state before summary is available", async () => {
     const app = createApp();
     const res = await app.request("/");
     const html = await res.text();
-    expect(html).toContain("No distill for today yet");
+    expect(html).toContain("intelligence layer");
   });
 });

@@ -1,5 +1,5 @@
 // FILE: src/server/pages/distill.ts
-// UF-051a-distill: Distill viewer page (GET /distill) — date navigation,
+// Distill viewer page (GET /distill) — date navigation,
 // markdown rendered as HTML, re-generate button via htmx.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -45,12 +45,11 @@ distillPage.get("/distill", (c) => {
   const today = new Date().toISOString().slice(0, 10);
   const requestedDate = c.req.query("date") ?? today;
 
-  // Validate date format
   if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
     return c.html(
       layout(
-        `${USER_TERMS.distill}`,
-        `<h1>${escapeHtml(USER_TERMS.distill)}</h1><p>Invalid date format. Use YYYY-MM-DD.</p>`,
+        USER_TERMS.distill,
+        `<h1 class="text-2xl font-heading font-semibold mb-6">${escapeHtml(USER_TERMS.distill)}</h1><p class="text-error">Invalid date format. Use YYYY-MM-DD.</p>`,
       ),
     );
   }
@@ -58,49 +57,46 @@ distillPage.get("/distill", (c) => {
   const dates = getAvailableDates();
   const md = readDistillContent(requestedDate);
 
-  // Compute prev/next dates
   const dateIdx = dates.indexOf(requestedDate);
   const prevDate = dateIdx >= 0 && dateIdx < dates.length - 1 ? dates[dateIdx + 1] : null;
   const nextDate = dateIdx > 0 ? dates[dateIdx - 1] : null;
 
-  // If date is not in the list but we still have content, just show it without nav context
-  // If no content and not in list, show empty state with available dates navigation
   const prevLink = prevDate
-    ? `<a href="/distill?date=${prevDate}" class="btn">&larr; ${prevDate}</a>`
-    : `<span class="btn" style="opacity:0.3;">&larr; prev</span>`;
+    ? `<a href="/distill?date=${prevDate}" class="px-3 py-1.5 text-sm bg-raised text-foreground border border-border rounded hover:bg-overlay no-underline">&larr; ${escapeHtml(prevDate)}</a>`
+    : `<span class="px-3 py-1.5 text-sm bg-raised text-muted border border-border rounded opacity-40">&larr; prev</span>`;
 
   const nextLink = nextDate
-    ? `<a href="/distill?date=${nextDate}" class="btn">${nextDate} &rarr;</a>`
-    : `<span class="btn" style="opacity:0.3;">next &rarr;</span>`;
+    ? `<a href="/distill?date=${nextDate}" class="px-3 py-1.5 text-sm bg-raised text-foreground border border-border rounded hover:bg-overlay no-underline">${escapeHtml(nextDate)} &rarr;</a>`
+    : `<span class="px-3 py-1.5 text-sm bg-raised text-muted border border-border rounded opacity-40">next &rarr;</span>`;
 
   const content = `
-    <h1>${escapeHtml(USER_TERMS.distill)}</h1>
+    <h1 class="text-2xl font-heading font-semibold mb-6">${escapeHtml(USER_TERMS.distill)}</h1>
 
-    <div class="date-nav">
+    <div class="flex items-center gap-4 mb-6">
       ${prevLink}
-      <span class="current">${escapeHtml(requestedDate)}</span>
+      <span class="font-mono text-base text-foreground">${escapeHtml(requestedDate)}</span>
       ${nextLink}
     </div>
 
     ${
       md
-        ? `<div class="card">
-             <div class="distill-content">
+        ? `<div class="bg-surface border border-border rounded p-5">
+             <div class="prose-unfade">
                ${markdownToHtml(md)}
              </div>
            </div>`
-        : `<div class="card">
-             <div class="empty">
-               <p>No ${escapeHtml(USER_TERMS.distill)} for ${escapeHtml(requestedDate)}.</p>
-               <p>Click re-generate to create one, or navigate to a date with existing distills.</p>
-               ${dates.length > 0 ? `<p style="margin-top: 0.5rem;"><a href="/distill?date=${dates[0]}">Jump to latest (${escapeHtml(dates[0])})</a></p>` : ""}
+        : `<div class="bg-surface border border-border rounded p-5">
+             <div class="text-center py-8 text-muted">
+               <p class="mb-2">No ${escapeHtml(USER_TERMS.distill)} for ${escapeHtml(requestedDate)}.</p>
+               <p class="text-sm">Click re-generate to create one, or navigate to a date with existing distills.</p>
+               ${dates.length > 0 ? `<p class="mt-2"><a href="/distill?date=${dates[0]}" class="text-accent hover:text-accent-dim text-sm">Jump to latest (${escapeHtml(dates[0])})</a></p>` : ""}
              </div>
            </div>`
     }
 
-    <div style="margin-top: 1rem; display: flex; align-items: center; gap: 1rem;">
+    <div class="mt-4 flex items-center gap-4">
       <button
-        class="btn-primary"
+        class="px-4 py-2 text-sm rounded bg-accent text-white font-semibold hover:bg-accent-dim border-none cursor-pointer"
         hx-post="/unfade/distill"
         hx-vals='${escapeHtml(JSON.stringify({ date: requestedDate }))}'
         hx-target="#distill-status"
@@ -108,7 +104,7 @@ distillPage.get("/distill", (c) => {
       >
         Re-generate ${escapeHtml(USER_TERMS.distill)}
       </button>
-      <span id="distill-status" class="htmx-indicator" style="color: var(--text-dim); font-size: 0.875rem;">
+      <span id="distill-status" class="htmx-indicator text-muted text-sm">
         ${escapeHtml(USER_TERMS.distilling)}...
       </span>
     </div>

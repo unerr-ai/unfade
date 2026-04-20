@@ -2,7 +2,7 @@
 // Structured logger that writes EXCLUSIVELY to stderr.
 // stdout is sacred — reserved for MCP JSON-RPC only.
 
-import pc from "picocolors";
+import chalk from "chalk";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -19,10 +19,10 @@ const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
 };
 
 const LOG_LEVEL_LABELS: Record<LogLevel, string> = {
-  debug: pc.gray("DBG"),
-  info: pc.cyan("INF"),
-  warn: pc.yellow("WRN"),
-  error: pc.red("ERR"),
+  debug: chalk.gray("DBG"),
+  info: chalk.cyan("INF"),
+  warn: chalk.yellow("WRN"),
+  error: chalk.red("ERR"),
 };
 
 class Logger {
@@ -47,11 +47,11 @@ class Logger {
 
     const timestamp = new Date().toISOString().slice(11, 23);
     const label = LOG_LEVEL_LABELS[level];
-    const prefix = pc.dim(timestamp);
+    const prefix = chalk.dim(timestamp);
 
     let line = `${prefix} ${label} ${message}`;
     if (data) {
-      line += ` ${pc.dim(JSON.stringify(data))}`;
+      line += ` ${chalk.dim(JSON.stringify(data))}`;
     }
 
     // CRITICAL: Always stderr. Never stdout. Never console.log.

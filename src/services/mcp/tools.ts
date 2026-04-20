@@ -9,14 +9,20 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadConfig } from "../../config/manager.js";
 import { getAmplification } from "../../tools/unfade-amplify.js";
+import { getCoachInsights } from "../../tools/unfade-coach.js";
+import { getComprehension } from "../../tools/unfade-comprehension.js";
 import { getRecentContext } from "../../tools/unfade-context.js";
+import { getCosts } from "../../tools/unfade-costs.js";
 import { getDecisions } from "../../tools/unfade-decisions.js";
+import { getEfficiency } from "../../tools/unfade-efficiency.js";
+import { logReasoningEvent, UnfadeLogInputSchema } from "../../tools/unfade-log.js";
 import { getProfile } from "../../tools/unfade-profile.js";
 import { queryEvents } from "../../tools/unfade-query.js";
 import { getSimilar } from "../../tools/unfade-similar.js";
 import { logger } from "../../utils/logger.js";
 import { getProjectDataDir } from "../../utils/paths.js";
 import { distill } from "../distill/distiller.js";
+import { enrichMcpMeta } from "../intelligence/mcp-enrichment.js";
 
 /**
  * Check if Unfade is initialized (has .unfade/ directory).
@@ -413,6 +419,221 @@ export function registerTools(server: McpServer): void {
                   durationMs: 0,
                   degraded: true,
                   degradedReason: err instanceof Error ? err.message : "Similar search failed",
+                  lastUpdated: null,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // 8. unfade_log — Log a structured reasoning event (active instrumentation)
+  server.tool(
+    "unfade_log",
+    "Log a structured reasoning event to the developer's local reasoning journal",
+    {
+      type: UnfadeLogInputSchema.shape.type,
+      content: z.string().min(1).describe("What happened — the reasoning, not just the action"),
+      domain: z
+        .string()
+        .optional()
+        .describe("Engineering domain: architecture, performance, security, etc."),
+      alternatives: z.array(z.string()).optional().describe("Other approaches considered"),
+      confidence: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe("Agent's confidence in the decision"),
+      context: z
+        .object({
+          files: z.array(z.string()).optional(),
+          branch: z.string().optional(),
+          relatedDecisions: z.array(z.string()).optional(),
+        })
+        .optional(),
+    },
+    (args) => {
+      if (!isInitialized()) return notInitializedResponse();
+
+      try {
+        const result = logReasoningEvent(args);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        logger.error("MCP unfade_log error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: { eventId: null, status: "error" },
+                _meta: {
+                  tool: "unfade-log",
+                  durationMs: 0,
+                  degraded: true,
+                  degradedReason: err instanceof Error ? err.message : "Log failed",
+                  lastUpdated: null,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // 8. unfade_comprehension — Per-module comprehension scores (Phase 5.6H)
+  server.tool(
+    "unfade_comprehension",
+    "Get per-module comprehension scores — shows which parts of the codebase the developer understands deeply vs relies on AI blindly",
+    {},
+    async () => {
+      if (!isInitialized()) return notInitializedResponse();
+
+      try {
+        const result = await getComprehension();
+        const enrichedMeta = enrichMcpMeta(result._meta);
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ ...result, _meta: enrichedMeta }, null, 2),
+            },
+          ],
+        };
+      } catch (err) {
+        logger.error("MCP unfade_comprehension error", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: { overall: null, modules: [], totalModules: 0 },
+                _meta: {
+                  tool: "unfade-comprehension",
+                  durationMs: 0,
+                  degraded: true,
+                  degradedReason: err instanceof Error ? err.message : "Comprehension query failed",
+                  lastUpdated: null,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // 9. unfade_efficiency — AI Efficiency Score (Phase 7)
+  server.tool(
+    "unfade_efficiency",
+    "Get your AI Efficiency Score (AES) — a 0-100 composite metric showing how effectively you use AI tools",
+    {
+      period: z.enum(["7d", "30d", "90d"]).optional().describe("Time period for analysis"),
+    },
+    async (args) => {
+      if (!isInitialized()) return notInitializedResponse();
+      try {
+        const result = getEfficiency({ period: args.period });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: null,
+                _meta: {
+                  tool: "unfade-efficiency",
+                  durationMs: 0,
+                  degraded: true,
+                  degradedReason: String(err),
+                  lastUpdated: null,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // 10. unfade_costs — Cost Attribution (Phase 7)
+  server.tool(
+    "unfade_costs",
+    "Get estimated AI cost attribution — by model, domain, and branch (proxy estimates, not invoices)",
+    {
+      period: z.string().optional().describe("Time period"),
+      groupBy: z.enum(["domain", "model", "branch"]).optional().describe("Grouping dimension"),
+    },
+    async (args) => {
+      if (!isInitialized()) return notInitializedResponse();
+      try {
+        const result = getCosts({ period: args.period, groupBy: args.groupBy });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: null,
+                _meta: {
+                  tool: "unfade-costs",
+                  durationMs: 0,
+                  degraded: true,
+                  degradedReason: String(err),
+                  lastUpdated: null,
+                },
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // 11. unfade_coach — Prompt Coach (Phase 7B)
+  server.tool(
+    "unfade_coach",
+    "Get domain-specific prompt coaching: effective patterns, anti-patterns, and active loop warnings from your AI interaction history",
+    {
+      domain: z
+        .string()
+        .optional()
+        .describe("Filter to a specific domain (e.g., 'api', 'auth', 'database')"),
+    },
+    async (args) => {
+      if (!isInitialized()) return notInitializedResponse();
+      try {
+        const result = getCoachInsights({ domain: args.domain });
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: null,
+                _meta: {
+                  tool: "unfade-coach",
+                  durationMs: 0,
+                  degraded: true,
+                  degradedReason: String(err),
                   lastUpdated: null,
                 },
               }),

@@ -1,10 +1,8 @@
 // FILE: src/server/pages/profile.ts
-// UF-074: Profile visualization page v2 (GET /profile) —
-// decision style radar, domain distribution with depth/trend,
+// Profile visualization page (GET /profile) —
+// decision style metrics, domain distribution with depth/trend,
 // patterns with confidence bars, trade-off preferences,
-// temporal activity, AI interaction summary.
-// Reads ReasoningModelV2 directly for rich rendering.
-// Falls back to v1 ProfileOutput for pre-migration profiles.
+// temporal activity patterns.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -30,22 +28,22 @@ function loadProfileV2(cwd?: string): {
     const parsed = JSON.parse(raw);
     const lastUpdated = statSync(profilePath).mtime.toISOString();
     if (parsed.version === 2) return { profile: parsed as ReasoningModelV2, lastUpdated };
-    return { profile: null, lastUpdated };
+    return { profile: null, lastUpdated: null };
   } catch {
     return { profile: null, lastUpdated: null };
   }
 }
 
 /**
- * Render a confidence bar as HTML (0–1 scale, accent-colored fill).
+ * Render a confidence bar (0–1 scale).
  */
 function confidenceBar(confidence: number): string {
   const pct = Math.round(confidence * 100);
-  return `<div style="display:flex;align-items:center;gap:0.5rem;width:100%;">
-    <div style="flex:1;background:var(--bg-input);border-radius:4px;height:8px;overflow:hidden;">
-      <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:4px;"></div>
+  return `<div class="flex items-center gap-2 w-full">
+    <div class="flex-1 bg-raised rounded h-2 overflow-hidden">
+      <div class="h-full bg-accent rounded" style="width:${pct}%"></div>
     </div>
-    <span style="font-family:var(--mono);font-size:0.8rem;color:var(--text-dim);min-width:3ch;">${pct}%</span>
+    <span class="font-mono text-xs text-muted min-w-[3ch]">${pct}%</span>
   </div>`;
 }
 
@@ -54,47 +52,44 @@ function confidenceBar(confidence: number): string {
  */
 function domainBar(percentage: number): string {
   const pct = Math.round(percentage * 100);
-  return `<div style="flex:1;background:var(--bg-input);border-radius:4px;height:6px;overflow:hidden;min-width:80px;">
-    <div style="width:${pct}%;height:100%;background:var(--accent);border-radius:4px;"></div>
+  return `<div class="flex-1 bg-raised rounded h-1.5 overflow-hidden min-w-[80px]">
+    <div class="h-full bg-accent rounded" style="width:${pct}%"></div>
   </div>`;
 }
 
 /**
- * Depth badge with color.
+ * Depth badge with semantic color.
  */
 function depthBadge(depth: string): string {
-  const colors: Record<string, string> = {
-    deep: "var(--success)",
-    moderate: "var(--warning)",
-    shallow: "var(--text-dim)",
+  const styles: Record<string, string> = {
+    deep: "text-success",
+    moderate: "text-warning",
+    shallow: "text-muted",
   };
-  const color = colors[depth] ?? "var(--text-dim)";
-  return `<span style="font-size:0.75rem;color:${color};font-weight:600;text-transform:uppercase;">${escapeHtml(depth)}</span>`;
+  const cls = styles[depth] ?? "text-muted";
+  return `<span class="text-xs font-semibold uppercase ${cls}">${escapeHtml(depth)}</span>`;
 }
 
 /**
  * Trend arrow icon.
  */
 function trendArrow(trend: string): string {
-  if (trend === "deepening")
-    return `<span style="color:var(--success);" title="Deepening">↑</span>`;
-  if (trend === "broadening")
-    return `<span style="color:var(--accent);" title="Broadening">→</span>`;
-  return `<span style="color:var(--text-dim);" title="Stable">—</span>`;
+  if (trend === "deepening") return `<span class="text-success" title="Deepening">↑</span>`;
+  if (trend === "broadening") return `<span class="text-accent" title="Broadening">→</span>`;
+  return `<span class="text-muted" title="Stable">—</span>`;
 }
 
 profilePage.get("/profile", (c) => {
   const { profile, lastUpdated } = loadProfileV2();
 
-  // Degraded: no v2 profile
   if (!profile || profile.dataPoints < 2) {
     const content = `
-      <h1>${escapeHtml(USER_TERMS.profile)}</h1>
-      <div class="card">
-        <div class="empty">
-          <p>Not enough data to build a reasoning profile yet.</p>
-          <p>The profile builds automatically as the ${escapeHtml(USER_TERMS.daemon)} captures ${escapeHtml(USER_TERMS.events)} and distills are generated.</p>
-          <p style="margin-top:1rem;font-size:0.85rem;">Requires at least 2 distills to detect patterns.</p>
+      <h1 class="text-2xl font-heading font-semibold mb-6">${escapeHtml(USER_TERMS.profile)}</h1>
+      <div class="bg-surface border border-border rounded p-5">
+        <div class="text-center py-8 text-muted">
+          <p class="mb-2">Not enough data to build a reasoning profile yet.</p>
+          <p class="text-sm">The profile builds automatically as the ${escapeHtml(USER_TERMS.daemon)} captures ${escapeHtml(USER_TERMS.events)} and distills are generated.</p>
+          <p class="mt-4 text-sm">Requires at least 2 distills to detect patterns.</p>
         </div>
       </div>
     `;
@@ -103,53 +98,53 @@ profilePage.get("/profile", (c) => {
 
   const ds = profile.decisionStyle;
 
-  // Decision Style section
   const decisionStyleHtml = `
-    <div class="card">
-      <h2>Decision Style</h2>
-      <div class="stat-grid" style="margin-top:1rem;">
-        <div class="stat">
-          <div class="value">${ds.avgAlternativesEvaluated.toFixed(1)}</div>
-          <div class="label">Avg alternatives evaluated</div>
+    <div class="bg-surface border border-border rounded p-5 mb-4">
+      <h2 class="text-lg font-heading font-semibold mb-4">Decision Style</h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-canvas border border-border rounded p-4 text-center">
+          <div class="font-mono text-2xl font-bold text-accent">${ds.avgAlternativesEvaluated.toFixed(1)}</div>
+          <div class="text-xs text-muted mt-1">Avg alternatives evaluated</div>
         </div>
-        <div class="stat">
-          <div class="value">${ds.medianAlternativesEvaluated.toFixed(1)}</div>
-          <div class="label">Median alternatives</div>
+        <div class="bg-canvas border border-border rounded p-4 text-center">
+          <div class="font-mono text-2xl font-bold text-accent">${ds.medianAlternativesEvaluated.toFixed(1)}</div>
+          <div class="text-xs text-muted mt-1">Median alternatives</div>
         </div>
-        <div class="stat">
-          <div class="value">${Math.round(ds.aiAcceptanceRate * 100)}%</div>
-          <div class="label">AI acceptance rate</div>
+        <div class="bg-canvas border border-border rounded p-4 text-center">
+          <div class="font-mono text-2xl font-bold text-accent">${Math.round(ds.aiAcceptanceRate * 100)}%</div>
+          <div class="text-xs text-muted mt-1">AI acceptance rate</div>
         </div>
-        <div class="stat">
-          <div class="value">${Math.round(ds.aiModificationRate * 100)}%</div>
-          <div class="label">AI modification rate</div>
+        <div class="bg-canvas border border-border rounded p-4 text-center">
+          <div class="font-mono text-2xl font-bold text-accent">${Math.round(ds.aiModificationRate * 100)}%</div>
+          <div class="text-xs text-muted mt-1">AI modification rate</div>
         </div>
       </div>
       ${
         ds.explorationDepthMinutes.overall > 0
-          ? `<p style="color:var(--text-dim);font-size:0.85rem;margin-top:0.5rem;">Exploration depth: ${ds.explorationDepthMinutes.overall.toFixed(0)} min average</p>`
+          ? `<p class="text-muted text-sm mt-3">Exploration depth: ${ds.explorationDepthMinutes.overall.toFixed(0)} min average</p>`
           : ""
       }
     </div>
   `;
 
-  // Domain Distribution section
-  const sortedDomains = [...profile.domainDistribution].sort((a, b) => b.frequency - a.frequency);
+  const sortedDomains = [...(profile.domainDistribution ?? [])].sort(
+    (a, b) => b.frequency - a.frequency,
+  );
   const domainHtml =
     sortedDomains.length > 0
-      ? `<div class="card">
-           <h2>Domain Distribution</h2>
-           <div style="margin-top:0.75rem;">
+      ? `<div class="bg-surface border border-border rounded p-5 mb-4">
+           <h2 class="text-lg font-heading font-semibold mb-4">Domain Distribution</h2>
+           <div class="space-y-0">
              ${sortedDomains
                .map(
                  (d) => `
-               <div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
-                 <span style="min-width:120px;font-weight:600;">${escapeHtml(d.domain)}</span>
+               <div class="flex items-center gap-3 py-3 border-b border-border last:border-0">
+                 <span class="min-w-[120px] font-semibold text-sm">${escapeHtml(d.domain)}</span>
                  ${domainBar(d.percentageOfTotal)}
-                 <span style="font-family:var(--mono);font-size:0.85rem;color:var(--accent);min-width:3ch;">${d.frequency}</span>
+                 <span class="font-mono text-sm text-cyan min-w-[3ch]">${d.frequency}</span>
                  ${depthBadge(d.depth)}
                  ${trendArrow(d.depthTrend)}
-                 <span style="font-size:0.8rem;color:var(--text-dim);">${d.avgAlternativesInDomain.toFixed(1)} avg alts</span>
+                 <span class="text-xs text-muted">${d.avgAlternativesInDomain.toFixed(1)} avg alts</span>
                </div>`,
                )
                .join("")}
@@ -157,75 +152,73 @@ profilePage.get("/profile", (c) => {
          </div>`
       : "";
 
-  // Patterns section (>0.7 confidence)
-  const surfaceable = profile.patterns.filter((p) => p.confidence >= 0.7);
+  const surfaceable = (profile.patterns ?? []).filter((p) => p.confidence >= 0.7);
   const patternsHtml =
     surfaceable.length > 0
-      ? `<div class="card">
-           <h2>Detected Patterns</h2>
-           <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:0.75rem;">Confidence &gt; 70% — based on ${profile.dataPoints} observations</p>
+      ? `<div class="bg-surface border border-border rounded p-5 mb-4">
+           <h2 class="text-lg font-heading font-semibold mb-2">Detected Patterns</h2>
+           <p class="text-muted text-sm mb-4">Confidence &gt; 70% — based on ${profile.dataPoints} observations</p>
            ${surfaceable
              .map(
                (p) => `
-             <div style="padding:0.75rem;margin-bottom:0.5rem;background:var(--bg-input);border-radius:var(--radius);">
-               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.25rem;">
-                 <span style="font-size:0.9rem;">${escapeHtml(p.pattern)}</span>
-                 <span class="badge" style="background:rgba(0,153,255,0.15);color:var(--accent);">${p.category}</span>
+             <div class="bg-raised rounded p-4 mb-3">
+               <div class="flex justify-between items-center mb-1">
+                 <span class="text-sm">${escapeHtml(p.pattern)}</span>
+                 <span class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-accent/15 text-accent">${escapeHtml(p.category)}</span>
                </div>
                ${confidenceBar(p.confidence)}
-               <div style="font-size:0.75rem;color:var(--text-dim);margin-top:0.25rem;">${p.examples} examples · since ${escapeHtml(p.observedSince)}</div>
+               <div class="text-xs text-muted mt-1">${p.examples} examples · since ${escapeHtml(p.observedSince)}</div>
              </div>`,
              )
              .join("")}
          </div>`
-      : `<div class="card">
-           <h2>Detected Patterns</h2>
-           <p style="color:var(--text-dim);">No patterns detected yet (requires confidence &gt; 70%).</p>
+      : `<div class="bg-surface border border-border rounded p-5 mb-4">
+           <h2 class="text-lg font-heading font-semibold mb-2">Detected Patterns</h2>
+           <p class="text-muted">No patterns detected yet (requires confidence &gt; 70%).</p>
          </div>`;
 
-  // Trade-off Preferences section
+  const tradeOffs = profile.tradeOffPreferences ?? [];
   const tradeOffsHtml =
-    profile.tradeOffPreferences.length > 0
-      ? `<div class="card">
-           <h2>Trade-off Preferences</h2>
-           ${profile.tradeOffPreferences
+    tradeOffs.length > 0
+      ? `<div class="bg-surface border border-border rounded p-5 mb-4">
+           <h2 class="text-lg font-heading font-semibold mb-4">Trade-off Preferences</h2>
+           ${tradeOffs
              .map(
                (t) => `
-             <div style="padding:0.5rem 0;border-bottom:1px solid var(--border);">
-               <span style="font-weight:600;">${escapeHtml(t.preference)}</span>
+             <div class="py-3 border-b border-border last:border-0">
+               <span class="font-semibold text-sm">${escapeHtml(t.preference)}</span>
                ${confidenceBar(t.confidence)}
-               <span style="font-size:0.75rem;color:var(--text-dim);">${t.supportingDecisions} supporting · ${t.contradictingDecisions} contradicting</span>
+               <span class="text-xs text-muted">${t.supportingDecisions} supporting · ${t.contradictingDecisions} contradicting</span>
              </div>`,
              )
              .join("")}
          </div>`
       : "";
 
-  // Temporal Patterns section
   const tp = profile.temporalPatterns;
   const temporalHtml = `
-    <div class="card">
-      <h2>Activity Patterns</h2>
-      <div class="stat-grid" style="margin-top:0.75rem;">
-        <div class="stat">
-          <div class="value">${tp.avgDecisionsPerDay.toFixed(1)}</div>
-          <div class="label">Decisions / day</div>
+    <div class="bg-surface border border-border rounded p-5 mb-4">
+      <h2 class="text-lg font-heading font-semibold mb-4">Activity Patterns</h2>
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-canvas border border-border rounded p-4 text-center">
+          <div class="font-mono text-2xl font-bold text-accent">${tp.avgDecisionsPerDay.toFixed(1)}</div>
+          <div class="text-xs text-muted mt-1">Decisions / day</div>
         </div>
-        <div class="stat">
-          <div class="value">${profile.dataPoints}</div>
-          <div class="label">Total observations</div>
+        <div class="bg-canvas border border-border rounded p-4 text-center">
+          <div class="font-mono text-2xl font-bold text-accent">${profile.dataPoints}</div>
+          <div class="text-xs text-muted mt-1">Total observations</div>
         </div>
       </div>
       ${
         tp.mostProductiveHours.length > 0
-          ? `<p style="color:var(--text-dim);font-size:0.85rem;margin-top:0.5rem;">Most productive hours: ${tp.mostProductiveHours.map((h) => `${h}:00`).join(", ")}</p>`
+          ? `<p class="text-muted text-sm mt-3">Most productive hours: ${tp.mostProductiveHours.map((h) => `${h}:00`).join(", ")}</p>`
           : ""
       }
     </div>
   `;
 
   const content = `
-    <h1>${escapeHtml(USER_TERMS.profile)}</h1>
+    <h1 class="text-2xl font-heading font-semibold mb-6">${escapeHtml(USER_TERMS.profile)}</h1>
     ${decisionStyleHtml}
     ${domainHtml}
     ${patternsHtml}
@@ -233,7 +226,7 @@ profilePage.get("/profile", (c) => {
     ${temporalHtml}
     ${
       lastUpdated
-        ? `<p style="color:var(--text-dim);font-size:0.8rem;margin-top:1rem;">Last updated: ${escapeHtml(lastUpdated)}</p>`
+        ? `<p class="text-muted text-xs mt-4">Last updated: ${escapeHtml(lastUpdated)}</p>`
         : ""
     }
   `;

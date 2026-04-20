@@ -1,15 +1,17 @@
 // FILE: src/services/init/llm-detect.ts
-// Step 6 of init: silently detect available LLM provider.
-// Tries Ollama first (ollama list), falls back to "none" (structured summaries).
-// NEVER prompts for API keys.
+// Step 6 of init: detect available LLM providers.
+// Tries Ollama first, checks for API keys in env, falls back to "none".
 
 import { execSync } from "node:child_process";
 import { logger } from "../../utils/logger.js";
 
+export type LlmProvider = "ollama" | "openai" | "anthropic" | "none";
+
 export interface LlmDetectResult {
-  provider: "ollama" | "none";
+  provider: LlmProvider;
   model: string | null;
   ollamaModels: string[];
+  availableProviders: LlmProvider[];
 }
 
 /**
@@ -24,8 +26,6 @@ function tryOllamaList(): string[] {
       timeout: 5000,
     });
 
-    // Parse output: first line is headers, remaining lines are models.
-    // Format: NAME ID SIZE MODIFIED
     const lines = output.trim().split("\n").slice(1);
     const models: string[] = [];
 
@@ -44,7 +44,7 @@ function tryOllamaList(): string[] {
  * Pick the best default model from available Ollama models.
  * Prefers llama3.2, then llama3.1, then any llama, then first available.
  */
-function pickDefaultModel(models: string[]): string | null {
+export function pickDefaultModel(models: string[]): string | null {
   if (models.length === 0) return null;
 
   const preferences = ["llama3.2", "llama3.1", "llama3", "llama2", "mistral", "gemma"];
@@ -58,19 +58,42 @@ function pickDefaultModel(models: string[]): string | null {
 }
 
 /**
- * Silently detect the best available LLM provider.
- * Returns "ollama" with model name if available, "none" otherwise.
- * NEVER prompts for API keys or configuration.
+ * Detect all available LLM providers and pick the best default.
  */
 export function detectLlm(): LlmDetectResult {
   const ollamaModels = tryOllamaList();
+  const availableProviders: LlmProvider[] = [];
 
+  if (ollamaModels.length > 0) {
+    availableProviders.push("ollama");
+  }
+  if (process.env.OPENAI_API_KEY) {
+    availableProviders.push("openai");
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    availableProviders.push("anthropic");
+  }
+
+  // Pick best default: ollama > openai > anthropic > none
   if (ollamaModels.length > 0) {
     const model = pickDefaultModel(ollamaModels);
     logger.debug("Detected Ollama", { models: ollamaModels.length, selected: model });
-    return { provider: "ollama", model, ollamaModels };
+    return { provider: "ollama", model, ollamaModels, availableProviders };
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    return { provider: "openai", model: "gpt-4o-mini", ollamaModels, availableProviders };
+  }
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    return {
+      provider: "anthropic",
+      model: "claude-haiku-4-5-20251001",
+      ollamaModels,
+      availableProviders,
+    };
   }
 
   logger.debug("No LLM detected, using structured summaries mode");
-  return { provider: "none", model: null, ollamaModels: [] };
+  return { provider: "none", model: null, ollamaModels, availableProviders };
 }

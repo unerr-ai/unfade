@@ -6,7 +6,7 @@
 >
 > **Relationship to unerr:** Unfade is a standalone product that occupies a complementary but independent category. unerr builds structural intelligence about *codebases*. Unfade builds reasoning intelligence about *the humans who build them*. The strategic relationship is explored in §12.
 >
-> **Last updated:** April 2026
+> **Last updated:** April 2026 (implementation status addendum added 2026-04-20)
 
 ---
 
@@ -961,7 +961,9 @@ The enterprise bundle creates pricing leverage: the combined offering is more va
 
 #### 13.1 The Capture Daemon
 
-**Language:** Rust or Go — single binary, cross-platform, minimal resource footprint.
+> **Implementation status (2026-04-20):** Shipped in **Go** as `unfaded` + `unfade-send` (under `daemon/`). Watches git, AI sessions (Cursor, Claude Code, Codex, Aider parsers), and terminal via shell hooks. Emits `ai-conversation` events with `direction_signals` from a heuristic classifier. macOS (launchd) and Linux (systemd) autostart. Multi-repo via `registry.v1.json` + per-repo daemon routing.
+
+**Language:** Go — single binary, cross-platform, minimal resource footprint.
 
 **What it watches:**
 - `.git/` directory (commits, diffs, branch changes, stash operations) via filesystem events
@@ -977,6 +979,8 @@ The enterprise bundle creates pricing leverage: the combined offering is more va
 **Resource budget:** <50MB memory, <1% CPU when idle, <5% CPU during git event processing. Must be invisible to the developer's workflow.
 
 #### 13.2 The Distillation Engine
+
+> **Implementation status (2026-04-20):** Shipped. Ollama default; OpenAI/Anthropic planned (Phase 6). Fallback structured synthesizer works without any LLM. Signal extractor, direction classifier, context linker, and amplifier all operational. Daily distills + personalized profile updates run from `unfade distill` or scheduled.
 
 **Input:** The day's JSONL events from `.unfade/events/`.
 
@@ -997,6 +1001,8 @@ The enterprise bundle creates pricing leverage: the combined offering is more va
 - `.unfade/amplification/connections.jsonl` — detected cross-project and cross-temporal reasoning connections, surfaced in the Daily Distill and available via the Unfade Hooks API
 
 #### 13.3 The Unfade Hooks API (Dual-Protocol: HTTP + MCP)
+
+> **Implementation status (2026-04-20):** Shipped. Hono HTTP server at `localhost:7654` + MCP stdio server. **9 MCP tools** registered (`unfade_query`, `unfade_context`, `unfade_decisions`, `unfade_profile`, `unfade_distill`, `unfade_amplify`, `unfade_similar`, `unfade_log`, `unfade_comprehension`), 5 resources, 3 prompts. Additional Phase 7 tools (`unfade_efficiency`, `unfade_costs`, `unfade_coach`) are planned. The standalone server (`server-standalone.ts`) runs materializer + scheduler + SSE in a single process.
 
 Unfade exposes its capabilities through two protocol surfaces reading from the same `.unfade/` data:
 
@@ -1071,8 +1077,9 @@ The same capabilities exposed as MCP primitives — discoverable by any MCP-comp
 | `unfade_query` | Semantic search across full reasoning history |
 | `unfade_amplify` | Returns proactive insights for the current task — related past decisions, recurring patterns, blind spots |
 | `unfade_similar` | Finds analogous past reasoning for a given decision or problem context |
-| `unfade_ask` | Conversational query against accumulated reasoning (Phase 5) |
 | `unfade_distill` | Triggers manual distillation of current session signals |
+| `unfade_log` | Log a structured reasoning event (active instrumentation) |
+| `unfade_comprehension` | Per-module comprehension scores and blind spots |
 
 **MCP Prompts (templates — reusable reasoning frameworks):**
 
@@ -1167,7 +1174,9 @@ Each of these skills creates a dependency on Unfade's MCP surface — deepening 
 
 #### 13.5 The Thinking Graph Renderer
 
-**Static site generator** (Astro or Next.js) that reads the `.unfade/` directory and renders the interactive profile.
+> **Implementation status (2026-04-20):** Shipped via `unfade publish` as a custom static site generator (no Astro/Next dependency). Produces `data.json`, `index.html`, `style.css`, `og-card.png` — deployable anywhere.
+
+**Static site generator** that reads the `.unfade/` directory and renders the interactive profile.
 
 **Deployable anywhere:** Vercel, Netlify, GitHub Pages, self-hosted. The developer controls where their Thinking Graph lives.
 
@@ -1190,21 +1199,31 @@ Each of these skills creates a dependency on Unfade's MCP surface — deepening 
 
 #### 13.7 The CLI
 
+> **Implementation status (2026-04-20):** Shipped as `npx unfade` (npm: `unfade`). CLI entry: `src/entrypoints/cli.ts`, bundled to `dist/cli.mjs`. Actual commands below reflect the shipped surface.
+
 ```bash
-unfade init          # Initialize .unfade/ in current directory (or global)
-unfade status        # Show daemon status, today's signal count, personalization level
-unfade distill       # Trigger manual distillation (auto runs on schedule)
-unfade query "..."   # Semantic search across reasoning history
-unfade ask "..."     # Query your reasoning conversationally — "How would I approach X?"
-unfade card          # Generate today's Unfade Card
-unfade serve         # Start Unfade Hooks API server
-unfade profile       # Show your reasoning profile: decision style, domains, patterns
-unfade similar       # Find similar past decisions for a current problem
-unfade publish       # Deploy Thinking Graph to configured host
-unfade export        # Export full .unfade/ directory as portable archive
+unfade               # Entry / TUI
+unfade init          # Scaffold .unfade/, register repo, start daemon, optional autostart
+unfade open          # Open web UI in browser (localhost:7654)
+unfade status        # Capture + summary heartbeat, first-run insights when available
+unfade doctor        # Path and health diagnostics
+unfade distill       # Trigger manual distillation
+unfade card [--v3]   # Generate Unfade Card (v3 adds comprehension / cost hints)
+unfade export        # Portable archive; --leadership for aggregate CSV pack + methodology
+unfade publish       # Static Thinking Graph site
+unfade ingest        # Historical ingest from AI tool logs
+unfade prompt        # Show prompt context for current session
+unfade reset         # Remove .unfade/ (requires --yes; --global for ~/.unfade)
+unfade daemon …      # Manage capture engine (status, stop, restart, update)
 ```
 
+Commands that appeared in the original strategy but are **not yet shipped**: `unfade ask`, `unfade query` (as CLI — available via MCP), `unfade serve` (replaced by `unfade open` which starts the standalone server), `unfade similar` (available via MCP tool `unfade_similar`), `unfade profile` (available via web UI `/profile`).
+
+All commands support `--json` for machine-readable output and `--verbose` for debug logs (stderr).
+
 ### Build Sequencing
+
+> **Implementation status (2026-04-20):** The week-based phases below reflect the **original strategic sequencing** written before implementation began. The actual codebase follows a consolidated architecture: see `.internal/architecture/PHASE_0_FOUNDATION.md` through `PHASE_4_PLATFORM_AND_LAUNCH.md` (shipped), `PHASE_6_POST_LAUNCH.md` (planned: Windows, cloud distill, team), and `PHASE_7_BREAKTHROUGH_INTELLIGENCE.md` (planned: AES, cost attribution, prompt coach, loop detector, comprehension radar, velocity, blind spots, decision replay) + `PHASE_7_WEB_UI_UX_ARCHITECTURE.md` (UI rewrite spec). **Phases 1–3 below are fully shipped. Phase 4 (ecosystem) is partially shipped (MCP server operational, ClawHub/OpenClaw integration is future). Phase 5 (reasoning agent) is roadmap.**
 
 #### Phase 1 — The Core Loop (Week 1–3)
 

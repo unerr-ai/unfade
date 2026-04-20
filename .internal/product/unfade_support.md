@@ -4,7 +4,7 @@
 >
 > **How to read this document:** Each section answers a specific strategic question. The sections build on each other: evidence → landscape → gap → differentiator → decisions → growth → launch → success criteria. Read sequentially for the full argument, or jump to the section that addresses your question.
 >
-> **Last updated:** April 2026
+> **Last updated:** April 2026 (implementation note added 2026-04-20)
 
 ---
 
@@ -96,6 +96,8 @@ The reasoning personalization engine — the system that learns *how* you think 
 
 > **Other tools remember what you did. Unfade learns how you think — and that understanding makes every AI tool smarter, produces a visible identity you can share, and becomes more irreplaceable with every month of use.**
 
+> **Implementation note (2026-04-20):** The shipped product already includes passive capture (Go daemon), distillation, ReasoningModelV2 profile with personalization seed, direction density / comprehension scoring, 9 MCP tools, and a continuous materializer. Phase 7 (`PHASE_7_BREAKTHROUGH_INTELLIGENCE.md`) defines the next layer: AES, cost attribution, prompt coach, loop detector, comprehension radar, velocity, blind spots, and decision replay. Architecture docs live in `.internal/architecture/PHASE_0` through `PHASE_4` (shipped) + `PHASE_6` (planned) + `PHASE_7` (planned). The competitor landscape addendum (Quint, Antigravity, Kiro) is in `unfade_competitor_analysis.md` and Phase 7 §3.2.
+
 ---
 
 ## 3. Gaps & Highest-Impact Additions
@@ -123,6 +125,8 @@ Cross-referencing the product strategy against external community signals reveal
 **Relevance: 8/10. Pain intensity: 7/10.** Not the primary pain, but a powerful secondary argument, especially for team/enterprise buyers.
 
 **Action:** Add a "value receipt" to the Daily Distill: "Today, Unfade auto-injected context that would have taken ~15 minutes and ~$8 in tokens to re-explain. This month: 4.2 hours and ~$180 saved." This turns abstract benefit into a concrete number engineering managers can put in a budget justification.
+
+> **Status (2026-04-20):** Partially addressed. Token spend proxy (`token-proxy.ts`), cost-per-quality fields, and `summary.json` cost hints are shipped. Phase 7 Cost Attribution Engine (§4.5 in PHASE_7) escalates this to per-decision, per-domain, per-model attribution with "value receipt" UX on the Cost dashboard page — labeled as **estimates** until vendor usage data is enriched.
 
 ### Gap 3: Debugging Session Capture — Should Inform v1 Positioning
 

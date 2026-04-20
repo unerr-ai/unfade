@@ -4,7 +4,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DailyDistill, ExtractedSignals } from "../../../src/schemas/distill.js";
-import type { ReasoningModelV2 } from "../../../src/schemas/profile.js";
 import {
   type ReasoningProfile,
   updateProfileV2,
@@ -165,8 +164,8 @@ describe("updateProfileV2", () => {
 
     const simplicity = profile.tradeOffPreferences.find((p) => p.preference.includes("simplicity"));
     expect(simplicity).toBeDefined();
-    expect(simplicity!.supportingDecisions).toBe(3);
-    expect(simplicity!.confidence).toBe(1); // All supporting, no contradicting
+    expect(simplicity?.supportingDecisions).toBe(3);
+    expect(simplicity?.confidence).toBe(1); // All supporting, no contradicting
   });
 
   // T-199: handles v1 → v2 migration (profile builder reads v1 and writes v2)
@@ -208,7 +207,7 @@ describe("updateProfileV2", () => {
     expect(profile.domainDistribution.length).toBeGreaterThan(0);
     const backend = profile.domainDistribution.find((d) => d.domain === "backend");
     expect(backend).toBeDefined();
-    expect(backend!.frequency).toBeGreaterThan(0);
+    expect(backend?.frequency).toBeGreaterThan(0);
   });
 
   it("tracks temporal patterns", () => {

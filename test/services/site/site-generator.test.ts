@@ -159,16 +159,16 @@ describe("Site generator (UF-080)", () => {
 
     const apr15 = data.heatmap.find((d) => d.date === "2026-04-15");
     expect(apr15).toBeDefined();
-    expect(apr15!.decisions).toBe(2);
-    expect(apr15!.tradeOffs).toBe(1);
-    expect(apr15!.deadEnds).toBe(1);
+    expect(apr15?.decisions).toBe(2);
+    expect(apr15?.tradeOffs).toBe(1);
+    expect(apr15?.deadEnds).toBe(1);
     // intensity = 2 + 1*1.5 + 1*2 = 5.5
-    expect(apr15!.intensity).toBe(5.5);
+    expect(apr15?.intensity).toBe(5.5);
 
     const apr14 = data.heatmap.find((d) => d.date === "2026-04-14");
     expect(apr14).toBeDefined();
-    expect(apr14!.decisions).toBe(1);
-    expect(apr14!.intensity).toBe(1);
+    expect(apr14?.decisions).toBe(1);
+    expect(apr14?.intensity).toBe(1);
   });
 
   // T-212: Extracts domain distribution from reasoning model
@@ -233,9 +233,9 @@ describe("Site generator (UF-080)", () => {
 
     const data = generateSiteData(tmpDir);
     expect(data.profile).not.toBeNull();
-    expect(data.profile!.avgAlternatives).toBe(3.2);
-    expect(data.profile!.aiAcceptanceRate).toBe(0.65);
-    expect(data.profile!.topPattern).toBe("Explores multiple alternatives before committing");
-    expect(data.profile!.dataPoints).toBe(10);
+    expect(data.profile?.avgAlternatives).toBe(3.2);
+    expect(data.profile?.aiAcceptanceRate).toBe(0.65);
+    expect(data.profile?.topPattern).toBe("Explores multiple alternatives before committing");
+    expect(data.profile?.dataPoints).toBe(10);
   });
 });

@@ -99,6 +99,8 @@ function buildPathMocks(baseDir: string) {
     getCardsDir: () => join(unfadeDir, "cards"),
     getSiteDir: () => join(unfadeDir, "site"),
     getAmplificationDir: () => join(unfadeDir, "amplification"),
+    getMetricsDir: () => join(unfadeDir, "metrics"),
+    getInsightsDir: () => join(unfadeDir, "insights"),
     getUserConfigDir: () => join(baseDir, ".unfade-user"),
     getUserStateDir: () => join(baseDir, ".unfade-user", "state"),
   };
@@ -152,7 +154,7 @@ describe("E2E: init → capture → distill → query → card → publish", () 
     // ---------------------------------------------------------------
     const eventsDir = join(unfadeDir, "events");
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
-    const jsonlContent = FIXTURE_EVENTS.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    const jsonlContent = `${FIXTURE_EVENTS.map((e) => JSON.stringify(e)).join("\n")}\n`;
     writeFileSync(jsonlPath, jsonlContent, "utf-8");
     expect(existsSync(jsonlPath)).toBe(true);
 
@@ -180,11 +182,11 @@ describe("E2E: init → capture → distill → query → card → publish", () 
     });
 
     expect(distillResult).not.toBeNull();
-    expect(distillResult!.date).toBe(TEST_DATE);
-    expect(distillResult!.skipped).toBe(false);
+    expect(distillResult?.date).toBe(TEST_DATE);
+    expect(distillResult?.skipped).toBe(false);
 
     // Distill file should exist
-    const distillPath = distillResult!.path;
+    const distillPath = distillResult?.path;
     expect(existsSync(distillPath)).toBe(true);
     const distillContent = readFileSync(distillPath, "utf-8");
     expect(distillContent.length).toBeGreaterThan(0);
@@ -192,7 +194,7 @@ describe("E2E: init → capture → distill → query → card → publish", () 
     expect(distillContent).toContain("# Daily Distill");
 
     // DailyDistill object should have expected shape
-    const daily = distillResult!.distill;
+    const daily = distillResult?.distill;
     expect(daily.summary).toBeTruthy();
     expect(daily.decisions).toBeDefined();
     expect(daily.synthesizedBy).toBe("fallback");
@@ -214,17 +216,17 @@ describe("E2E: init → capture → distill → query → card → publish", () 
     // ---------------------------------------------------------------
     // Stage 5: Card generation (optional — may fail without fonts)
     // ---------------------------------------------------------------
-    let cardGenerated = false;
+    let _cardGenerated = false;
     try {
       const { generateCard } = await import("../../src/services/card/generator.js");
       const cardBuffer = await generateCard(TEST_DATE, tempDir);
       expect(cardBuffer).toBeInstanceOf(Buffer);
       expect(cardBuffer.length).toBeGreaterThan(0);
-      cardGenerated = true;
+      _cardGenerated = true;
     } catch {
       // Card generation may fail in CI or environments without fonts.
       // This is expected and the publish pipeline handles it gracefully.
-      cardGenerated = false;
+      _cardGenerated = false;
     }
 
     // ---------------------------------------------------------------

@@ -77,8 +77,8 @@ describe("getSimilar (MCP tool handler)", () => {
         r.decision.toLowerCase().includes("cache") || r.decision.toLowerCase().includes("redis"),
     );
     expect(cacheResult).toBeDefined();
-    expect(cacheResult!.date).toBeTruthy();
-    expect(cacheResult!.relevance).toBeGreaterThan(0);
+    expect(cacheResult?.date).toBeTruthy();
+    expect(cacheResult?.relevance).toBeGreaterThan(0);
   });
 
   // T-184: returns empty for novel decisions

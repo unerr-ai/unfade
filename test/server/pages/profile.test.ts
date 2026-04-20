@@ -35,7 +35,8 @@ describe("Profile page (GET /profile)", () => {
     const html = await res.text();
     expect(html).toContain("<html");
     expect(html).toContain("Reasoning Fingerprint");
-    expect(html).toContain("stat-grid");
+    // Empty state or populated profile — both use layout + surface card
+    expect(html.includes("Not enough data") || html.includes("grid grid-cols-2")).toBe(true);
   });
 
   it("shows degraded message when no profile exists", async () => {

@@ -34,6 +34,34 @@ export const BreakthroughSchema = z.object({
   trigger: z.string().optional(),
 });
 
+export const DirectionClassificationSchema = z.enum([
+  "human-directed",
+  "collaborative",
+  "llm-directed",
+]);
+export type DirectionClassification = z.infer<typeof DirectionClassificationSchema>;
+
+export const DirectionSummarySchema = z.object({
+  averageHDS: z.number().min(0).max(1),
+  humanDirectedCount: z.number().int().min(0),
+  collaborativeCount: z.number().int().min(0),
+  llmDirectedCount: z.number().int().min(0),
+  topHumanDirectedDecisions: z.array(z.string()),
+});
+export type DirectionSummary = z.infer<typeof DirectionSummarySchema>;
+
+export const AICollaborationSummarySchema = z.object({
+  toolBreakdown: z.array(
+    z.object({
+      tool: z.string(),
+      sessionCount: z.number().int().min(0),
+      eventCount: z.number().int().min(0),
+    }),
+  ),
+  directionStyle: z.string(),
+});
+export type AICollaborationSummary = z.infer<typeof AICollaborationSummarySchema>;
+
 export const DailyDistillSchema = z.object({
   date: z.string().date(),
   summary: z.string(),
@@ -46,6 +74,8 @@ export const DailyDistillSchema = z.object({
   themes: z.array(z.string()).optional(),
   domains: z.array(z.string()).optional(),
   synthesizedBy: z.enum(["llm", "fallback"]).optional(),
+  directionSummary: DirectionSummarySchema.optional(),
+  aiCollaborationSummary: AICollaborationSummarySchema.optional(),
 });
 
 export type Decision = z.infer<typeof DecisionSchema>;

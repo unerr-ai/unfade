@@ -117,6 +117,46 @@ function detectDebuggingSessions(commits: CaptureEvent[]): ExtractedSignals["deb
   return sessions;
 }
 
+// --- Direction signals from AI session events ---
+
+interface DirectionSignalsMeta {
+  humanDirectionScore: number;
+  confidence: "high" | "low";
+  rejectionCount: number;
+}
+
+function parseDirectionSignals(event: CaptureEvent): DirectionSignalsMeta | null {
+  const meta = event.metadata;
+  if (!meta) return null;
+
+  const ds = meta.direction_signals as Record<string, unknown> | undefined;
+  if (!ds) return null;
+
+  const hds = typeof ds.human_direction_score === "number" ? ds.human_direction_score : null;
+  if (hds === null) return null;
+
+  return {
+    humanDirectionScore: hds,
+    confidence: ds.confidence === "high" ? "high" : "low",
+    rejectionCount: typeof ds.rejection_count === "number" ? ds.rejection_count : 0,
+  };
+}
+
+/**
+ * Weight multiplier by event source.
+ * AI sessions are 3x more signal-rich than git commits.
+ */
+function _sourceWeight(event: CaptureEvent): number {
+  switch (event.source) {
+    case "ai-session":
+      return 3;
+    case "terminal":
+      return 1.5;
+    default:
+      return 1;
+  }
+}
+
 /**
  * Extract structured reasoning signals from a day's events.
  * Never throws — returns empty signals on any error.
@@ -134,6 +174,7 @@ export function extractSignals(events: CaptureEvent[], date: string): ExtractedS
 
 function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
   const commits = events.filter((e) => e.type === "commit");
+  const aiConversations = events.filter((e) => e.type === "ai-conversation");
   const aiCompletions = events.filter((e) => e.type === "ai-completion");
   const aiRejections = events.filter((e) => e.type === "ai-rejection");
   const branchSwitches = events.filter((e) => e.type === "branch-switch");
@@ -143,12 +184,25 @@ function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
   const allFiles = collectFiles(events);
   const domains = domainsFromFiles(allFiles);
 
-  // --- Decisions: each commit is a decision; count alternatives from branch overlap ---
-  const decisions: ExtractedSignals["decisions"] = commits.map((event) => {
+  // --- Decisions from AI conversation events (3x weight) ---
+  const aiDecisions: ExtractedSignals["decisions"] = aiConversations.map((event) => {
+    const ds = parseDirectionSignals(event);
+    const turnCount =
+      typeof event.metadata?.turn_count === "number" ? event.metadata.turn_count : 0;
+
+    return {
+      eventId: event.id,
+      summary: event.content.summary,
+      branch: event.content.branch ?? event.gitContext?.branch,
+      alternativesCount: ds ? Math.max(ds.rejectionCount, turnCount > 4 ? 2 : 0) : 0,
+    };
+  });
+
+  // --- Decisions from git commits (1x weight) ---
+  const commitDecisions: ExtractedSignals["decisions"] = commits.map((event) => {
     const branch = event.content.branch ?? event.gitContext?.branch;
     const eventFiles = event.content.files ?? [];
 
-    // Count how many branches touch the same files as this commit
     let maxBranches = 0;
     for (const file of eventFiles) {
       const branches = fileToBranches.get(file);
@@ -164,6 +218,10 @@ function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
       alternativesCount: Math.max(0, maxBranches - 1),
     };
   });
+
+  // Merge decisions: AI sessions first (higher signal), then commits.
+  // AI decisions are expanded by sourceWeight when scored downstream.
+  const decisions = [...aiDecisions, ...commitDecisions];
 
   // --- Trade-offs: AI rejections indicate the developer chose differently ---
   const tradeOffs: ExtractedSignals["tradeOffs"] = aiRejections.map((event) => ({
@@ -234,7 +292,7 @@ function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
     stats: {
       totalEvents: events.length,
       commitCount: commits.length,
-      aiCompletions: aiCompletions.length,
+      aiCompletions: aiCompletions.length + aiConversations.length,
       aiRejections: aiRejections.length,
       branchSwitches: branchSwitches.length,
       reverts: reverts.length,
@@ -242,6 +300,68 @@ function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
       domains,
     },
   };
+}
+
+/**
+ * Aggregate direction signals from events into per-decision classifications.
+ * Used by the distill pipeline to build the Human Direction Summary.
+ */
+export function aggregateDirectionSignals(events: CaptureEvent[]): {
+  averageHDS: number;
+  classifications: Array<{
+    eventId: string;
+    summary: string;
+    hds: number;
+    confidence: "high" | "low";
+    classification: "human-directed" | "collaborative" | "llm-directed";
+  }>;
+  toolBreakdown: Map<string, { sessions: number; events: number }>;
+} {
+  const aiSessionEvents = events.filter(
+    (e) => e.source === "ai-session" && e.type === "ai-conversation",
+  );
+
+  const classifications: Array<{
+    eventId: string;
+    summary: string;
+    hds: number;
+    confidence: "high" | "low";
+    classification: "human-directed" | "collaborative" | "llm-directed";
+  }> = [];
+
+  const toolBreakdown = new Map<string, { sessions: number; events: number }>();
+
+  for (const event of aiSessionEvents) {
+    const ds = parseDirectionSignals(event);
+    const tool = (event.metadata?.ai_tool as string) ?? "unknown";
+
+    const existing = toolBreakdown.get(tool) ?? { sessions: 0, events: 0 };
+    existing.events++;
+    if (event.metadata?.session_id) existing.sessions++;
+    toolBreakdown.set(tool, existing);
+
+    if (!ds) continue;
+
+    let classification: "human-directed" | "collaborative" | "llm-directed";
+    if (ds.humanDirectionScore >= 0.6) classification = "human-directed";
+    else if (ds.humanDirectionScore >= 0.3) classification = "collaborative";
+    else classification = "llm-directed";
+
+    classifications.push({
+      eventId: event.id,
+      summary: event.content.summary,
+      hds: ds.humanDirectionScore,
+      confidence: ds.confidence,
+      classification,
+    });
+  }
+
+  const averageHDS =
+    classifications.length > 0
+      ? classifications.reduce((s, c) => s + c.hds, 0) / classifications.length
+      : 0;
+
+  return { averageHDS, classifications, toolBreakdown };
 }
 
 function emptySignals(date: string): ExtractedSignals {

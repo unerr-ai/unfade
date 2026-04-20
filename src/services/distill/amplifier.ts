@@ -424,7 +424,7 @@ export function rebuildDecisionsIndex(cwd?: string): {
 /**
  * Load the decisions index from disk. Returns null if not found.
  */
-function loadDecisionsIndex(cwd?: string): DecisionsIndex | null {
+function _loadDecisionsIndex(cwd?: string): DecisionsIndex | null {
   const graphDir = getGraphDir(cwd);
   const indexPath = join(graphDir, "decisions_index.json");
   if (!existsSync(indexPath)) return null;
@@ -461,7 +461,7 @@ function matchWithIndex(
   if (todayDomain && index.byDomain[todayDomain]) {
     for (const idx of index.byDomain[todayDomain]) {
       if (!candidateSignals.has(idx)) candidateSignals.set(idx, new Set());
-      candidateSignals.get(idx)!.add("domain");
+      candidateSignals.get(idx)?.add("domain");
     }
   }
 
@@ -470,7 +470,7 @@ function matchWithIndex(
     if (index.byKeyword[kw]) {
       for (const idx of index.byKeyword[kw]) {
         if (!candidateSignals.has(idx)) candidateSignals.set(idx, new Set());
-        candidateSignals.get(idx)!.add(`keyword:${kw}`);
+        candidateSignals.get(idx)?.add(`keyword:${kw}`);
       }
     }
   }

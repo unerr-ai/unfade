@@ -98,7 +98,8 @@ export function trackDomains(input: DomainTrackerInput): DomainDistributionV2[] 
     if (!domainMap.has(domain)) {
       domainMap.set(domain, { frequency: 0, alternatives: [], dates: [] });
     }
-    const entry = domainMap.get(domain)!;
+    const entry = domainMap.get(domain);
+    if (!entry) continue;
     entry.frequency += 1;
     entry.alternatives.push(d.alternativesConsidered ?? 0);
     if (!entry.dates.includes(d.date)) {
@@ -170,7 +171,7 @@ export function detectCrossDomainConnections(
   for (const d of decisions) {
     const domain = d.domain ?? "general";
     if (!dateTodomains.has(d.date)) dateTodomains.set(d.date, new Set());
-    dateTodomains.get(d.date)!.add(domain);
+    dateTodomains.get(d.date)?.add(domain);
   }
 
   // Count co-occurrences
@@ -182,7 +183,8 @@ export function detectCrossDomainConnections(
       for (let j = i + 1; j < domainList.length; j++) {
         const key = `${domainList[i]}|${domainList[j]}`;
         if (!coOccurrences.has(key)) coOccurrences.set(key, { count: 0, dates: [] });
-        const entry = coOccurrences.get(key)!;
+        const entry = coOccurrences.get(key);
+        if (!entry) continue;
         entry.count += 1;
         entry.dates.push(date);
       }

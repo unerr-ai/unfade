@@ -6,11 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Unfade** is an open-source CLI tool that passively captures engineering reasoning from developer workflows (git, AI sessions, terminal), distills it into queryable knowledge, and builds a compounding developer identity profile.
 
-### Hybrid Architecture
+### Server-First Architecture (Phase 5.7)
 
-- **TypeScript CLI** (`src/`) — All user-facing features: CLI commands, TUI dashboard, MCP server, web UI, distillation, personalization, site generation
-- **Go Capture Engine** (`daemon/`) — Invisible background process that watches git, AI sessions, and terminal. Writes events to `.unfade/events/`
+- **`unfade` command** — Single long-running Node server. Bare `unfade` starts everything: HTTP dashboard, MCP server, materializer, and one Go capture engine per registered repo. Ctrl+C stops cleanly.
+- **Go Capture Engine** (`daemon/`) — Managed child process (not detached). One per repo. Watches git, AI sessions, and terminal. Writes events to `<repo>/.unfade/events/`
 - **`.unfade/` directory** — The communication bus. Go writes events, TypeScript reads them. Plain text, inspectable, greppable
+- **`~/.unfade/state/registry.v1.json`** — Global registry of all tracked repos. `unfade` watches all of them.
 
 ### Core Value Propositions
 - **Passive reasoning capture** from git commits, AI sessions, and terminal activity
@@ -121,7 +122,7 @@ All CLI commands use `handleCliError(err, commandName)` from `src/utils/cli-erro
 
 ### 11. MCP Server
 
-7 tools, 5 resources, 3 prompts. Registered in `src/mcp/server.ts`. All tools return the response envelope pattern. Degraded mode returns `degraded: true` with reason when `.unfade/` is missing.
+9 tools (see `src/services/mcp/tools.ts`), 5 resources, 3 prompts. All tools return the response envelope pattern. Degraded mode returns `degraded: true` with reason when `.unfade/` is missing.
 
 ## Build Commands
 
@@ -150,10 +151,13 @@ make clean        # Remove binaries
 - `.internal/product/unfade_support.md` — Competitive analysis and prioritization
 
 ### Architecture
-- `.internal/architecture/VERTICAL_SLICING_PLAN.md` — Overall build sequencing
-- `.internal/architecture/cli/PHASE_0_SCAFFOLDING.md` — Scaffolding, config, paths, logger
-- `.internal/architecture/cli/PHASE_1_CAPTURE_AND_DISTILL.md` — Events, distillation, LLM providers
-- `.internal/architecture/cli/PHASE_2_HOOKS_API_AND_MCP.md` — MCP server, HTTP API, git hooks
-- `.internal/architecture/cli/PHASE_3_CARDS_AND_TERMINAL.md` — Unfade Cards, TUI dashboard, web UI
-- `.internal/architecture/cli/PHASE_4_PERSONALIZATION_AND_AMPLIFICATION.md` — Profile v2, patterns, amplification
-- `.internal/architecture/cli/PHASE_5_ECOSYSTEM_LAUNCH.md` — Config migration, error handling, E2E, launch prep
+- `.internal/architecture/VERTICAL_SLICING_PLAN.md` — Overall build sequencing (if present)
+- `.internal/architecture/UNFADE_CLI_RESEARCH_AND_DESIGN.md` — Shared foundation, data ownership, contracts
+- `.internal/architecture/PHASE_0_FOUNDATION.md` — Scaffolding, config, paths, logger
+- `.internal/architecture/PHASE_1_CAPTURE_AND_INTELLIGENCE.md` — Events, distillation, LLM providers
+- `.internal/architecture/PHASE_2_CONTEXT_AND_INTEGRATION.md` — MCP server, HTTP API, hooks
+- `.internal/architecture/PHASE_3_IDENTITY_AND_PERSONALIZATION.md` — Profile v2, patterns, amplification
+- `.internal/architecture/PHASE_4_PLATFORM_AND_LAUNCH.md` — Platform, continuous intelligence, launch, registry/SSE
+- `.internal/architecture/PHASE_6_POST_LAUNCH.md` — Windows, cloud distill, team/enterprise prep
+- `.internal/architecture/PHASE_7_BREAKTHROUGH_INTELLIGENCE.md` — Active intelligence layer (roadmap)
+- `.internal/architecture/PHASE_7_WEB_UI_UX_ARCHITECTURE.md` — Web UI re-architecture (localhost:7654), RRVV spec

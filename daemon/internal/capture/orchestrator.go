@@ -1,67 +1,79 @@
-// FILE: daemon/internal/capture/orchestrator.go
-// WatcherOrchestrator manages all CaptureSource instances, routes their events
-// through a single channel to the EventWriter goroutine.
-// Provides start/stop lifecycle, source health reporting, and backfill coordination.
-// Terminal events also pass through DebuggingDetector for pattern detection.
-
 package capture
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
+
+	"github.com/unfade-io/unfade-cli/daemon/internal/capture/parsers"
 )
 
 const (
 	eventChannelBuffer = 256
+	defaultIngestDays  = 7
 )
 
 // OrchestratorConfig holds configuration for the WatcherOrchestrator.
 type OrchestratorConfig struct {
 	ProjectDir     string
 	EventsDir      string
+	StateDir       string // For ingest state persistence. Empty = ingest disabled.
 	Logger         CaptureSourceLogger
 	TerminalSocket string // Path to terminal receiver Unix socket (empty = disabled).
 }
 
 // WatcherOrchestrator manages capture sources and routes events to a single EventWriter.
 type WatcherOrchestrator struct {
-	cfg           OrchestratorConfig
-	sources       []CaptureSource
-	writer        *EventWriter
-	ingestCh      chan CaptureEvent // Sources write here.
-	writerCh      chan CaptureEvent // Writer reads here.
-	debugDetector *DebuggingDetector
-	middlewareWg  sync.WaitGroup
+	cfg            OrchestratorConfig
+	sources        []CaptureSource
+	writer         *EventWriter
+	ingestCh       chan CaptureEvent
+	writerCh       chan CaptureEvent
+	debugDetector  *DebuggingDetector
+	historical     *HistoricalIngestor
+	ingestState    *IngestStateManager
+	aiParsers      []parsers.AIToolParser
+	middlewareWg   sync.WaitGroup
 	middlewareDone chan struct{}
-	mu            sync.Mutex
-	running       bool
+	mu             sync.Mutex
+	running        bool
 }
 
 // NewOrchestrator creates a WatcherOrchestrator with git, AI session, and terminal sources.
-// Terminal events pass through DebuggingDetector which may emit synthetic events.
 func NewOrchestrator(cfg OrchestratorConfig) *WatcherOrchestrator {
-	// Two-channel pipeline: sources → ingestCh → middleware → writerCh → EventWriter.
-	// The middleware calls DebuggingDetector for terminal events.
-	// Synthetic debugging_session events go directly to writerCh.
 	ingestCh := make(chan CaptureEvent, eventChannelBuffer)
 	writerCh := make(chan CaptureEvent, eventChannelBuffer)
 
-	sources := []CaptureSource{
-		NewGitWatcher(cfg.ProjectDir, cfg.Logger),
-		NewAISessionWatcher(cfg.Logger),
+	projectPaths := []string{}
+	if cfg.ProjectDir != "" {
+		projectPaths = append(projectPaths, cfg.ProjectDir)
 	}
 
-	// Add terminal receiver if socket path is configured.
+	sources := []CaptureSource{
+		NewGitWatcher(cfg.ProjectDir, cfg.Logger),
+		NewAISessionWatcher(cfg.Logger, projectPaths),
+	}
+
 	if cfg.TerminalSocket != "" {
 		sources = append(sources, NewTerminalReceiver(cfg.TerminalSocket, cfg.Logger))
 	}
 
 	writer := NewEventWriter(cfg.EventsDir, writerCh, cfg.Logger)
-
-	// DebuggingDetector writes synthetic events directly to writerCh,
-	// bypassing the middleware to avoid infinite loops.
 	debugDetector := NewDebuggingDetector(writerCh)
+
+	home, _ := os.UserHomeDir()
+	aiParsers := []parsers.AIToolParser{
+		parsers.NewClaudeCodeParser(home),
+		parsers.NewCursorParser(home),
+		parsers.NewCodexParser(home),
+		parsers.NewAiderParser(projectPaths),
+	}
+
+	var ingestStateMgr *IngestStateManager
+	if cfg.StateDir != "" {
+		ingestStateMgr = NewIngestStateManager(cfg.StateDir)
+	}
 
 	return &WatcherOrchestrator{
 		cfg:            cfg,
@@ -70,12 +82,14 @@ func NewOrchestrator(cfg OrchestratorConfig) *WatcherOrchestrator {
 		ingestCh:       ingestCh,
 		writerCh:       writerCh,
 		debugDetector:  debugDetector,
+		aiParsers:      aiParsers,
+		ingestState:    ingestStateMgr,
 		middlewareDone: make(chan struct{}),
 	}
 }
 
 // Start initializes the EventWriter, middleware, and all capture sources.
-// Sources that fail to start are logged but don't prevent other sources from running.
+// Automatically triggers a 1-week historical ingest in the background.
 func (o *WatcherOrchestrator) Start() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -84,16 +98,13 @@ func (o *WatcherOrchestrator) Start() error {
 		return fmt.Errorf("orchestrator already running")
 	}
 
-	// Start the writer first — sources need somewhere to send events.
 	if err := o.writer.Start(); err != nil {
 		return fmt.Errorf("start event writer: %w", err)
 	}
 
-	// Start the middleware goroutine that routes events through the detector.
 	o.middlewareWg.Add(1)
 	go o.middlewareLoop()
 
-	// Start each source. Non-fatal failures are logged.
 	started := 0
 	for _, src := range o.sources {
 		if err := src.Start(o.ingestCh); err != nil {
@@ -113,18 +124,22 @@ func (o *WatcherOrchestrator) Start() error {
 		"sources_total":   len(o.sources),
 	})
 
+	if o.ingestState != nil {
+		state := o.ingestState.Get()
+		if state.Status != "running" && state.Status != "completed" {
+			o.startIngestLocked(time.Now().AddDate(0, 0, -defaultIngestDays))
+		}
+	}
+
 	return nil
 }
 
-// middlewareLoop reads from ingestCh, calls DebuggingDetector for terminal events,
-// and forwards all events to writerCh.
 func (o *WatcherOrchestrator) middlewareLoop() {
 	defer o.middlewareWg.Done()
 
 	for {
 		select {
 		case <-o.middlewareDone:
-			// Drain remaining events.
 			for {
 				select {
 				case event, ok := <-o.ingestCh:
@@ -140,9 +155,7 @@ func (o *WatcherOrchestrator) middlewareLoop() {
 			if !ok {
 				return
 			}
-			// Forward to writer.
 			o.writerCh <- event
-			// Feed terminal events to the debugging detector.
 			if event.Source == "terminal" {
 				o.debugDetector.ProcessEvent(event)
 			}
@@ -150,7 +163,7 @@ func (o *WatcherOrchestrator) middlewareLoop() {
 	}
 }
 
-// Stop gracefully shuts down all sources, middleware, and the writer.
+// Stop gracefully shuts down all sources, the historical ingestor, middleware, and the writer.
 func (o *WatcherOrchestrator) Stop() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -159,17 +172,19 @@ func (o *WatcherOrchestrator) Stop() {
 		return
 	}
 
-	// Stop sources first — they produce events.
+	if o.historical != nil {
+		o.historical.Stop()
+		o.historical = nil
+	}
+
 	for _, src := range o.sources {
 		o.cfg.Logger.Debug("stopping capture source", map[string]any{"source": src.Name()})
 		src.Stop()
 	}
 
-	// Stop middleware — let it drain.
 	close(o.middlewareDone)
 	o.middlewareWg.Wait()
 
-	// Then stop the writer — it consumes events and drains the channel.
 	o.writer.Stop()
 
 	o.running = false
@@ -179,6 +194,16 @@ func (o *WatcherOrchestrator) Stop() {
 // EventsToday returns the count of events written since writer started.
 func (o *WatcherOrchestrator) EventsToday() int {
 	return o.writer.TodayCount()
+}
+
+// InjectEvent feeds a single event into the capture pipeline from external sources
+// (e.g., terminal-event IPC command from shell hooks).
+func (o *WatcherOrchestrator) InjectEvent(event CaptureEvent) {
+	select {
+	case o.ingestCh <- event:
+	default:
+		// Channel full — drop silently to avoid blocking IPC
+	}
 }
 
 // WatcherStatus returns a map of source names to their watched paths.
@@ -194,7 +219,6 @@ func (o *WatcherOrchestrator) WatcherStatus() map[string][]string {
 }
 
 // Backfill triggers git history backfill since the given time.
-// Writes events through the ingest channel. Blocks until complete.
 func (o *WatcherOrchestrator) Backfill(since time.Time) (int, error) {
 	o.mu.Lock()
 	running := o.running
@@ -204,7 +228,6 @@ func (o *WatcherOrchestrator) Backfill(since time.Time) (int, error) {
 		return 0, fmt.Errorf("orchestrator not running")
 	}
 
-	// Find the git source.
 	for _, src := range o.sources {
 		if gw, ok := src.(*GitWatcher); ok {
 			return gw.Backfill(since, o.ingestCh)
@@ -212,4 +235,37 @@ func (o *WatcherOrchestrator) Backfill(since time.Time) (int, error) {
 	}
 
 	return 0, fmt.Errorf("git watcher not found")
+}
+
+// StartIngest launches a historical AI session ingest in the background.
+func (o *WatcherOrchestrator) StartIngest(since time.Time) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if !o.running {
+		return fmt.Errorf("orchestrator not running")
+	}
+	if o.ingestState == nil {
+		return fmt.Errorf("ingest state tracking not configured")
+	}
+	if o.historical != nil && o.historical.IsRunning() {
+		return fmt.Errorf("historical ingest already running")
+	}
+
+	o.startIngestLocked(since)
+	return nil
+}
+
+func (o *WatcherOrchestrator) startIngestLocked(since time.Time) {
+	o.historical = NewHistoricalIngestor(o.aiParsers, o.ingestCh, o.ingestState, o.cfg.Logger)
+	o.historical.Run(since)
+}
+
+// IngestStatus returns the current historical ingest state, or nil if not configured.
+func (o *WatcherOrchestrator) IngestStatus() *IngestState {
+	if o.ingestState == nil {
+		return nil
+	}
+	s := o.ingestState.Get()
+	return &s
 }

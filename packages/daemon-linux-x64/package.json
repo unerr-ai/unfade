@@ -1,0 +1,19 @@
+{
+  "name": "@unfade/daemon-linux-x64",
+  "version": "0.1.0",
+  "description": "Unfade capture engine binary for Linux x64",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unerr-ai/unfade.git"
+  }
+}

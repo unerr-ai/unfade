@@ -93,7 +93,8 @@ function detectAlternativesPatterns(decisions: (Decision & { date: string })[]):
   for (const d of decisions) {
     const domain = d.domain ?? "general";
     if (!byDomain.has(domain)) byDomain.set(domain, { alts: [], dates: [] });
-    const entry = byDomain.get(domain)!;
+    const entry = byDomain.get(domain);
+    if (!entry) continue;
     entry.alts.push(d.alternativesConsidered ?? 0);
     entry.dates.push(d.date);
   }
@@ -150,13 +151,17 @@ function detectTradeOffPatterns(tradeOffs: (TradeOff & { date: string })[]): {
     }
 
     if (prefMap.has(key)) {
-      const entry = prefMap.get(key)!;
-      entry.supporting += 1;
-      entry.dates.push(t.date);
+      const entry = prefMap.get(key);
+      if (entry) {
+        entry.supporting += 1;
+        entry.dates.push(t.date);
+      }
     } else if (prefMap.has(reverseKey)) {
-      const entry = prefMap.get(reverseKey)!;
-      entry.contradicting += 1;
-      entry.dates.push(t.date);
+      const entry = prefMap.get(reverseKey);
+      if (entry) {
+        entry.contradicting += 1;
+        entry.dates.push(t.date);
+      }
     }
   }
 
@@ -246,7 +251,7 @@ function detectExplorationPatterns(decisions: (Decision & { date: string })[]): 
   for (const d of decisions) {
     const domain = d.domain ?? "general";
     if (!byDomain.has(domain)) byDomain.set(domain, []);
-    byDomain.get(domain)!.push(d.alternativesConsidered ?? 0);
+    byDomain.get(domain)?.push(d.alternativesConsidered ?? 0);
   }
 
   // Calculate overall average

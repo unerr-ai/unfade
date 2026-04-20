@@ -19,6 +19,34 @@ export interface OllamaReadyResult {
 }
 
 /**
+ * `checkOllamaReady` expects a host origin (no `/api` suffix); config often stores `…/api` for the SDK.
+ */
+export function normalizeOllamaOriginForChecks(apiBase?: string): string {
+  const raw = (apiBase ?? "").trim() || "http://localhost:11434";
+  let u = raw.replace(/\/$/, "");
+  if (u.endsWith("/api")) {
+    u = u.slice(0, -4).replace(/\/$/, "");
+  }
+  return u || "http://localhost:11434";
+}
+
+/**
+ * Normalize user-entered OpenAI-compatible `baseURL` for `@ai-sdk/openai`.
+ * People often paste the full chat-completions URL; the SDK appends route segments
+ * itself, so a trailing `/v1/chat/completions` becomes invalid nested paths
+ * (e.g. `.../chat/completions/responses`).
+ */
+export function normalizeOpenAICompatibleApiBase(raw?: string): string | undefined {
+  const s = raw?.trim();
+  if (!s) return undefined;
+  let u = s.replace(/\/+$/, "");
+  u = u.replace(/\/v1\/chat\/completions\/?$/i, "/v1");
+  u = u.replace(/\/chat\/completions\/?$/i, "");
+  u = u.replace(/\/+$/, "");
+  return u || undefined;
+}
+
+/**
  * Create an LLM provider from config.
  * Returns null if provider is "none".
  */
@@ -34,7 +62,7 @@ export async function createLLMProvider(config: UnfadeConfig): Promise<LLMProvid
       const ollama = createOllama({
         baseURL: config.distill.apiBase ?? "http://localhost:11434/api",
       });
-      // ollama-ai-provider returns LanguageModelV1; ai@6 generateObject()
+      // ollama-ai-provider returns LanguageModelV1; ai@6 generateText()
       // accepts V1 at runtime via backward-compat shim.
       return {
         model: ollama(modelName) as unknown as LanguageModel,
@@ -44,9 +72,11 @@ export async function createLLMProvider(config: UnfadeConfig): Promise<LLMProvid
     }
     case "openai": {
       const { createOpenAI } = await import("@ai-sdk/openai");
+      const baseURL =
+        normalizeOpenAICompatibleApiBase(config.distill.apiBase) ?? config.distill.apiBase;
       const openai = createOpenAI({
         apiKey: config.distill.apiKey,
-        baseURL: config.distill.apiBase,
+        baseURL,
       });
       return {
         model: openai(modelName),
@@ -69,9 +99,11 @@ export async function createLLMProvider(config: UnfadeConfig): Promise<LLMProvid
     case "custom": {
       // Custom provider uses OpenAI-compatible API with custom base URL
       const { createOpenAI } = await import("@ai-sdk/openai");
+      const baseURL =
+        normalizeOpenAICompatibleApiBase(config.distill.apiBase) ?? config.distill.apiBase;
       const custom = createOpenAI({
         apiKey: config.distill.apiKey,
-        baseURL: config.distill.apiBase,
+        baseURL,
       });
       return {
         model: custom(modelName),
@@ -94,9 +126,10 @@ export async function createLLMProvider(config: UnfadeConfig): Promise<LLMProvid
  * All failures return { ready: false, reason: '...' }.
  */
 export async function checkOllamaReady(
-  baseUrl = "http://localhost:11434",
+  baseUrlOrApiBase = "http://localhost:11434",
   modelName = "llama3.2",
 ): Promise<OllamaReadyResult> {
+  const baseUrl = normalizeOllamaOriginForChecks(baseUrlOrApiBase);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5_000);
 

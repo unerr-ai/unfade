@@ -49,7 +49,7 @@ describe("detectPatterns", () => {
       (p) => p.category === "decision_style" && p.pattern.includes("alternatives"),
     );
     expect(highAlts).toBeDefined();
-    expect(highAlts!.examples).toBeGreaterThanOrEqual(3);
+    expect(highAlts?.examples).toBeGreaterThanOrEqual(3);
   });
 
   // T-187: detects trade-off preference from consistent choices
@@ -66,7 +66,7 @@ describe("detectPatterns", () => {
       (p) => p.category === "trade_off" && p.pattern.includes("simplicity"),
     );
     expect(tradeOffPattern).toBeDefined();
-    expect(tradeOffPattern!.confidence).toBeGreaterThan(0.5);
+    expect(tradeOffPattern?.confidence).toBeGreaterThan(0.5);
   });
 
   // T-188: confidence increases with more supporting examples
@@ -99,7 +99,7 @@ describe("detectPatterns", () => {
 
     expect(smallMatch).toBeDefined();
     expect(largeMatch).toBeDefined();
-    expect(largeMatch!.confidence).toBeGreaterThan(smallMatch!.confidence);
+    expect(largeMatch?.confidence).toBeGreaterThan(smallMatch?.confidence);
   });
 
   // T-189: contradicting evidence reduces confidence
@@ -143,7 +143,7 @@ describe("detectPatterns", () => {
 
     expect(consistentMatch).toBeDefined();
     expect(mixedMatch).toBeDefined();
-    expect(consistentMatch!.confidence).toBeGreaterThan(mixedMatch!.confidence);
+    expect(consistentMatch?.confidence).toBeGreaterThan(mixedMatch?.confidence);
   });
 
   // T-190: returns no surfaceable patterns below 0.7 confidence
@@ -178,7 +178,7 @@ describe("detectPatterns", () => {
       (p) => p.category === "ai_interaction" && p.pattern.includes("auth"),
     );
     expect(aiPattern).toBeDefined();
-    expect(aiPattern!.pattern).toContain("modification");
+    expect(aiPattern?.pattern).toContain("modification");
   });
 
   it("returns empty array when no decisions provided", () => {

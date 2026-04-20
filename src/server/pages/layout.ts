@@ -1,312 +1,263 @@
 // FILE: src/server/pages/layout.ts
-// UF-051a-layout: Base HTML layout — dark theme, htmx, nav bar.
-// Export layout(title, content) that returns a complete HTML page.
+// UF-300 (UI): Complete rewrite — Linear-inspired global shell.
+// Sidebar (240/56 px) + Live Strip (36 px) + Content (max-w 1200 px) + Evidence Drawer (480 px).
+// Exports: layout(), escapeHtml(), markdownToHtml()
 
-const CSS = `
-  :root {
-    --bg: #1a1a2e;
-    --bg-card: #16213e;
-    --bg-input: #0f3460;
-    --text: #e0e0e0;
-    --text-dim: #8892a4;
-    --accent: #0099ff;
-    --accent-dim: #006bb3;
-    --success: #00c853;
-    --warning: #ffab00;
-    --error: #ff5252;
-    --border: #2a2a4a;
-    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
-    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --radius: 8px;
-  }
+import {
+  iconAlertTriangle,
+  iconBarChart,
+  iconBrain,
+  iconCalendar,
+  iconCards,
+  iconChevronLeft,
+  iconChevronRight,
+  iconDollarSign,
+  iconFolder,
+  iconHome,
+  iconMenu,
+  iconMoon,
+  iconSearch,
+  iconSettings,
+  iconSun,
+  iconTarget,
+  iconTrendingUp,
+  iconUser,
+  iconX,
+  iconZap,
+} from "../icons.js";
 
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+const THEME_VARS = `
+:root {
+  --canvas: #0A0A0F; --substrate: #0F0F12; --surface: #18181B;
+  --raised: #1C1C22; --overlay: #27272A;
+  --foreground: #FAFAFA; --muted: rgba(250,250,250,0.6); --border-color: #27272A;
+  --accent: #8B5CF6; --accent-dim: #7C3AED; --cyan: #22D3EE;
+  --success: #10B981; --warning: #F59E0B; --error: #EF4444;
+  --live: #10B981; --stale: #F59E0B; --proxy: rgba(139,92,246,0.25);
+}
+.light {
+  --canvas: #F8F9FA; --substrate: #F4F4F5; --surface: #FFFFFF;
+  --raised: #F4F4F5; --overlay: #E4E4E7;
+  --foreground: #111118; --muted: rgba(17,17,24,0.6); --border-color: #E4E4E7;
+  --accent: #6D28D9; --accent-dim: #5B21B6; --cyan: #0891B2;
+  --success: #059669; --warning: #D97706; --error: #DC2626;
+  --live: #059669; --stale: #D97706; --proxy: rgba(109,40,217,0.15);
+}`;
 
-  body {
-    font-family: var(--sans);
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.6;
-    min-height: 100vh;
-  }
-
-  nav {
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border);
-    padding: 0 1.5rem;
-    display: flex;
-    align-items: center;
-    height: 52px;
-    gap: 0.25rem;
-  }
-
-  nav .brand {
-    font-family: var(--mono);
-    font-weight: 700;
-    font-size: 1.1rem;
-    color: var(--accent);
-    margin-right: 2rem;
-    text-decoration: none;
-  }
-
-  nav a {
-    color: var(--text-dim);
-    text-decoration: none;
-    padding: 0.5rem 0.75rem;
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    transition: color 0.15s, background 0.15s;
-  }
-
-  nav a:hover, nav a.active {
-    color: var(--text);
-    background: var(--bg-input);
-  }
-
-  main {
-    max-width: 960px;
-    margin: 0 auto;
-    padding: 2rem 1.5rem;
-  }
-
-  h1 {
-    font-size: 1.5rem;
-    font-weight: 600;
-    margin-bottom: 1.5rem;
-    color: var(--text);
-  }
-
-  h2 {
-    font-size: 1.15rem;
-    font-weight: 600;
-    margin: 1.5rem 0 0.75rem;
-    color: var(--text);
-  }
-
-  .card {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.25rem;
-    margin-bottom: 1rem;
-  }
-
-  .stat-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .stat {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1rem;
-    text-align: center;
-  }
-
-  .stat .value {
-    font-family: var(--mono);
-    font-size: 1.75rem;
-    font-weight: 700;
-    color: var(--accent);
-  }
-
-  .stat .label {
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    margin-top: 0.25rem;
-  }
-
-  .badge {
-    display: inline-block;
-    padding: 0.2rem 0.6rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .badge-ok { background: rgba(0,200,83,0.15); color: var(--success); }
-  .badge-warn { background: rgba(255,171,0,0.15); color: var(--warning); }
-  .badge-error { background: rgba(255,82,82,0.15); color: var(--error); }
-
-  .empty {
-    text-align: center;
-    padding: 3rem 1rem;
-    color: var(--text-dim);
-  }
-
-  .empty p { margin-bottom: 0.5rem; }
-
-  pre, code {
-    font-family: var(--mono);
-    font-size: 0.85rem;
-  }
-
-  pre {
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1rem;
-    overflow-x: auto;
-    margin: 0.75rem 0;
-    line-height: 1.5;
-  }
-
-  code {
-    background: var(--bg-input);
-    padding: 0.15rem 0.35rem;
-    border-radius: 4px;
-  }
-
-  pre code {
-    background: none;
-    padding: 0;
-  }
-
-  button, .btn {
-    font-family: var(--sans);
-    font-size: 0.875rem;
-    padding: 0.5rem 1rem;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-
-  button:hover, .btn:hover {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-  }
-
-  .btn-primary {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-  }
-
-  .btn-primary:hover {
-    background: var(--accent-dim);
-  }
-
-  a { color: var(--accent); }
-  a:hover { color: var(--text); }
-
-  .date-nav {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .date-nav .current {
-    font-family: var(--mono);
-    font-size: 1rem;
-    color: var(--text);
-  }
-
-  .domain-list {
-    list-style: none;
-    padding: 0;
-  }
-
-  .domain-list li {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.9rem;
-  }
-
-  .domain-list li:last-child { border-bottom: none; }
-
-  .domain-list .freq {
-    font-family: var(--mono);
-    color: var(--accent);
-  }
-
-  .pattern-list {
-    list-style: none;
-    padding: 0;
-  }
-
-  .pattern-list li {
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.5rem;
-    background: var(--bg-input);
-    border-radius: var(--radius);
-    font-size: 0.9rem;
-  }
-
-  .config-section { margin-bottom: 2rem; }
-
-  .config-section h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    color: var(--text-dim);
-  }
-
-  .distill-content h1 { font-size: 1.25rem; margin: 1.25rem 0 0.5rem; }
-  .distill-content h2 { font-size: 1.1rem; margin: 1rem 0 0.5rem; }
-  .distill-content h3 { font-size: 0.95rem; margin: 0.75rem 0 0.5rem; }
-  .distill-content p { margin-bottom: 0.75rem; }
-  .distill-content ul, .distill-content ol { margin: 0.5rem 0 0.75rem 1.5rem; }
-  .distill-content li { margin-bottom: 0.25rem; }
-  .distill-content blockquote {
-    border-left: 3px solid var(--accent);
-    padding-left: 1rem;
-    margin: 0.75rem 0;
-    color: var(--text-dim);
-    font-style: italic;
-  }
-  .distill-content strong { color: var(--text); font-weight: 600; }
-  .distill-content em { color: var(--text-dim); }
-
-  .htmx-indicator { opacity: 0; transition: opacity 0.2s; }
-  .htmx-request .htmx-indicator { opacity: 1; }
+const BASE_CSS = `
+*, *::before, *::after { transition: background-color 0.15s, border-color 0.15s, color 0.15s; box-sizing: border-box; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.3); border-radius: 3px; }
+pre, pre code { background: #0F0F12 !important; color: #FAFAFA !important; }
+.sidebar { width: 240px; min-width: 240px; transition: width 0.2s, min-width 0.2s; }
+.sidebar.collapsed { width: 56px; min-width: 56px; }
+.sidebar.collapsed .nav-label, .sidebar.collapsed .brand-text, .sidebar.collapsed .divider-label { display: none; }
+.sidebar.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
+.nav-item { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px 0 12px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; position: relative; }
+.nav-item:hover { background: var(--raised); color: var(--foreground); }
+.nav-item.active { background: var(--raised); color: var(--foreground); }
+.nav-item.active::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: var(--accent); border-radius: 2px; }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); display: inline-block; }
+.live-dot.stale { background: var(--stale); }
+.live-strip { height: 36px; background: var(--substrate); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: 12px; color: var(--muted); }
+.drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 40; display: none; }
+.drawer-backdrop.open { display: block; }
+.evidence-drawer { position: fixed; top: 0; right: -480px; width: 480px; max-width: 90vw; height: 100vh; background: var(--surface); border-left: 1px solid var(--border-color); box-shadow: -4px 0 24px rgba(0,0,0,0.2); z-index: 50; transition: right 0.2s ease-out; overflow-y: auto; }
+.evidence-drawer.open { right: 0; }
+.badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; font-weight: 600; background: var(--accent); color: white; }
+@media (max-width: 1023px) { .sidebar { width: 56px; min-width: 56px; } .sidebar .nav-label, .sidebar .brand-text, .sidebar .divider-label { display: none; } .sidebar .nav-item { justify-content: center; padding-left: 0; padding-right: 0; } }
+@media (max-width: 767px) { .sidebar { display: none; } .sidebar.mobile-open { display: flex; position: fixed; z-index: 30; width: 240px; height: 100vh; } .mobile-menu-btn { display: flex !important; } }
 `;
 
-/**
- * Wrap page content in the base HTML layout.
- * Returns a complete HTML document string.
- */
-export function layout(title: string, content: string): string {
+const TAILWIND_CONFIG = `
+tailwind.config = {
+  darkMode: 'class',
+  theme: { extend: {
+    colors: { canvas: 'var(--canvas)', substrate: 'var(--substrate)', surface: 'var(--surface)', raised: 'var(--raised)', overlay: 'var(--overlay)', foreground: 'var(--foreground)', muted: 'var(--muted)', border: 'var(--border-color)', accent: 'var(--accent)', 'accent-dim': 'var(--accent-dim)', cyan: 'var(--cyan)', success: 'var(--success)', warning: 'var(--warning)', error: 'var(--error)' },
+    fontFamily: { heading: ["'Space Grotesk'", 'sans-serif'], body: ["'Inter'", 'sans-serif'], mono: ["'JetBrains Mono'", 'monospace'] },
+    borderRadius: { DEFAULT: '8px' },
+  }},
+};`;
+
+interface NavItem {
+  path: string;
+  label: string;
+  icon: string;
+  badge?: string;
+}
+
+const NAV_PRIMARY: NavItem[] = [
+  { path: "/", label: "Home", icon: iconHome() },
+  { path: "/live", label: "Live", icon: iconZap() },
+  { path: "/intelligence", label: "Intelligence", icon: iconBarChart() },
+  { path: "/cost", label: "Cost", icon: iconDollarSign() },
+  { path: "/comprehension", label: "Comprehension", icon: iconBrain() },
+  { path: "/coach", label: "Coach", icon: iconTarget() },
+  { path: "/alerts", label: "Alerts", icon: iconAlertTriangle() },
+];
+
+const NAV_SECONDARY: NavItem[] = [
+  { path: "/distill", label: "Distill", icon: iconCalendar() },
+  { path: "/profile", label: "Profile", icon: iconUser() },
+  { path: "/cards", label: "Cards", icon: iconCards() },
+  { path: "/portfolio", label: "Portfolio", icon: iconFolder() },
+  { path: "/search", label: "Search", icon: iconSearch() },
+  { path: "/velocity", label: "Velocity", icon: iconTrendingUp() },
+];
+
+function renderNavItem(item: NavItem): string {
+  return `<a href="${item.path}" data-path="${item.path}" class="nav-item">
+    <span class="nav-icon" style="flex-shrink:0">${item.icon}</span>
+    <span class="nav-label">${item.label}</span>
+    ${item.badge ? `<span class="badge nav-label">${item.badge}</span>` : ""}
+  </a>`;
+}
+
+export interface LayoutOptions {
+  alertCount?: number;
+}
+
+export function layout(title: string, content: string, options?: LayoutOptions): string {
+  const alertCount = options?.alertCount ?? 0;
+  const alertBadge = alertCount > 0 ? `<span class="badge nav-label">${alertCount}</span>` : "";
+
+  const navPrimaryHtml = NAV_PRIMARY.map((item) => {
+    if (item.path === "/alerts" && alertBadge && options) {
+      return renderNavItem({ ...item, badge: String(options.alertCount) });
+    }
+    return renderNavItem(item);
+  }).join("\n        ");
+
+  const navSecondaryHtml = NAV_SECONDARY.map(renderNavItem).join("\n        ");
+
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)} — Unfade</title>
-  <style>${CSS}</style>
+  <style>${THEME_VARS}${BASE_CSS}</style>
+  <script>(function(){var s=localStorage.getItem('unfade-theme');if(s==='light')document.documentElement.classList.add('light');})();</script>
+  <link rel="icon" type="image/svg+xml" href="/public/icon.svg">
+  <link rel="icon" type="image/png" href="/public/icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>${TAILWIND_CONFIG}</script>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
-<body>
-  <nav>
-    <a class="brand" href="/">unfade</a>
-    <a href="/">Dashboard</a>
-    <a href="/distill">Distill</a>
-    <a href="/profile">Profile</a>
-    <a href="/cards">Cards</a>
-    <a href="/search">Search</a>
-    <a href="/settings">Settings</a>
+<body class="bg-canvas text-foreground font-body antialiased m-0 p-0 flex h-screen overflow-hidden">
+
+  <!-- Mobile menu button -->
+  <button class="mobile-menu-btn hidden fixed top-2 left-2 z-40 p-2 rounded-md bg-surface border border-border" onclick="document.getElementById('sidebar').classList.toggle('mobile-open')">
+    ${iconMenu()}
+  </button>
+
+  <!-- Sidebar -->
+  <nav id="sidebar" class="sidebar flex flex-col bg-substrate border-r border-border h-screen overflow-y-auto py-4 px-3 flex-shrink-0">
+    <div class="flex items-center gap-2 mb-6 px-1">
+      <img src="/public/icon.svg" alt="Unfade" width="28" height="28" style="flex-shrink:0">
+      <span class="brand-text font-mono font-bold text-lg text-accent">unfade</span>
+    </div>
+
+    <div class="flex flex-col gap-0.5 flex-1">
+      ${navPrimaryHtml}
+
+      <div class="divider-label mt-4 mb-2 px-3 text-[11px] uppercase tracking-wider text-muted font-medium">More</div>
+      ${navSecondaryHtml}
+    </div>
+
+    <div class="flex flex-col gap-0.5 mt-auto pt-4 border-t border-border">
+      <a href="/settings" data-path="/settings" class="nav-item">
+        <span class="nav-icon" style="flex-shrink:0">${iconSettings()}</span>
+        <span class="nav-label">Settings</span>
+      </a>
+      <button onclick="toggleTheme()" class="nav-item w-full text-left border-none bg-transparent cursor-pointer" style="font:inherit;color:inherit">
+        <span class="nav-icon" style="flex-shrink:0" id="theme-btn-icon">${iconMoon()}</span>
+        <span class="nav-label">Theme</span>
+      </button>
+      <button onclick="toggleSidebar()" class="nav-item w-full text-left border-none bg-transparent cursor-pointer" style="font:inherit;color:inherit">
+        <span class="nav-icon" style="flex-shrink:0" id="collapse-icon">${iconChevronLeft()}</span>
+        <span class="nav-label">Collapse</span>
+      </button>
+    </div>
   </nav>
-  <main>
-    ${content}
-  </main>
+
+  <!-- Main area -->
+  <div class="flex flex-col flex-1 min-w-0">
+    <!-- Live strip -->
+    <div class="live-strip flex-shrink-0">
+      <span class="live-dot" id="live-dot"></span>
+      <span id="live-status">Connecting…</span>
+      <span class="flex-1"></span>
+      <span id="live-freshness"></span>
+      <span id="live-counts"></span>
+    </div>
+
+    <!-- Page content -->
+    <main class="flex-1 overflow-y-auto">
+      <div class="max-w-[1200px] mx-auto px-6 py-8">
+        ${content}
+      </div>
+    </main>
+  </div>
+
+  <!-- Evidence drawer -->
+  <div class="drawer-backdrop" id="drawer-backdrop" onclick="closeDrawer()"></div>
+  <div class="evidence-drawer" id="evidence-drawer">
+    <div class="flex items-center justify-between p-4 border-b border-border" style="height:48px">
+      <span class="font-semibold">Evidence</span>
+      <button onclick="closeDrawer()" class="text-muted hover:text-foreground bg-transparent border-none cursor-pointer">${iconX()}</button>
+    </div>
+    <div id="drawer-content" class="p-4"></div>
+  </div>
+
+  <script>
+  // Active nav
+  (function(){var p=location.pathname;document.querySelectorAll('.nav-item[data-path]').forEach(function(a){var dp=a.getAttribute('data-path');if(p===dp||(dp!=='/'&&p.startsWith(dp)))a.classList.add('active');});})();
+
+  // Theme
+  function toggleTheme(){var r=document.documentElement,l=r.classList.toggle('light');localStorage.setItem('unfade-theme',l?'light':'dark');document.getElementById('theme-btn-icon').innerHTML=l?'${iconSun().replace(/'/g, "\\'")}':'${iconMoon().replace(/'/g, "\\'")}';};
+  (function(){if(document.documentElement.classList.contains('light'))document.getElementById('theme-btn-icon').innerHTML='${iconSun().replace(/'/g, "\\'")}';})();
+
+  // Sidebar collapse
+  function toggleSidebar(){var s=document.getElementById('sidebar');s.classList.toggle('collapsed');var c=s.classList.contains('collapsed');localStorage.setItem('unfade-sidebar',c?'collapsed':'expanded');document.getElementById('collapse-icon').innerHTML=c?'${iconChevronRight().replace(/'/g, "\\'")}':'${iconChevronLeft().replace(/'/g, "\\'")}';};
+  (function(){if(localStorage.getItem('unfade-sidebar')==='collapsed'){document.getElementById('sidebar').classList.add('collapsed');document.getElementById('collapse-icon').innerHTML='${iconChevronRight().replace(/'/g, "\\'")}'}})();
+
+  // Drawer
+  function openDrawer(html){document.getElementById('drawer-content').innerHTML=html;document.getElementById('drawer-backdrop').classList.add('open');document.getElementById('evidence-drawer').classList.add('open');};
+  function closeDrawer(){document.getElementById('drawer-backdrop').classList.remove('open');document.getElementById('evidence-drawer').classList.remove('open');};
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')closeDrawer();});
+
+  // SSE live strip
+  (function(){
+    if(typeof EventSource==='undefined')return;
+    var es=new EventSource('/api/stream');
+    var dot=document.getElementById('live-dot');
+    var status=document.getElementById('live-status');
+    var freshness=document.getElementById('live-freshness');
+    var counts=document.getElementById('live-counts');
+    dot.classList.remove('stale');
+    status.textContent='Live';
+    es.addEventListener('summary',function(e){
+      try{
+        var d=JSON.parse(e.data);
+        var ago=Math.round((Date.now()-new Date(d.updatedAt).getTime())/1000);
+        freshness.textContent='Updated '+(ago<60?ago+'s':Math.round(ago/60)+'m')+' ago';
+        counts.textContent='Events (24h): '+(d.eventCount24h||0)+' · Direction: '+(d.directionDensity24h||0)+'%';
+      }catch(err){}
+    });
+    es.onerror=function(){dot.classList.add('stale');status.textContent='Reconnecting…';};
+  })();
+  </script>
 </body>
 </html>`;
 }
 
-/**
- * Escape HTML special characters to prevent XSS.
- */
 export function escapeHtml(text: string): string {
+  if (text == null || text === "") return "";
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -315,10 +266,6 @@ export function escapeHtml(text: string): string {
     .replace(/'/g, "&#039;");
 }
 
-/**
- * Convert basic markdown to HTML.
- * Handles: headings, bold, italic, code blocks, inline code, blockquotes, lists, paragraphs.
- */
 export function markdownToHtml(md: string): string {
   const lines = md.split("\n");
   const out: string[] = [];
@@ -327,7 +274,6 @@ export function markdownToHtml(md: string): string {
   let listType: "ul" | "ol" = "ul";
 
   for (const line of lines) {
-    // Fenced code block
     if (line.startsWith("```")) {
       if (inCodeBlock) {
         out.push("</code></pre>");
@@ -337,20 +283,19 @@ export function markdownToHtml(md: string): string {
           out.push(listType === "ul" ? "</ul>" : "</ol>");
           inList = false;
         }
-        out.push("<pre><code>");
+        out.push(
+          '<pre class="bg-raised border border-border rounded-lg p-4 overflow-x-auto my-3 font-mono text-sm"><code>',
+        );
         inCodeBlock = true;
       }
       continue;
     }
-
     if (inCodeBlock) {
       out.push(escapeHtml(line));
       continue;
     }
 
     const trimmed = line.trim();
-
-    // Empty line — close list if open
     if (!trimmed) {
       if (inList) {
         out.push(listType === "ul" ? "</ul>" : "</ol>");
@@ -359,77 +304,68 @@ export function markdownToHtml(md: string): string {
       continue;
     }
 
-    // Headings
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
+    const hm = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (hm) {
       if (inList) {
         out.push(listType === "ul" ? "</ul>" : "</ol>");
         inList = false;
       }
-      const level = headingMatch[1].length;
-      out.push(`<h${level}>${inlineMarkdown(headingMatch[2])}</h${level}>`);
+      const l = hm[1].length;
+      const s = ["", "text-xl", "text-lg", "text-base", "text-sm", "text-sm", "text-sm"];
+      out.push(
+        `<h${l} class="${s[l]} font-heading font-semibold text-foreground mt-5 mb-2">${inlineMarkdown(hm[2] ?? "")}</h${l}>`,
+      );
       continue;
     }
-
-    // Blockquote
     if (trimmed.startsWith("> ")) {
       if (inList) {
         out.push(listType === "ul" ? "</ul>" : "</ol>");
         inList = false;
       }
-      out.push(`<blockquote>${inlineMarkdown(trimmed.slice(2))}</blockquote>`);
+      out.push(
+        `<blockquote class="border-l-[3px] border-accent pl-4 my-3 text-muted italic">${inlineMarkdown(trimmed.slice(2))}</blockquote>`,
+      );
       continue;
     }
-
-    // Unordered list
     if (/^[-*]\s+/.test(trimmed)) {
       if (!inList || listType !== "ul") {
         if (inList) out.push(listType === "ul" ? "</ul>" : "</ol>");
-        out.push("<ul>");
+        out.push('<ul class="my-2 ml-6 list-disc">');
         inList = true;
         listType = "ul";
       }
-      out.push(`<li>${inlineMarkdown(trimmed.replace(/^[-*]\s+/, ""))}</li>`);
+      out.push(`<li class="mb-1">${inlineMarkdown(trimmed.replace(/^[-*]\s+/, ""))}</li>`);
       continue;
     }
-
-    // Ordered list
     if (/^\d+\.\s+/.test(trimmed)) {
       if (!inList || listType !== "ol") {
         if (inList) out.push(listType === "ul" ? "</ul>" : "</ol>");
-        out.push("<ol>");
+        out.push('<ol class="my-2 ml-6 list-decimal">');
         inList = true;
         listType = "ol";
       }
-      out.push(`<li>${inlineMarkdown(trimmed.replace(/^\d+\.\s+/, ""))}</li>`);
+      out.push(`<li class="mb-1">${inlineMarkdown(trimmed.replace(/^\d+\.\s+/, ""))}</li>`);
       continue;
     }
-
-    // Paragraph
     if (inList) {
       out.push(listType === "ul" ? "</ul>" : "</ol>");
       inList = false;
     }
-    out.push(`<p>${inlineMarkdown(trimmed)}</p>`);
+    out.push(`<p class="mb-3">${inlineMarkdown(trimmed)}</p>`);
   }
-
   if (inList) out.push(listType === "ul" ? "</ul>" : "</ol>");
   if (inCodeBlock) out.push("</code></pre>");
-
   return out.join("\n");
 }
 
-/**
- * Process inline markdown: bold, italic, inline code, links.
- */
 function inlineMarkdown(text: string): string {
-  let result = escapeHtml(text);
-  // Inline code (before bold/italic to avoid conflicts)
-  result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
-  // Bold
-  result = result.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  // Italic
-  result = result.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
-  result = result.replace(/_([^_]+)_/g, "<em>$1</em>");
-  return result;
+  let r = escapeHtml(text);
+  r = r.replace(
+    /`([^`]+)`/g,
+    '<code class="bg-raised px-1.5 py-0.5 rounded text-sm font-mono">$1</code>',
+  );
+  r = r.replace(/\*\*(.+?)\*\*/g, "<strong class='text-foreground font-semibold'>$1</strong>");
+  r = r.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em class='text-muted'>$1</em>");
+  r = r.replace(/_([^_]+)_/g, "<em class='text-muted'>$1</em>");
+  return r;
 }

@@ -7,26 +7,47 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { createServer as createNodeServer } from "node:http";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { UnfadeConfig } from "../schemas/config.js";
 import { mountMcpHttp } from "../services/mcp/server.js";
 import { logger } from "../utils/logger.js";
 import { getStateDir } from "../utils/paths.js";
+import { alertsPage } from "./pages/alerts.js";
 import { cardsPage } from "./pages/cards.js";
-import { dashboardPage } from "./pages/dashboard.js";
+import { coachPage } from "./pages/coach.js";
+import { comprehensionPage } from "./pages/comprehension.js";
+import { costPage } from "./pages/cost.js";
+import { costsPage } from "./pages/costs.js";
 import { distillPage } from "./pages/distill.js";
+import { efficiencyPage } from "./pages/efficiency.js";
+import { homePage } from "./pages/home.js";
+import { intelligencePage } from "./pages/intelligence.js";
+import { livePage } from "./pages/live.js";
+import { portfolioPage } from "./pages/portfolio.js";
 import { profilePage } from "./pages/profile.js";
+import { repoDetailPage } from "./pages/repo-detail.js";
 import { searchPage } from "./pages/search.js";
 import { settingsPage } from "./pages/settings.js";
+import { velocityPage } from "./pages/velocity-page.js";
 import { amplifyRoutes } from "./routes/amplify.js";
 import { cardsRoutes } from "./routes/cards.js";
 import { contextRoutes } from "./routes/context.js";
+import { decisionDetailRoutes } from "./routes/decision-detail.js";
 import { decisionsRoutes } from "./routes/decisions.js";
 import { distillRoutes } from "./routes/distill.js";
 import { feedbackRoutes } from "./routes/feedback.js";
+import { heatmapRoutes } from "./routes/heatmap.js";
+import { insightsRoutes } from "./routes/insights.js";
+import { intelligenceRoutes } from "./routes/intelligence.js";
+import { onboardingRoutes } from "./routes/intelligence-onboarding.js";
 import { profileRoutes } from "./routes/profile.js";
 import { queryRoutes } from "./routes/query.js";
+import { reposRoutes } from "./routes/repos.js";
+import { settingsRoutes } from "./routes/settings.js";
+import { streamRoutes } from "./routes/stream.js";
+import { summaryRoutes } from "./routes/summary.js";
 
 export interface ServerInfo {
   port: number;
@@ -64,9 +85,16 @@ export function createApp(): Hono {
     }),
   );
 
+  // Static assets (brand icons, fonts, manifest)
+  app.use("/public/*", serveStatic({ root: "./" }));
+
   // Error handler — return JSON errors, never crash
   app.onError((err, c) => {
-    logger.error("HTTP error", { message: err.message });
+    logger.error("HTTP error", {
+      message: err.message,
+      path: c.req.path,
+      method: c.req.method,
+    });
     return c.json(
       {
         data: null,
@@ -82,13 +110,19 @@ export function createApp(): Hono {
     );
   });
 
-  // Health check
+  // Health check — includes per-repo daemon + materializer status
   app.get("/unfade/health", (c) => {
+    const repoManager = (globalThis as Record<string, unknown>).__unfade_repo_manager as
+      | { getHealthStatus(): Array<Record<string, unknown>>; size: number }
+      | undefined;
+
     return c.json({
       status: "ok",
       version: "0.1.0",
       pid: process.pid,
       uptime: process.uptime(),
+      repoCount: repoManager?.size ?? 0,
+      repos: repoManager?.getHealthStatus() ?? [],
     });
   });
 
@@ -101,9 +135,35 @@ export function createApp(): Hono {
   app.route("/unfade", cardsRoutes);
   app.route("/unfade", amplifyRoutes);
   app.route("/unfade", feedbackRoutes);
+  app.route("/unfade", settingsRoutes);
+
+  // Phase 5.6: Living intelligence routes
+  app.route("", summaryRoutes);
+  app.route("", streamRoutes);
+  app.route("", insightsRoutes);
+  app.route("", reposRoutes);
+  app.route("", heatmapRoutes);
+  app.route("", decisionDetailRoutes);
+  app.route("", intelligenceRoutes);
+  app.route("", onboardingRoutes);
+
+  // Phase 5.6: Multi-repo pages
+  app.route("", portfolioPage);
+  app.route("", repoDetailPage);
+
+  // Phase 7: Intelligence pages
+  app.route("", efficiencyPage);
+  app.route("", costsPage);
+  app.route("", coachPage);
+  app.route("", velocityPage);
+  app.route("", alertsPage);
+  app.route("", intelligencePage);
+  app.route("", costPage);
+  app.route("", comprehensionPage);
 
   // Mount Web UI pages (server-rendered HTML + htmx)
-  app.route("", dashboardPage);
+  app.route("", homePage);
+  app.route("", livePage);
   app.route("", distillPage);
   app.route("", profilePage);
   app.route("", settingsPage);

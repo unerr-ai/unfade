@@ -1,5 +1,6 @@
 // T-221, T-222, T-223: `unfade publish` command tests
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReasoningModelV2 } from "../../src/schemas/profile.js";
@@ -177,19 +178,16 @@ describe("unfade publish command (UF-083)", () => {
   });
 
   it("handles missing .unfade/ directory gracefully", async () => {
-    // Remove .unfade
-    rmSync(join(tmpDir, ".unfade"), { recursive: true, force: true });
-    // Also remove .git so getProjectDataDir points to a non-existent .unfade
-    rmSync(join(tmpDir, ".git"), { recursive: true, force: true });
-
-    const emptyDir = join(tmpDir, "empty");
-    mkdirSync(emptyDir, { recursive: true });
-    process.chdir(emptyDir);
+    // Isolated directory outside this repo so findGitRoot() does not resolve to workspace .git
+    const isolated = mkdtempSync(join(tmpdir(), "unfade-publish-empty-"));
+    mkdirSync(isolated, { recursive: true });
+    process.chdir(isolated);
 
     const { publishCommand } = await import("../../src/commands/publish.js");
     await publishCommand();
 
     expect(process.exitCode).toBe(1);
     process.exitCode = undefined;
+    rmSync(isolated, { recursive: true, force: true });
   });
 });

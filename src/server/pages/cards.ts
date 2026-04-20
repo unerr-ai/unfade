@@ -1,9 +1,10 @@
 // FILE: src/server/pages/cards.ts
-// UF-061: Cards web UI page (GET /cards).
+// Cards web UI page (GET /cards).
 // Date picker, generate button (htmx), card preview, download link.
 
 import { existsSync, readdirSync } from "node:fs";
 import { Hono } from "hono";
+import { loadCardIdentityData } from "../../services/cards/identity.js";
 import { getCardsDir } from "../../utils/paths.js";
 import { escapeHtml, layout } from "./layout.js";
 
@@ -12,7 +13,6 @@ export const cardsPage = new Hono();
 cardsPage.get("/cards", (c) => {
   const today = new Date().toISOString().slice(0, 10);
 
-  // List existing cards
   const cardsDir = getCardsDir();
   let existingCards: string[] = [];
   if (existsSync(cardsDir)) {
@@ -27,57 +27,66 @@ cardsPage.get("/cards", (c) => {
     }
   }
 
-  const content = `
-    <h1>Unfade Cards</h1>
+  const identity = loadCardIdentityData();
+  const identityBanner = identity.hasData
+    ? `<div class="bg-surface border border-accent/30 rounded p-5 mb-4">
+         <h2 class="text-lg font-heading font-semibold mb-2">Reasoning Identity</h2>
+         <div class="flex items-center gap-4 mb-3">
+           ${identity.rdi !== null ? `<span class="text-3xl font-bold text-accent">◆${identity.rdi}</span>` : ""}
+           ${identity.identityLabel ? `<span class="text-lg text-foreground">${escapeHtml(identity.identityLabel)}</span>` : ""}
+         </div>
+         ${identity.averageHDS !== null ? `<p class="text-sm text-muted mb-2">Human Direction Score: ${identity.averageHDS.toFixed(2)}</p>` : ""}
+         ${identity.topDomains.length > 0 ? `<p class="text-sm text-muted">Top domains: ${identity.topDomains.map((d) => `${escapeHtml(d.domain)} (${escapeHtml(d.depth)})`).join(", ")}</p>` : ""}
+       </div>`
+    : "";
 
-    <div class="card">
-      <h2>Generate Card</h2>
-      <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 1rem;">
-        Generate a visual summary card from a daily distill.
-      </p>
-      <div style="display: flex; align-items: center; gap: 1rem;">
+  const content = `
+    <h1 class="text-2xl font-heading font-semibold mb-6">Unfade Cards</h1>
+
+    ${identityBanner}
+
+    <div class="bg-surface border border-border rounded p-5 mb-4">
+      <h2 class="text-lg font-heading font-semibold mb-2">Generate Card</h2>
+      <p class="text-muted text-sm mb-4">Generate a visual summary card from a daily distill.</p>
+      <div class="flex items-center gap-4">
         <input type="date" id="card-date" value="${escapeHtml(today)}"
-          style="font-family: var(--mono); font-size: 0.9rem; padding: 0.5rem 0.75rem;
-                 background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
-                 border-radius: var(--radius);" />
-        <button class="btn-primary"
+          class="font-mono text-sm px-3 py-2 bg-raised text-foreground border border-border rounded outline-none focus:border-accent" />
+        <button
+          class="px-4 py-2 text-sm rounded bg-accent text-white font-semibold hover:bg-accent-dim border-none cursor-pointer"
           hx-post="/unfade/cards/generate"
           hx-target="#card-result"
           hx-vals="js:{date: document.getElementById('card-date').value}"
           hx-indicator="#card-spinner">
           Generate Card
         </button>
-        <span id="card-spinner" class="htmx-indicator" style="color: var(--text-dim);">
-          Generating...
-        </span>
+        <span id="card-spinner" class="htmx-indicator text-muted text-sm">Generating...</span>
       </div>
-      <div id="card-result" style="margin-top: 1rem;"></div>
+      <div id="card-result" class="mt-4"></div>
     </div>
 
     ${
       existingCards.length > 0
-        ? `<div class="card">
-             <h2>Generated Cards</h2>
-             <ul class="domain-list">
+        ? `<div class="bg-surface border border-border rounded p-5">
+             <h2 class="text-lg font-heading font-semibold mb-4">Generated Cards</h2>
+             <ul class="divide-y divide-border">
                ${existingCards
                  .map(
                    (date) =>
-                     `<li>
-                       <span style="font-family: var(--mono);">${escapeHtml(date)}</span>
-                       <span>
-                         <a href="/unfade/cards/image/${escapeHtml(date)}" target="_blank">View</a>
-                         &middot;
-                         <a href="/unfade/cards/image/${escapeHtml(date)}" download="unfade-${escapeHtml(date)}.png">Download</a>
+                     `<li class="flex justify-between items-center py-3 text-sm">
+                       <span class="font-mono text-foreground">${escapeHtml(date)}</span>
+                       <span class="flex gap-3">
+                         <a href="/unfade/cards/image/${escapeHtml(date)}" target="_blank" class="text-accent hover:text-accent-dim text-sm">View</a>
+                         <a href="/unfade/cards/image/${escapeHtml(date)}" download="unfade-${escapeHtml(date)}.png" class="text-accent hover:text-accent-dim text-sm">Download</a>
                        </span>
                      </li>`,
                  )
                  .join("")}
              </ul>
            </div>`
-        : `<div class="card">
-             <div class="empty">
-               <p>No cards generated yet.</p>
-               <p>Generate your first card using the form above.</p>
+        : `<div class="bg-surface border border-border rounded p-5">
+             <div class="text-center py-8 text-muted">
+               <p class="mb-2">No cards generated yet.</p>
+               <p class="text-sm">Generate your first card using the form above.</p>
              </div>
            </div>`
     }
@@ -90,15 +99,16 @@ cardsPage.get("/cards", (c) => {
             var el = document.getElementById('card-result');
             if (resp.data && resp.data.status === 'generated') {
               var d = resp.data.date;
-              el.innerHTML = '<div style="margin-top: 1rem;">' +
-                '<p style="color: var(--success);">Card generated (' + (resp.data.size / 1024).toFixed(1) + ' KB)</p>' +
+              el.innerHTML = '<div class="mt-4">' +
+                '<p class="text-success text-sm font-semibold">Card generated (' + (resp.data.size / 1024).toFixed(1) + ' KB)</p>' +
                 '<img src="/unfade/cards/image/' + d + '?t=' + Date.now() + '" ' +
-                'style="max-width: 100%; border-radius: var(--radius); margin-top: 0.75rem; border: 1px solid var(--border);" />' +
-                '<div style="margin-top: 0.75rem;">' +
-                '<a href="/unfade/cards/image/' + d + '" download="unfade-' + d + '.png" class="btn">Download PNG</a>' +
+                'class="max-w-full rounded border border-border mt-3" />' +
+                '<div class="mt-3">' +
+                '<a href="/unfade/cards/image/' + d + '" download="unfade-' + d + '.png" ' +
+                'class="inline-block px-4 py-2 text-sm bg-raised text-foreground border border-border rounded hover:bg-overlay no-underline">Download PNG</a>' +
                 '</div></div>';
             } else if (resp._meta && resp._meta.degraded) {
-              el.innerHTML = '<p style="color: var(--error);">' + (resp._meta.degradedReason || 'Generation failed') + '</p>';
+              el.innerHTML = '<p class="text-error text-sm">' + (resp._meta.degradedReason || 'Generation failed') + '</p>';
             }
           } catch(e) { /* ignore parse errors */ }
         }

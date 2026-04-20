@@ -1,18 +1,18 @@
 // FILE: src/commands/init.ts
-// `unfade init` command — zero-knowledge, 8-step initialization.
-// Delegates to runner.ts for the actual work.
+// Phase 5.7: Init is setup-only — does NOT start the server.
 
-import { runInit } from "../services/init/runner.js";
 import { logger } from "../utils/logger.js";
 
 /**
  * Execute the init command.
- * Scaffolds .unfade/, downloads daemon, installs hooks, starts capture.
+ * Scaffolds .unfade/, downloads binary, installs hooks, configures LLM.
+ * Does NOT start any server or daemon — user runs `unfade` for that.
  */
 export async function initCommand(): Promise<void> {
   const cwd = process.cwd();
 
   try {
+    const { runInit } = await import("../services/init/runner.js");
     await runInit(cwd);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

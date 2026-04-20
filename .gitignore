@@ -19,6 +19,9 @@ pnpm-lock.yaml!
 *.d.ts.map
 tsconfig.tsbuildinfo
 
+# --- Prebuilt daemon binaries (CI / local build-daemon; not committed) ---
+packages/*/bin/
+
 # --- Go daemon binaries ---
 daemon/unfaded
 daemon/unfade-send
@@ -31,9 +34,6 @@ daemon/vendor/
 # --- Unfade runtime data ---
 # Created by `unfade init` — user-specific, never committed
 .unfade/
-
-# --- Internal docs (strategy, architecture — not for public repo) ---
-.internal/
 
 # --- IDE ---
 .idea/

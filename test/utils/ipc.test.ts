@@ -3,7 +3,23 @@ import { rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { IPCRequest, IPCResponse } from "../../src/utils/ipc.js";
-import { sendIPCCommand } from "../../src/utils/ipc.js";
+import { isRetryableIpcConnectionError, sendIPCCommand } from "../../src/utils/ipc.js";
+
+describe("isRetryableIpcConnectionError", () => {
+  it("returns true for transient connection errors", () => {
+    expect(isRetryableIpcConnectionError("Capture engine is not running")).toBe(true);
+    expect(isRetryableIpcConnectionError("Connection to capture engine timed out")).toBe(true);
+    expect(isRetryableIpcConnectionError("Capture engine closed connection without response")).toBe(
+      true,
+    );
+  });
+
+  it("returns false for other errors", () => {
+    expect(isRetryableIpcConnectionError(undefined)).toBe(false);
+    expect(isRetryableIpcConnectionError("backfill failed: git error")).toBe(false);
+    expect(isRetryableIpcConnectionError("Invalid JSON response from daemon")).toBe(false);
+  });
+});
 
 describe("IPC client", () => {
   let socketPath: string;

@@ -1,0 +1,19 @@
+{
+  "name": "@unfade/daemon-darwin-x64",
+  "version": "0.1.0",
+  "description": "Unfade capture engine binary for macOS x64",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unerr-ai/unfade.git"
+  }
+}

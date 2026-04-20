@@ -25,6 +25,6 @@
     }
   },
   "files": {
-    "includes": ["**", "!dist", "!node_modules", "!daemon", "!pnpm-lock.yaml"]
+    "includes": ["**", "!dist", "!node_modules", "!daemon", "!pnpm-lock.yaml", "!.unfade"]
   }
 }

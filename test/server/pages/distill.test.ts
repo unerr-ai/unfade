@@ -70,7 +70,7 @@ describe("Distill page (GET /distill)", () => {
     const res = await app.request("/distill?date=2026-04-16");
     const html = await res.text();
     expect(html).toContain("Test Distill");
-    expect(html).toContain("distill-content");
+    expect(html).toContain("prose-unfade");
   });
 
   it("includes date navigation", async () => {
@@ -78,8 +78,8 @@ describe("Distill page (GET /distill)", () => {
     const app = createApp();
     const res = await app.request("/distill?date=2026-04-16");
     const html = await res.text();
-    expect(html).toContain("date-nav");
     expect(html).toContain("2026-04-16");
+    expect(html).toMatch(/href="\/distill\?date=|prev|next/);
   });
 
   it("includes htmx re-generate button targeting #distill-status", async () => {

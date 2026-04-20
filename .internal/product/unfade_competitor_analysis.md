@@ -4,7 +4,7 @@
 >
 > **How to read this document:** The document follows the competitive story from landscape to strategy. Sections 1-8 map the terrain. Section 9 synthesizes the structural pattern. Section 10 delivers the honest assessment. Section 11 lays out the strategic playbook.
 >
-> **Last updated:** April 2026
+> **Last updated:** April 2026 (addendum added 2026-04-20 — see end of document for new entrants update)
 
 ---
 
@@ -531,3 +531,21 @@ The market is waiting. The category is empty. But empty categories don't wait fo
 ---
 
 *This analysis was developed through the RRVV framework. Sources: unfade.md product strategy, unfade_support.md strategic analysis, and supplementary research on agent memory frameworks (Mem0, Letta, LangChain, CrewAI, Zep, Cognee). This document is the single authoritative source for Unfade's competitive landscape — unfade.md §5 and unfade_support.md §2 contain summary references pointing here. Live web verification of current tool status was not possible during this analysis — star counts and activity levels may have changed since the documents were last updated (April 2026).*
+
+---
+
+## Addendum: New Entrants (April 2026)
+
+> Added 2026-04-20 during Phase 7 planning. Full analysis in [PHASE_7_BREAKTHROUGH_INTELLIGENCE.md](../architecture/PHASE_7_BREAKTHROUGH_INTELLIGENCE.md) §3.2.
+
+| Tool | What it does | Threat | Gap it leaves |
+|------|--------------|--------|---------------|
+| **Quint** (quint.codes) | Decision engineering for AI coding. `.haft/` directory, evidence decay (90-day expire), structured reasoning. Works with Claude Code, Cursor, Gemini CLI, Codex | **MEDIUM** — closest new competitor to reasoning capture | Requires explicit `/h-reason` invocation — not passive. No identity, no cross-project aggregation, no visualization, no distillation |
+| **Google Antigravity** | Agent-first IDE with Manager Surface, Artifacts, Knowledge base. Free preview | **LOW** — agent-focused, not developer-focused | No developer identity. No cross-tool reasoning. Knowledge base serves agents, not developers |
+| **Amazon Kiro** | Spec-driven dev — generates specs before code. Agent Hooks. 250K+ devs | **LOW** — code generation, not reasoning capture | No reasoning persistence, no profile, no cross-session learning |
+| **Potpie AI** ($2.2M pre-seed) | Engineering context layer / knowledge graph for code. Ontology-first | **LOW** — codebase-focused, not developer-focused | No developer identity, no AI session parsing |
+| **Hive Memory MCP** | Cross-project memory via MCP server | **LOW-MEDIUM** — generic memory | No reasoning distillation, no identity, no pattern learning |
+
+**Market context (JetBrains Jan 2026 survey):** ~90% of developers use AI tools at work regularly; ~74% adopted specialized coding assistants. Multi-tool usage is normal. Claude Code shows fastest adoption growth trajectory. Source: [JetBrains research post](https://blog.jetbrains.com/research/2026/04/which-ai-coding-tools-do-developers-actually-use-at-work/).
+
+**Assessment:** The original analysis's structural conclusions hold — the dumbbell pattern persists. Quint is the only new entrant that enters the "capture" end, but it requires explicit invocation (not passive) and has no personalization, identity, or continuous intelligence. The middle of the dumbbell (Stages 3–5) remains empty.

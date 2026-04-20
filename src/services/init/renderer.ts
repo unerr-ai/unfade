@@ -1,8 +1,8 @@
 // FILE: src/services/init/renderer.ts
-// Init progress renderer — writes to stderr using picocolors.
+// Init progress renderer — writes to stderr using centralized CLI UI.
 // No Ink/React — plain stderr output with checkmarks and status lines.
 
-import pc from "picocolors";
+import { stepDone, stepFailed, stepSkipped, theme, writeBlank, writeLine } from "../../cli/ui.js";
 import { USER_TERMS } from "../../constants/terminology.js";
 import type { InitStepName } from "../../schemas/init-progress.js";
 
@@ -18,102 +18,100 @@ const STEP_LABELS: Record<InitStepName, string> = {
 };
 
 /**
- * Write a line to stderr. All init output goes to stderr (stdout is sacred).
- */
-function writeLine(line: string): void {
-  process.stderr.write(`${line}\n`);
-}
-
-/**
  * Render the welcome banner.
  */
 export function renderBanner(): void {
-  writeLine("");
-  writeLine(pc.bold(pc.cyan("  Welcome to Unfade")));
-  writeLine(pc.dim("  Passive reasoning capture for developers"));
-  writeLine("");
+  writeBlank();
+  writeLine(`  ${theme.brand("Unfade")}`);
+  writeLine(theme.muted("  Passive reasoning capture for developers"));
+  writeBlank();
 }
 
 /**
  * Render a step as completed.
  */
 export function renderStepDone(step: InitStepName, detail?: string): void {
-  const label = STEP_LABELS[step];
-  const suffix = detail ? pc.dim(` (${detail})`) : "";
-  writeLine(`  ${pc.green("✓")} ${label}${suffix}`);
+  stepDone(STEP_LABELS[step], detail);
 }
 
 /**
  * Render a step as skipped (already done on re-run).
  */
 export function renderStepSkipped(step: InitStepName): void {
-  const label = STEP_LABELS[step];
-  writeLine(`  ${pc.dim("–")} ${pc.dim(label)} ${pc.dim("(already done)")}`);
+  stepSkipped(STEP_LABELS[step]);
 }
 
 /**
  * Render a step as failed (non-fatal).
  */
 export function renderStepFailed(step: InitStepName, error: string): void {
-  const label = STEP_LABELS[step];
-  writeLine(`  ${pc.yellow("✗")} ${label} ${pc.dim(`— ${error}`)}`);
-}
-
-/**
- * Render a step as in-progress (spinner placeholder — just shows the label).
- */
-export function renderStepStart(step: InitStepName): void {
-  const label = STEP_LABELS[step];
-  writeLine(`  ${pc.dim("…")} ${pc.dim(label)}`);
+  stepFailed(STEP_LABELS[step], error);
 }
 
 /**
  * Render the first distill result.
  */
 export function renderFirstDistill(eventsProcessed: number, decisions: number, date: string): void {
-  writeLine("");
-  writeLine(`  ${pc.green("✓")} Generated your first reasoning summary`);
-  writeLine(pc.dim(`    ${eventsProcessed} events → ${decisions} decisions (${date})`));
+  writeBlank();
+  stepDone("Generated your first reasoning summary");
+  writeLine(theme.muted(`    ${eventsProcessed} events → ${decisions} decisions (${date})`));
 }
 
 /**
- * Render the completion message.
+ * Render the completion message with web URL, capture sources, and next steps.
  */
-export function renderComplete(): void {
-  writeLine("");
-  writeLine(pc.bold("  Unfade is running.") + pc.dim(" Your first distill arrives at 6:00 PM."));
+export function renderComplete(serverPort?: number, ingestMessage?: string | null): void {
+  writeBlank();
+  writeLine(`  ${theme.bold("Unfade is running.")}`);
+  writeLine(`  ${theme.muted("Capturing:")} git commits, AI sessions, terminal activity`);
+  if (ingestMessage) {
+    writeLine(`  ${theme.accent("◆")} ${theme.muted(ingestMessage)}`);
+  }
+  if (serverPort) {
+    writeLine(`  ${theme.muted("Web UI:")} ${theme.cyan(`http://localhost:${serverPort}`)}`);
+  }
+  writeBlank();
   writeLine(
-    pc.dim("  Open your dashboard: ") +
-      pc.cyan("unfade") +
-      pc.dim(" (terminal) / ") +
-      pc.cyan("unfade open") +
-      pc.dim(" (browser)"),
+    `  ${theme.muted("Next:")} ${theme.cyan("unfade")} ${theme.muted("to see your dashboard")}`,
   );
-  writeLine("");
+  writeLine(
+    `  ${theme.muted("      ")} ${theme.cyan("unfade distill")} ${theme.muted("for instant reasoning summary")}`,
+  );
+  writeLine(
+    `  ${theme.muted("      ")} ${theme.cyan("unfade open")} ${theme.muted("to open the web UI")}`,
+  );
+  writeBlank();
 }
 
 /**
  * Render a resumed-init message.
  */
 export function renderResumed(): void {
-  writeLine(pc.dim("  Resuming from previous init..."));
-  writeLine("");
+  writeLine(theme.muted("  Resuming from previous init..."));
+  writeBlank();
 }
 
 /**
  * Render a shell hook info line (not a prompt — informational only).
  */
 export function renderShellHookInfo(shell: string): void {
-  writeLine(pc.dim(`    Installed for ${shell}. Disable anytime: unfade open → Settings`));
+  writeLine(theme.muted(`    Installed for ${shell}. Disable anytime: unfade open → Settings`));
 }
 
 /**
  * Render LLM detection result.
  */
-export function renderLlmResult(provider: string, model: string | null): void {
+export function renderLlmResult(provider: string, model: string | null, serverPort?: number): void {
   if (provider === "none") {
-    writeLine(pc.dim("    Using structured summaries (no LLM detected)"));
+    writeLine(theme.muted("    No LLM detected — using structured summaries (basic)"));
+    const settingsHint = serverPort
+      ? theme.cyan(`http://localhost:${serverPort}/settings`)
+      : `${theme.cyan("unfade open")} ${theme.muted("→ Settings")}`;
+    writeLine(
+      `    ${theme.muted("Add Ollama, OpenAI, Anthropic, or any OpenAI-compatible API:")} ${settingsHint}`,
+    );
   } else {
-    writeLine(pc.dim(`    Provider: ${provider}, Model: ${model ?? "default"}`));
+    const label = provider === "custom" ? "OpenAI-compatible" : provider;
+    writeLine(theme.muted(`    Provider: ${label}, Model: ${model ?? "default"}`));
   }
 }

@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { DailyDistill, ExtractedSignals } from "../../../src/schemas/distill.js";
-import { updateProfile } from "../../../src/services/personalization/profile-builder.js";
+import {
+  updateProfile,
+  updateProfileV2,
+} from "../../../src/services/personalization/profile-builder.js";
 
 let tmpDir: string;
 
@@ -176,5 +179,97 @@ describe("updateProfile", () => {
     writeFileSync(join(profileDir, "reasoning_model.json"), "NOT JSON", "utf-8");
     const profile = updateProfile(makeDistill(), makeSignals(), tmpDir);
     expect(profile.distillCount).toBe(1);
+  });
+
+  it("T-041l: does not overwrite v2 profile when v1 update runs", () => {
+    const profileDir = join(tmpDir, ".unfade", "profile");
+    mkdirSync(profileDir, { recursive: true });
+    const v2Path = join(profileDir, "reasoning_model.json");
+    const v2snap = {
+      version: 2,
+      lastUpdated: "2026-01-01T00:00:00.000Z",
+      dataPoints: 99,
+      decisionStyle: {
+        avgAlternativesEvaluated: 2,
+        medianAlternativesEvaluated: 2,
+        explorationDepthMinutes: { overall: 0, byDomain: {} },
+        aiAcceptanceRate: 0.5,
+        aiModificationRate: 0.1,
+        aiModificationByDomain: {},
+      },
+      tradeOffPreferences: [],
+      domainDistribution: [],
+      patterns: [],
+      temporalPatterns: {
+        mostProductiveHours: [],
+        avgDecisionsPerDay: 2,
+        peakDecisionDays: [],
+      },
+    };
+    writeFileSync(v2Path, `${JSON.stringify(v2snap)}\n`, "utf-8");
+    updateProfile(makeDistill(), makeSignals(), tmpDir);
+    const after = JSON.parse(readFileSync(v2Path, "utf-8"));
+    expect(after.version).toBe(2);
+    expect(after.dataPoints).toBe(99);
+  });
+
+  it("T-041m: v1 profile missing domainDistribution does not throw on sort", () => {
+    const profileDir = join(tmpDir, ".unfade", "profile");
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(
+      join(profileDir, "reasoning_model.json"),
+      JSON.stringify({
+        version: 1,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        distillCount: 0,
+        avgAlternativesEvaluated: 0,
+        aiAcceptanceRate: 0,
+        aiModificationRate: 0,
+        avgDecisionsPerDay: 0,
+        avgDeadEndsPerDay: 0,
+      }),
+      "utf-8",
+    );
+    expect(() => updateProfile(makeDistill(), makeSignals(), tmpDir)).not.toThrow();
+  });
+
+  it("T-041n: v2 with missing peakDecisionDays coerces on updateProfileV2", () => {
+    const profileDir = join(tmpDir, ".unfade", "profile");
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(
+      join(profileDir, "reasoning_model.json"),
+      JSON.stringify({
+        version: 2,
+        lastUpdated: "2026-01-01T00:00:00.000Z",
+        dataPoints: 1,
+        decisionStyle: {
+          avgAlternativesEvaluated: 0,
+          medianAlternativesEvaluated: 0,
+          explorationDepthMinutes: { overall: 0, byDomain: {} },
+          aiAcceptanceRate: 0,
+          aiModificationRate: 0,
+          aiModificationByDomain: {},
+        },
+        tradeOffPreferences: [],
+        domainDistribution: [],
+        patterns: [],
+        temporalPatterns: {
+          mostProductiveHours: [],
+          avgDecisionsPerDay: 1,
+        },
+      }),
+      "utf-8",
+    );
+    const distill = makeDistill({
+      decisions: Array.from({ length: 5 }, () => ({
+        decision: "x",
+        rationale: "r",
+        domain: "d",
+        alternativesConsidered: 0,
+      })),
+    });
+    expect(() => updateProfileV2(distill, makeSignals(), tmpDir)).not.toThrow();
+    const out = JSON.parse(readFileSync(join(profileDir, "reasoning_model.json"), "utf-8"));
+    expect(Array.isArray(out.temporalPatterns.peakDecisionDays)).toBe(true);
   });
 });

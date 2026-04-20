@@ -85,10 +85,10 @@ describe("Config migrations (UF-088)", () => {
 
     // Migration should have occurred
     expect(result).not.toBeNull();
-    expect(result!.migrated).toBe(true);
-    expect(result!.fromVersion).toBe(1);
-    expect(result!.toVersion).toBe(2);
-    expect(result!.backupPath).toBe(backupPath);
+    expect(result?.migrated).toBe(true);
+    expect(result?.fromVersion).toBe(1);
+    expect(result?.toVersion).toBe(2);
+    expect(result?.backupPath).toBe(backupPath);
 
     // Backup should exist with original content
     expect(existsSync(backupPath)).toBe(true);

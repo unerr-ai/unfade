@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/unfade-io/unfade-cli/daemon/internal/capture"
+	"github.com/unfade-io/unfade-cli/daemon/internal/coordinator"
 	"github.com/unfade-io/unfade-cli/daemon/internal/health"
 	"github.com/unfade-io/unfade-cli/daemon/internal/platform"
 )
@@ -31,9 +32,20 @@ const version = "0.1.0"
 func main() {
 	var projectDir string
 	var verbose bool
+	var coordinatorMode bool
 	flag.StringVar(&projectDir, "project-dir", "", "Path to the project root (must contain .git)")
 	flag.BoolVar(&verbose, "verbose", false, "Enable debug logging")
+	flag.BoolVar(&coordinatorMode, "coordinator", false, "Run as multi-repo coordinator (reads registry)")
 	flag.Parse()
+
+	if coordinatorMode {
+		if os.Getenv("UNFADE_ENTERPRISE") != "true" {
+			fmt.Fprintln(os.Stderr, "unfaded: coordinator mode requires Unfade Enterprise. Set UNFADE_ENTERPRISE=true to enable.")
+			os.Exit(1)
+		}
+		runCoordinator(verbose)
+		return
+	}
 
 	// Determine state directory.
 	// If --project-dir is given, use <project>/.unfade/state/
@@ -93,6 +105,7 @@ func main() {
 	orchestrator := capture.NewOrchestrator(capture.OrchestratorConfig{
 		ProjectDir:     projectDir,
 		EventsDir:      eventsDir,
+		StateDir:       stateDir,
 		Logger:         log,
 		TerminalSocket: terminalSocket,
 	})
@@ -219,8 +232,117 @@ func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, re
 			},
 		}
 
+	case "ingest":
+		if orchestrator == nil {
+			return platform.IPCResponse{
+				OK:    false,
+				Error: "no project directory configured — cannot ingest",
+			}
+		}
+
+		days := 7
+		if req.Args != nil {
+			if d, ok := req.Args["days"]; ok {
+				switch v := d.(type) {
+				case float64:
+					days = int(v)
+				case string:
+					if parsed, err := strconv.Atoi(v); err == nil {
+						days = parsed
+					}
+				}
+			}
+		}
+
+		since := time.Now().AddDate(0, 0, -days)
+		if err := orchestrator.StartIngest(since); err != nil {
+			return platform.IPCResponse{
+				OK:    false,
+				Error: fmt.Sprintf("ingest failed: %v", err),
+			}
+		}
+
+		return platform.IPCResponse{
+			OK: true,
+			Data: map[string]any{
+				"message": fmt.Sprintf("historical ingest started for last %d days", days),
+				"days":    days,
+			},
+		}
+
+	case "ingest-status":
+		if orchestrator == nil {
+			return platform.IPCResponse{
+				OK:    false,
+				Error: "no project directory configured",
+			}
+		}
+
+		status := orchestrator.IngestStatus()
+		if status == nil {
+			return platform.IPCResponse{
+				OK: true,
+				Data: map[string]any{
+					"status": "not configured",
+				},
+			}
+		}
+
+		return platform.IPCResponse{
+			OK: true,
+			Data: map[string]any{
+				"status":       status.Status,
+				"started_at":   status.StartedAt,
+				"completed_at": status.CompletedAt,
+				"since":        status.Since,
+				"until":        status.Until,
+				"total_events": status.TotalEvents,
+				"error":        status.Error,
+			},
+		}
+
+	case "terminal-event":
+		if orchestrator == nil {
+			return platform.IPCResponse{OK: true, Data: map[string]any{"status": "ignored"}}
+		}
+
+		command, _ := req.Args["command"].(string)
+		exitCode := 0
+		if ec, ok := req.Args["exit"].(float64); ok {
+			exitCode = int(ec)
+		}
+		duration := 0.0
+		if d, ok := req.Args["duration"].(float64); ok {
+			duration = d
+		}
+		cwd, _ := req.Args["cwd"].(string)
+
+		if command == "" {
+			return platform.IPCResponse{OK: true, Data: map[string]any{"status": "skipped"}}
+		}
+
+		event := capture.CaptureEvent{
+			ID:        fmt.Sprintf("term-%d", time.Now().UnixNano()),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Source:    "terminal",
+			Type:      "command",
+			Content: capture.EventContent{
+				Summary: command,
+			},
+			Metadata: map[string]any{
+				"exit_code": exitCode,
+				"duration":  duration,
+				"cwd":       cwd,
+			},
+		}
+
+		if orchestrator != nil {
+			orchestrator.InjectEvent(event)
+		}
+
+		return platform.IPCResponse{OK: true, Data: map[string]any{"status": "captured"}}
+
 	case "distill":
-		// Placeholder — distill trigger will be implemented in Sprint 1D.
 		return platform.IPCResponse{
 			OK: true,
 			Data: map[string]any{
@@ -256,6 +378,84 @@ func shutdown(log *platform.Logger, ipc *platform.IPCServer, orchestrator *captu
 	health.RemoveHealthFile(stateDir)
 
 	log.Info("unfaded stopped cleanly")
+}
+
+func runCoordinator(verbose bool) {
+	home, _ := os.UserHomeDir()
+	stateDir := filepath.Join(home, ".unfade", "state")
+	logsDir := filepath.Join(home, ".unfade", "logs")
+
+	logLevel := platform.LevelInfo
+	if verbose {
+		logLevel = platform.LevelDebug
+	}
+	log := platform.NewLogger(logLevel)
+	_ = os.MkdirAll(logsDir, 0o755)
+	if err := log.SetFile(filepath.Join(logsDir, "coordinator.log")); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not open coordinator log: %v\n", err)
+	}
+	defer log.Close()
+
+	log.Info("coordinator mode starting", map[string]any{"version": version, "pid": os.Getpid()})
+
+	pidPath := filepath.Join(stateDir, "coordinator.pid")
+	_ = os.MkdirAll(stateDir, 0o755)
+	pidFile, err := platform.AcquirePID(pidPath)
+	if err != nil {
+		log.Error("failed to acquire coordinator PID", map[string]any{"error": err.Error()})
+		fmt.Fprintf(os.Stderr, "unfaded coordinator: %v\n", err)
+		os.Exit(1)
+	}
+	defer pidFile.Release()
+
+	budgetCfg := health.DefaultBudgetConfig()
+	getBudget, stopBudget := health.StartBudgetMonitor(budgetCfg, log)
+	defer stopBudget()
+
+	coord := coordinator.New(log)
+	if err := coord.Start(); err != nil {
+		log.Error("coordinator start failed", map[string]any{"error": err.Error()})
+		fmt.Fprintf(os.Stderr, "unfaded coordinator: %v\n", err)
+		os.Exit(1)
+	}
+
+	socketPath := filepath.Join(stateDir, "coordinator.sock")
+	stopCh := make(chan struct{}, 1)
+
+	ipcHandler := func(req platform.IPCRequest) platform.IPCResponse {
+		if req.Cmd == "stop" {
+			select {
+			case stopCh <- struct{}{}:
+			default:
+			}
+			return platform.IPCResponse{OK: true, Data: map[string]any{"message": "coordinator shutdown"}}
+		}
+		return coord.HandleIPC(req, getBudget)
+	}
+
+	ipcServer := platform.NewIPCServer(socketPath, ipcHandler, log)
+	if err := ipcServer.Start(); err != nil {
+		log.Error("coordinator IPC failed", map[string]any{"error": err.Error()})
+		os.Exit(1)
+	}
+	defer ipcServer.Stop()
+
+	log.Info("coordinator ready", map[string]any{"socket": socketPath})
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+
+	select {
+	case sig := <-sigCh:
+		log.Info("coordinator received signal", map[string]any{"signal": sig.String()})
+	case <-stopCh:
+		log.Info("coordinator stop via IPC")
+	}
+
+	coord.Stop()
+	ipcServer.Stop()
+	pidFile.Release()
+	log.Info("coordinator stopped cleanly")
 }
 
 func resolveEventsDir(projectDir string) string {

@@ -3,7 +3,11 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isDaemonRunning, registerRepo } from "../../../src/services/daemon/binary.js";
+import {
+  isDaemonRunning,
+  registerRepo,
+  unregisterRepo,
+} from "../../../src/services/daemon/binary.js";
 
 describe("isDaemonRunning", () => {
   let tempDir: string;
@@ -78,5 +82,16 @@ describe("registerRepo", () => {
     const reposFile = join(tempHome, ".unfade", "state", "repos.json");
     const repos = JSON.parse(require("node:fs").readFileSync(reposFile, "utf-8"));
     expect(repos.length).toBe(1);
+  });
+
+  it("unregisterRepo removes matching path", () => {
+    registerRepo("/fake/project/.unfade");
+    registerRepo("/other/.unfade");
+    unregisterRepo("/fake/project/.unfade");
+
+    const reposFile = join(tempHome, ".unfade", "state", "repos.json");
+    const repos = JSON.parse(require("node:fs").readFileSync(reposFile, "utf-8"));
+    expect(repos.length).toBe(1);
+    expect(repos[0].path).toBe("/other/.unfade");
   });
 });

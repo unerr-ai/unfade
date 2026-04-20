@@ -39,10 +39,90 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+  build-daemon:
+    name: Cross-compile Go daemon
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: daemon/go.sum
+
+      - name: Build all platform binaries
+        run: bash scripts/build-daemon.sh
+
+      - name: Pack daemon packages tree
+        run: tar czf daemon-packages.tar.gz packages
+
+      - name: Upload daemon artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daemon-packages
+          path: daemon-packages.tar.gz
+          if-no-files-found: error
+
+  publish-daemon-packages:
+    name: Publish @unfade/daemon-* to npm
+    runs-on: ubuntu-latest
+    needs: build-daemon
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download daemon artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-packages
+          path: _daemon_artifact
+
+      - name: Extract binaries into packages/
+        run: tar xzf _daemon_artifact/daemon-packages.tar.gz
+
+      - name: Sync platform package versions from root
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          for d in packages/daemon-darwin-arm64 packages/daemon-darwin-x64 packages/daemon-linux-arm64 packages/daemon-linux-x64; do
+            node -e "
+              const fs = require('fs');
+              const p = process.argv[1];
+              const v = process.argv[2];
+              const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+              j.version = v;
+              fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+            " "$d/package.json" "$VERSION"
+          done
+          echo "Synced daemon package versions to $VERSION"
+
+      - name: Verify binaries
+        run: |
+          for d in packages/daemon-darwin-arm64 packages/daemon-darwin-x64 packages/daemon-linux-arm64 packages/daemon-linux-x64; do
+            test -x "$d/bin/unfaded" && test -x "$d/bin/unfade-send" || (echo "missing $d/bin" && exit 1)
+          done
+
+      - name: Publish each platform package
+        run: |
+          set -e
+          for d in packages/daemon-darwin-arm64 packages/daemon-darwin-x64 packages/daemon-linux-arm64 packages/daemon-linux-x64; do
+            echo "Publishing $d ..."
+            (cd "$d" && npm publish --access public)
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
-    needs: test
+    needs: publish-daemon-packages
 
     steps:
       - uses: actions/checkout@v6
@@ -68,7 +148,7 @@ jobs:
       - name: Verify package contents
         run: |
           echo "=== Package contents ==="
-          pnpm pack --dry-run
+          npm pack --dry-run
           echo ""
           echo "=== dist/cli.mjs exists ==="
           test -f dist/cli.mjs && echo "OK" || (echo "MISSING" && exit 1)

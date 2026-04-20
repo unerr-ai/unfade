@@ -67,7 +67,7 @@ describe("Heatmap renderer (UF-081)", () => {
 
   it("T-216b: SVG cells have correct data-level attributes", () => {
     const today = new Date().toISOString().slice(0, 10);
-    const dayCounts: DayCount[] = [
+    const _dayCounts: DayCount[] = [
       makeDayCount(today, 0, 0, 0), // intensity 0 → level 0
       { date: today, decisions: 12, tradeOffs: 1, deadEnds: 1, intensity: 15.5 }, // level 4
     ];
@@ -104,7 +104,7 @@ describe("Heatmap renderer (UF-081)", () => {
     // Should have month labels
     const monthLabels = svg.match(/<text[^>]*font-size="10"[^>]*>[A-Z][a-z]{2}<\/text>/g);
     expect(monthLabels).not.toBeNull();
-    expect(monthLabels!.length).toBeGreaterThanOrEqual(2); // At least 2 months in 90 days
+    expect(monthLabels?.length).toBeGreaterThanOrEqual(2); // At least 2 months in 90 days
   });
 
   it("renders empty heatmap without errors", () => {

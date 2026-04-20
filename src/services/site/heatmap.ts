@@ -146,7 +146,7 @@ export function renderHeatmapSvg(dayCounts: DayCount[]): string {
 
   // Legend
   const legendY = totalHeight + 8;
-  const legendLabels = ["Less", "", "", "", "", "More"];
+  const _legendLabels = ["Less", "", "", "", "", "More"];
   const legendColors = [COLORS.empty, COLORS.light, COLORS.medium, COLORS.dark, COLORS.highlight];
   const legendX = totalWidth - legendColors.length * CELL_STEP - 40;
   const legendSvg = [

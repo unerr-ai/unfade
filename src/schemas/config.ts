@@ -40,6 +40,20 @@ const SiteSchema = z.object({
   outputDir: z.string().default(".unfade/site"),
 });
 
+const OtelSchema = z.object({
+  endpoint: z.string().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+});
+
+const PricingSchema = z.record(z.string(), z.number()).default({});
+
+const ExportSchema = z.object({
+  requireConsent: z.boolean().default(true),
+  redactionPolicy: z
+    .enum(["aggregates-only", "with-labels", "with-names"])
+    .default("aggregates-only"),
+});
+
 export const UnfadeConfigSchema = z.object({
   version: z.union([z.literal(1), z.literal(2)]).default(2),
   capture: CaptureSchema.default(() => CaptureSchema.parse({})),
@@ -47,6 +61,9 @@ export const UnfadeConfigSchema = z.object({
   mcp: McpSchema.default(() => McpSchema.parse({})),
   notification: NotificationSchema.default(() => NotificationSchema.parse({})),
   site: SiteSchema.default(() => SiteSchema.parse({})),
+  otel: OtelSchema.optional(),
+  pricing: PricingSchema.describe("Model pricing table: model name → cost per 1K tokens"),
+  export: ExportSchema.default(() => ExportSchema.parse({})),
 });
 
 export type UnfadeConfig = z.infer<typeof UnfadeConfigSchema>;

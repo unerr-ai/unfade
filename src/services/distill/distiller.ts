@@ -10,18 +10,24 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { join } from "node:path";
 import type { UnfadeConfig } from "../../schemas/config.js";
 import type { DailyDistill } from "../../schemas/distill.js";
+import type { CaptureEvent } from "../../schemas/event.js";
 import type { ReasoningModelV2 } from "../../schemas/profile.js";
 import { logger } from "../../utils/logger.js";
 import { getDistillsDir, getGraphDir, getProfileDir } from "../../utils/paths.js";
 import { countEvents, readEvents } from "../capture/event-store.js";
+import { selectNudge } from "../intelligence/nudges.js";
+import { readSnapshots, writeMetricSnapshot } from "../intelligence/snapshot.js";
 import { notify } from "../notification/notifier.js";
+import { detectCrossSessionPatterns } from "../personalization/cross-session-detector.js";
 import { detectBlindSpots } from "../personalization/feedback.js";
 import { surfaceablePatterns } from "../personalization/pattern-detector.js";
 import { updateProfile, updateProfileV2 } from "../personalization/profile-builder.js";
 import { amplifyV2 } from "./amplifier.js";
 import { linkContext } from "./context-linker.js";
+import { generateDecisionRecords } from "./decision-records.js";
 import { createLLMProvider, type LLMProviderResult } from "./providers/ai.js";
-import { extractSignals } from "./signal-extractor.js";
+import { aggregateDirectionSignals, extractSignals } from "./signal-extractor.js";
+import { fuseSignals } from "./signal-fusion.js";
 import { synthesize } from "./synthesizer.js";
 
 const BACKFILL_THROTTLE_MS = 10_000;
@@ -62,9 +68,14 @@ export async function distill(
     return null;
   }
 
-  // Stage 0: Read events
-  const events = readEvents(date, cwd);
-  logger.debug("Read events for distillation", { date, count: events.length });
+  // Stage 0: Read events + fuse active/passive signals
+  const rawEvents = readEvents(date, cwd);
+  const events = fuseSignals(rawEvents);
+  logger.debug("Read events for distillation", {
+    date,
+    raw: rawEvents.length,
+    fused: events.length,
+  });
 
   // Stage 1: Extract signals
   const signals = extractSignals(events, date);
@@ -75,22 +86,84 @@ export async function distill(
   // Stage 3: Synthesize (LLM or fallback)
   const provider =
     options.provider !== undefined ? options.provider : await createLLMProvider(config);
-  const result = await synthesize(linked, provider);
+  const result = await synthesize(linked, provider, { cwd });
+
+  // Stage 3.5: Aggregate direction signals from AI session events
+  const { averageHDS, classifications, toolBreakdown } = aggregateDirectionSignals(events);
+  if (classifications.length > 0) {
+    const humanDirected = classifications.filter((c) => c.classification === "human-directed");
+    result.directionSummary = {
+      averageHDS,
+      humanDirectedCount: humanDirected.length,
+      collaborativeCount: classifications.filter((c) => c.classification === "collaborative")
+        .length,
+      llmDirectedCount: classifications.filter((c) => c.classification === "llm-directed").length,
+      topHumanDirectedDecisions: humanDirected.slice(0, 3).map((c) => c.summary),
+    };
+
+    const toolEntries = Array.from(toolBreakdown.entries()).map(([tool, data]) => ({
+      tool,
+      sessionCount: data.sessions,
+      eventCount: data.events,
+    }));
+
+    if (toolEntries.length > 0) {
+      const primary = toolEntries.sort((a, b) => b.eventCount - a.eventCount)[0];
+      const directionStyle =
+        averageHDS >= 0.6
+          ? "Architectural Thinker — high direction on design"
+          : averageHDS >= 0.3
+            ? "Collaborative Builder — balanced human+AI workflow"
+            : "AI Accelerator — leveraging AI for execution speed";
+
+      result.aiCollaborationSummary = {
+        toolBreakdown: toolEntries,
+        directionStyle: `${directionStyle} (primary tool: ${primary.tool})`,
+      };
+    }
+  }
 
   // Update personalization profiles (v1 + v2)
   updateProfile(result, signals, cwd);
   const v2Profile = updateProfileV2(result, signals, cwd);
 
-  // Update graph files
-  appendToDecisionsGraph(result, cwd);
+  // Write daily metric snapshot (RDI + identity labels)
+  writeMetricSnapshot(date, result, v2Profile, cwd);
+
+  // Generate post-distill nudge (max 1 per distill)
+  const snapshots = readSnapshots(undefined, cwd);
+  const nudge = selectNudge(result, v2Profile, snapshots);
+  const insightSection = nudge ? `## Insight\n\n${nudge}\n` : "";
+
+  // Update graph files — include evidence event IDs for decision archaeology
+  appendToDecisionsGraph(result, events, cwd);
   updateDomainsGraph(result, cwd);
 
   // Build personalization + connections sections
   const personalizationSection = formatPersonalizationSection(v2Profile, result);
   const { connectionsSection } = amplifyV2(date, cwd);
 
-  // Write distill markdown (with personalization + connections)
-  const distillPath = writeDistill(date, result, cwd, personalizationSection, connectionsSection);
+  // Build direction summary sections
+  const directionSection = formatDirectionSection(result);
+
+  // Detect cross-session amplified patterns
+  const crossPatterns = detectCrossSessionPatterns(cwd);
+  const amplifiedSection = formatAmplifiedSection(crossPatterns);
+
+  // Write distill markdown (with personalization + connections + insight + direction + amplified)
+  const distillPath = writeDistill(
+    date,
+    result,
+    cwd,
+    personalizationSection,
+    connectionsSection,
+    insightSection,
+    directionSection,
+    amplifiedSection,
+  );
+
+  // Generate decision records for significant human-directed decisions
+  generateDecisionRecords(result, cwd);
 
   // Send notification (unless silent)
   if (!options.silent) {
@@ -145,7 +218,7 @@ export async function backfill(
 /**
  * Load a v2 reasoning profile from disk. Returns null if not found or not v2.
  */
-function loadReasoningProfileV2(cwd?: string): ReasoningModelV2 | null {
+function _loadReasoningProfileV2(cwd?: string): ReasoningModelV2 | null {
   const profilePath = join(getProfileDir(cwd), "reasoning_model.json");
   if (!existsSync(profilePath)) return null;
   try {
@@ -250,12 +323,88 @@ export function formatPersonalizationSection(
  * Write distill result as markdown to .unfade/distills/YYYY-MM-DD.md.
  * Returns the file path.
  */
+/**
+ * Format the Human Direction Summary + AI Collaboration Summary sections.
+ */
+function formatDirectionSection(distill: DailyDistill): string {
+  if (!distill.directionSummary) return "";
+
+  const ds = distill.directionSummary;
+  const lines: string[] = ["## Human Direction Summary", ""];
+
+  const classLabel =
+    ds.averageHDS >= 0.6
+      ? "Human-Directed"
+      : ds.averageHDS >= 0.3
+        ? "Collaborative"
+        : "LLM-Directed";
+
+  lines.push(`Average HDS: ${ds.averageHDS.toFixed(2)} (${classLabel})`);
+  lines.push(
+    `Human-Directed: ${ds.humanDirectedCount} decisions | Collaborative: ${ds.collaborativeCount} | LLM-Directed: ${ds.llmDirectedCount}`,
+  );
+
+  if (ds.topHumanDirectedDecisions.length > 0) {
+    lines.push("");
+    lines.push("**Top human-directed decisions:**");
+    for (const d of ds.topHumanDirectedDecisions) {
+      const truncated = d.length > 120 ? `${d.slice(0, 117)}...` : d;
+      lines.push(`- ${truncated}`);
+    }
+  }
+  lines.push("");
+
+  if (distill.aiCollaborationSummary) {
+    const acs = distill.aiCollaborationSummary;
+    lines.push("## AI Collaboration Summary", "");
+
+    for (const tool of acs.toolBreakdown) {
+      lines.push(`- **${tool.tool}:** ${tool.eventCount} events (${tool.sessionCount} sessions)`);
+    }
+    lines.push(`- **Direction style:** ${acs.directionStyle}`);
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+function formatAmplifiedSection(
+  patterns: Array<{
+    pattern: string;
+    occurrences: number;
+    firstSeen: string;
+    lastSeen: string;
+    domains: string[];
+    examples: string[];
+  }>,
+): string {
+  if (patterns.length === 0) return "";
+
+  const lines: string[] = ["## Amplified Insights", ""];
+  lines.push("_Cross-session patterns detected across your reasoning history:_");
+  lines.push("");
+
+  for (const p of patterns.slice(0, 5)) {
+    lines.push(`- **${p.pattern}**`);
+    lines.push(`  ${p.occurrences} occurrences (${p.firstSeen} → ${p.lastSeen})`);
+    if (p.domains.length > 0) {
+      lines.push(`  Domains: ${p.domains.join(", ")}`);
+    }
+  }
+  lines.push("");
+
+  return lines.join("\n");
+}
+
 function writeDistill(
   date: string,
   result: DailyDistill,
   cwd?: string,
   personalizationSection?: string,
   connectionsSection?: string,
+  insightSection?: string,
+  directionSection?: string,
+  amplifiedSection?: string,
 ): string {
   const distillsDir = getDistillsDir(cwd);
   mkdirSync(distillsDir, { recursive: true });
@@ -263,12 +412,20 @@ function writeDistill(
 
   let markdown = formatDistillMarkdown(result);
 
-  // Append personalization section before the footer
+  if (directionSection) {
+    markdown = insertBeforeFooter(markdown, directionSection);
+  }
   if (personalizationSection) {
     markdown = insertBeforeFooter(markdown, personalizationSection);
   }
   if (connectionsSection) {
     markdown = insertBeforeFooter(markdown, connectionsSection);
+  }
+  if (amplifiedSection) {
+    markdown = insertBeforeFooter(markdown, amplifiedSection);
+  }
+  if (insightSection) {
+    markdown = insertBeforeFooter(markdown, insightSection);
   }
 
   writeFileSync(filePath, markdown, "utf-8");
@@ -362,25 +519,118 @@ function formatDistillMarkdown(d: DailyDistill): string {
 
 /**
  * Append decisions to .unfade/graph/decisions.jsonl (one JSON object per line).
+ * Links each decision to the event IDs that contributed to it (evidence chain).
  */
-function appendToDecisionsGraph(result: DailyDistill, cwd?: string): void {
+function appendToDecisionsGraph(result: DailyDistill, events: CaptureEvent[], cwd?: string): void {
   const graphDir = getGraphDir(cwd);
   mkdirSync(graphDir, { recursive: true });
   const filePath = join(graphDir, "decisions.jsonl");
 
-  const lines = result.decisions.map((d) =>
-    JSON.stringify({
+  const lines = result.decisions.map((d) => {
+    const evidenceIds = findEvidenceEventIds(d, events);
+    const entry: Record<string, unknown> = {
       date: result.date,
       decision: d.decision,
       rationale: d.rationale,
       domain: d.domain,
       alternativesConsidered: d.alternativesConsidered,
-    }),
-  );
+      evidenceEventIds: evidenceIds,
+    };
+    const extended = d as Record<string, unknown>;
+    if (extended.humanDirectionScore !== undefined)
+      entry.humanDirectionScore = extended.humanDirectionScore;
+    if (extended.directionClassification !== undefined)
+      entry.directionClassification = extended.directionClassification;
+    return JSON.stringify(entry);
+  });
 
   if (lines.length > 0) {
     appendFileSync(filePath, `${lines.join("\n")}\n`, "utf-8");
   }
+}
+
+/**
+ * Find event IDs that contributed to a decision via keyword matching.
+ * Matches the decision text against event content summaries.
+ */
+function findEvidenceEventIds(
+  decision: { decision: string; domain?: string; rationale?: string },
+  events: CaptureEvent[],
+): string[] {
+  const keywords = extractKeywords(
+    `${decision.decision} ${decision.rationale ?? ""} ${decision.domain ?? ""}`,
+  );
+  if (keywords.length === 0) return [];
+
+  const scored: Array<{ id: string; score: number }> = [];
+
+  for (const event of events) {
+    const text = `${event.content.summary} ${event.content.detail ?? ""}`.toLowerCase();
+    let hits = 0;
+    for (const kw of keywords) {
+      if (text.includes(kw)) hits++;
+    }
+    if (hits >= 2) {
+      scored.push({ id: event.id, score: hits });
+    }
+  }
+
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map((s) => s.id);
+}
+
+function extractKeywords(text: string): string[] {
+  const stopWords = new Set([
+    "the",
+    "a",
+    "an",
+    "is",
+    "was",
+    "are",
+    "to",
+    "for",
+    "of",
+    "in",
+    "on",
+    "with",
+    "and",
+    "or",
+    "not",
+    "it",
+    "this",
+    "that",
+    "we",
+    "i",
+    "you",
+    "be",
+    "have",
+    "do",
+    "will",
+    "would",
+    "could",
+    "should",
+    "but",
+    "if",
+    "from",
+    "at",
+    "by",
+    "as",
+    "into",
+    "about",
+    "than",
+    "so",
+    "no",
+    "up",
+  ]);
+
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !stopWords.has(w))
+    .slice(0, 15);
 }
 
 /**

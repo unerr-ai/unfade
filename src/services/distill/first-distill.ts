@@ -5,10 +5,12 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { DailyDistill } from "../../schemas/distill.js";
 import type { CaptureEvent } from "../../schemas/event.js";
 import { logger } from "../../utils/logger.js";
 import { getDistillsDir } from "../../utils/paths.js";
 import { listEventDates, readEvents } from "../capture/event-store.js";
+import { writeMetricSnapshot } from "../intelligence/snapshot.js";
 
 /**
  * Extract unique domains from file extensions in events.
@@ -202,6 +204,22 @@ export function generateFirstDistill(cwd?: string): FirstDistillResult | null {
   } else {
     logger.debug("Distill already exists for date", { date });
   }
+
+  // Compute and write metric snapshot immediately so status shows RDI from day 1
+  const distillData: DailyDistill = {
+    date,
+    summary: "Structured signal summary (no LLM synthesis)",
+    decisions: decisions.map((d) => ({
+      decision: d.decision,
+      rationale: d.rationale,
+      domain: d.domain,
+      alternativesConsidered: 0,
+    })),
+    eventsProcessed: events.length,
+    domains,
+    synthesizedBy: "fallback",
+  };
+  writeMetricSnapshot(date, distillData, null, cwd);
 
   return {
     date,

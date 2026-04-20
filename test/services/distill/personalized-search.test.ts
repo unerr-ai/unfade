@@ -168,7 +168,7 @@ describe("Personalization-weighted search (UF-076)", () => {
     const devopsResult = result.data.results.find((r) => r.domain === "devops");
     expect(backendResult).toBeDefined();
     expect(devopsResult).toBeDefined();
-    expect(backendResult!.relevance).toBeGreaterThanOrEqual(devopsResult!.relevance);
+    expect(backendResult?.relevance).toBeGreaterThanOrEqual(devopsResult?.relevance);
   });
 
   it("T-210b: without profile, domain does not affect scoring", () => {

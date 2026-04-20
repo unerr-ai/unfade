@@ -2,11 +2,17 @@
 // unfade-send — sends commands to the running unfaded daemon via IPC.
 // Used by shell hooks and integrations to inject events or query status.
 //
+// Socket resolution (Phase 5.6):
+//  1. If --project-dir is set, use <project-dir>/.unfade/state/daemon.sock
+//  2. Otherwise, read registry.v1.json and find longest-prefix match for cwd
+//  3. Fallback to ~/.unfade/state/daemon.sock
+//
 // Usage:
-//   unfade-send status
-//   unfade-send stop
-//   unfade-send distill
-//   echo '{"cmd":"status"}' | unfade-send --raw
+//
+//	unfade-send status
+//	unfade-send stop
+//	unfade-send distill
+//	echo '{"cmd":"status"}' | unfade-send --raw
 package main
 
 import (
@@ -17,6 +23,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -31,6 +39,17 @@ type ipcResponse struct {
 	Error string         `json:"error,omitempty"`
 }
 
+type registryV1 struct {
+	SchemaVersion int         `json:"schemaVersion"`
+	Repos         []repoEntry `json:"repos"`
+}
+
+type repoEntry struct {
+	ID    string `json:"id"`
+	Root  string `json:"root"`
+	Label string `json:"label"`
+}
+
 func main() {
 	var projectDir string
 	var raw bool
@@ -43,7 +62,6 @@ func main() {
 	var req ipcRequest
 
 	if raw {
-		// Read JSON from stdin.
 		scanner := bufio.NewScanner(os.Stdin)
 		if !scanner.Scan() {
 			fmt.Fprintln(os.Stderr, "unfade-send: no input on stdin")
@@ -71,7 +89,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Print response as formatted JSON to stdout.
 	out, _ := json.MarshalIndent(resp, "", "  ")
 	fmt.Println(string(out))
 
@@ -89,7 +106,6 @@ func sendCommand(socketPath string, req ipcRequest, timeout time.Duration) (*ipc
 
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 
-	// Send request.
 	data, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -99,7 +115,6 @@ func sendCommand(socketPath string, req ipcRequest, timeout time.Duration) (*ipc
 		return nil, fmt.Errorf("write to socket: %w", err)
 	}
 
-	// Read response.
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
 		if scanner.Err() != nil {
@@ -120,6 +135,52 @@ func resolveSocketPath(projectDir string) string {
 	if projectDir != "" {
 		return filepath.Join(projectDir, ".unfade", "state", "daemon.sock")
 	}
+
+	if match := resolveFromRegistry(); match != "" {
+		return match
+	}
+
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".unfade", "state", "daemon.sock")
+}
+
+func resolveFromRegistry() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	registryPath := filepath.Join(home, ".unfade", "state", "registry.v1.json")
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		return ""
+	}
+
+	var reg registryV1
+	if err := json.Unmarshal(data, &reg); err != nil || reg.SchemaVersion != 1 {
+		return ""
+	}
+
+	if len(reg.Repos) == 0 {
+		return ""
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	cwd, _ = filepath.Abs(cwd)
+
+	sort.Slice(reg.Repos, func(i, j int) bool {
+		return len(reg.Repos[i].Root) > len(reg.Repos[j].Root)
+	})
+
+	for _, repo := range reg.Repos {
+		root, _ := filepath.Abs(repo.Root)
+		if cwd == root || strings.HasPrefix(cwd, root+string(filepath.Separator)) {
+			return filepath.Join(root, ".unfade", "state", "daemon.sock")
+		}
+	}
+
+	return ""
 }

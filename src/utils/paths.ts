@@ -4,7 +4,7 @@
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 const UNFADE_DIR = ".unfade";
 
@@ -47,6 +47,15 @@ export function getProjectDataDir(cwd: string = process.cwd()): string {
   return join(base, UNFADE_DIR);
 }
 
+/**
+ * Repository root passed to the capture engine as `--project-dir`.
+ * Must match unfaded's resolveStateDir/resolveEventsDir (Join(projectDir, ".unfade", ...)) —
+ * never pass `.unfade/` itself or state lands under `.unfade/.unfade/`.
+ */
+export function getDaemonProjectRoot(cwd: string = process.cwd()): string {
+  return resolve(dirname(getProjectDataDir(cwd)));
+}
+
 // --- Subdirectories of project data ---
 
 /** `.unfade/events/` — daily JSONL event files written by the Go daemon. */
@@ -69,6 +78,11 @@ export function getStateDir(cwd?: string): string {
   return join(getProjectDataDir(cwd), "state");
 }
 
+/** `.unfade/insights/` — ring-buffered LiveInsight lines for dashboard/API. */
+export function getInsightsDir(cwd?: string): string {
+  return join(getProjectDataDir(cwd), "insights");
+}
+
 /** `.unfade/graph/` — decisions and domain graph. */
 export function getGraphDir(cwd?: string): string {
   return join(getProjectDataDir(cwd), "graph");
@@ -77,6 +91,11 @@ export function getGraphDir(cwd?: string): string {
 /** `.unfade/amplification/` — connection and feedback data. */
 export function getAmplificationDir(cwd?: string): string {
   return join(getProjectDataDir(cwd), "amplification");
+}
+
+/** `.unfade/metrics/` — daily metric snapshots (append-only JSONL). */
+export function getMetricsDir(cwd?: string): string {
+  return join(getProjectDataDir(cwd), "metrics");
 }
 
 /** `.unfade/cache/` — temporary computation cache. */

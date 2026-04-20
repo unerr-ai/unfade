@@ -9,7 +9,7 @@ import { z } from "zod";
 export const CaptureEventSchema = z.object({
   id: z.string().uuid(),
   timestamp: z.string().datetime(),
-  source: z.enum(["git", "ai-session", "terminal", "browser", "manual"]),
+  source: z.enum(["git", "ai-session", "terminal", "browser", "manual", "mcp-active"]),
   type: z.enum([
     "commit",
     "diff",

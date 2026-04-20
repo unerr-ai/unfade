@@ -46,6 +46,15 @@ function rcFilePath(shell: "zsh" | "bash" | "fish"): string {
 function zshHook(sendBin: string): string {
   return `
 ${HOOK_MARKER}
+_unfade_socket() {
+  local git_root
+  git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [[ -n "$git_root" && -S "$git_root/.unfade/state/daemon.sock" ]]; then
+    echo "$git_root/.unfade/state/daemon.sock"
+  else
+    echo "$HOME/.unfade/state/daemon.sock"
+  fi
+}
 unfade_preexec() {
   _unfade_cmd="$1"
   _unfade_cmd_start=$(date +%s)
@@ -53,7 +62,8 @@ unfade_preexec() {
 unfade_precmd() {
   local exit_code=$?
   if [[ -n "$_unfade_cmd" ]]; then
-    echo '{"cmd":"'"$_unfade_cmd"'","exit":'$exit_code',"duration":'$(($(date +%s)-_unfade_cmd_start))',"cwd":"'"$PWD"'"}' | ${sendBin} --raw 2>/dev/null &
+    local sock=$(_unfade_socket)
+    (echo '{"cmd":"terminal-event","args":{"command":"'"$_unfade_cmd"'","exit":'$exit_code',"duration":'$(($(date +%s)-_unfade_cmd_start))',"cwd":"'"$PWD"'"}}' | ${sendBin} --raw --project-dir "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null &) 2>/dev/null
     unset _unfade_cmd _unfade_cmd_start
   fi
 }
@@ -78,7 +88,9 @@ _unfade_preexec() {
 _unfade_precmd() {
   local exit_code=$?
   if [[ -n "$_unfade_cmd" ]]; then
-    echo '{"cmd":"'"$_unfade_cmd"'","exit":'$exit_code',"duration":'$(($(date +%s)-_unfade_cmd_start))',"cwd":"'"$PWD"'"}' | ${sendBin} --raw 2>/dev/null &
+    local git_root
+    git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+    (echo '{"cmd":"terminal-event","args":{"command":"'"$_unfade_cmd"'","exit":'$exit_code',"duration":'$(($(date +%s)-_unfade_cmd_start))',"cwd":"'"$PWD"'"}}' | ${sendBin} --raw --project-dir "\${git_root:-}" 2>/dev/null &) 2>/dev/null
     unset _unfade_cmd _unfade_cmd_start
   fi
 }
@@ -101,7 +113,12 @@ end
 function __unfade_precmd --on-event fish_postexec
   set -l exit_code $status
   if test -n "$_unfade_cmd"
-    echo '{"cmd":"'$_unfade_cmd'","exit":'$exit_code',"duration":'(math (date +%s) - $_unfade_cmd_start)',"cwd":"'$PWD'"}' | ${sendBin} --raw 2>/dev/null &
+    set -l git_root (git rev-parse --show-toplevel 2>/dev/null)
+    set -l pd_flag ""
+    if test -n "$git_root"
+      set pd_flag "--project-dir $git_root"
+    end
+    echo '{"cmd":"terminal-event","args":{"command":"'$_unfade_cmd'","exit":'$exit_code',"duration":'(math (date +%s) - $_unfade_cmd_start)',"cwd":"'$PWD'"}}' | ${sendBin} --raw $pd_flag 2>/dev/null &
     set -e _unfade_cmd
     set -e _unfade_cmd_start
   end

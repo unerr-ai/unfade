@@ -58,7 +58,17 @@ function loadProfile(profilePath: string): ReasoningProfile {
 
   try {
     const raw = readFileSync(profilePath, "utf-8");
-    return JSON.parse(raw) as ReasoningProfile;
+    const parsed = JSON.parse(raw) as Partial<ReasoningProfile>;
+    const d = defaultProfile();
+    return {
+      ...d,
+      ...parsed,
+      version: 1,
+      domainDistribution: Array.isArray(parsed.domainDistribution)
+        ? parsed.domainDistribution
+        : [...d.domainDistribution],
+      patterns: Array.isArray(parsed.patterns) ? parsed.patterns : [...d.patterns],
+    };
   } catch {
     logger.warn("Could not read reasoning_model.json, starting fresh");
     return defaultProfile();
@@ -143,6 +153,18 @@ export function updateProfile(
   mkdirSync(profileDir, { recursive: true });
 
   const profilePath = join(profileDir, "reasoning_model.json");
+  if (existsSync(profilePath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(profilePath, "utf-8")) as { version?: number };
+      if (parsed.version === 2) {
+        logger.debug("Skipping v1 profile write — v2 reasoning_model.json on disk");
+        return defaultProfile();
+      }
+    } catch {
+      // fall through to loadProfile
+    }
+  }
+
   const profile = loadProfile(profilePath);
 
   // Increment distill count
@@ -246,6 +268,43 @@ function defaultProfileV2(): ReasoningModelV2 {
 }
 
 /**
+ * Merge a partial v2 JSON object with defaults so profile updates never throw on missing arrays.
+ */
+function coerceReasoningModelV2(parsed: Partial<ReasoningModelV2>): ReasoningModelV2 {
+  const d = defaultProfileV2();
+  const ds = { ...d.decisionStyle, ...parsed.decisionStyle };
+  const tp = { ...d.temporalPatterns, ...parsed.temporalPatterns };
+  return {
+    ...d,
+    ...parsed,
+    version: 2,
+    decisionStyle: {
+      ...ds,
+      explorationDepthMinutes: {
+        ...d.decisionStyle.explorationDepthMinutes,
+        ...parsed.decisionStyle?.explorationDepthMinutes,
+      },
+    },
+    tradeOffPreferences: Array.isArray(parsed.tradeOffPreferences)
+      ? parsed.tradeOffPreferences
+      : d.tradeOffPreferences,
+    domainDistribution: Array.isArray(parsed.domainDistribution)
+      ? parsed.domainDistribution
+      : d.domainDistribution,
+    patterns: Array.isArray(parsed.patterns) ? parsed.patterns : d.patterns,
+    temporalPatterns: {
+      ...tp,
+      peakDecisionDays: Array.isArray(parsed.temporalPatterns?.peakDecisionDays)
+        ? parsed.temporalPatterns?.peakDecisionDays
+        : d.temporalPatterns.peakDecisionDays,
+      mostProductiveHours: Array.isArray(parsed.temporalPatterns?.mostProductiveHours)
+        ? parsed.temporalPatterns?.mostProductiveHours
+        : d.temporalPatterns.mostProductiveHours,
+    },
+  };
+}
+
+/**
  * Load a v2 profile from disk. Returns null if not found or if v1.
  */
 function loadProfileV2(profilePath: string): ReasoningModelV2 | null {
@@ -254,7 +313,7 @@ function loadProfileV2(profilePath: string): ReasoningModelV2 | null {
   try {
     const raw = readFileSync(profilePath, "utf-8");
     const parsed = JSON.parse(raw);
-    if (parsed.version === 2) return parsed as ReasoningModelV2;
+    if (parsed.version === 2) return coerceReasoningModelV2(parsed as Partial<ReasoningModelV2>);
     return null; // v1 profile — not loaded as v2
   } catch {
     return null;
@@ -312,7 +371,8 @@ function detectTradeOffPreferences(
 
     if (prefMap.has(reverseKey)) {
       // Contradicting evidence
-      const entry = prefMap.get(reverseKey)!;
+      const entry = prefMap.get(reverseKey);
+      if (!entry) continue;
       entry.contradictingDecisions += 1;
       entry.lastObserved = t.date > entry.lastObserved ? t.date : entry.lastObserved;
       const total = entry.supportingDecisions + entry.contradictingDecisions;
@@ -440,6 +500,47 @@ export function updateProfileV2(
         profile.temporalPatterns.peakDecisionDays.length = 10;
       }
     }
+  }
+
+  // --- Direction Patterns (from AI session HDS data) ---
+  if (distill.directionSummary) {
+    const ds = distill.directionSummary;
+    const existing = profile.directionPatterns ?? {
+      runningAverageHDS: 0,
+      trend: "stable" as const,
+      commonSignals: [],
+      byDomain: {},
+      dataPoints: 0,
+    };
+
+    const newDp = existing.dataPoints + 1;
+    const decayWeight = Math.min(newDp, 30);
+    existing.runningAverageHDS =
+      (existing.runningAverageHDS * (decayWeight - 1) + ds.averageHDS) / decayWeight;
+
+    if (newDp >= 7) {
+      if (ds.averageHDS > existing.runningAverageHDS + 0.05) existing.trend = "improving";
+      else if (ds.averageHDS < existing.runningAverageHDS - 0.05) existing.trend = "declining";
+      else existing.trend = "stable";
+    }
+
+    const signals: string[] = [];
+    if (ds.humanDirectedCount > ds.collaborativeCount) signals.push("strong-direction");
+    if (ds.collaborativeCount > ds.humanDirectedCount) signals.push("collaborative-style");
+    if (ds.llmDirectedCount > 0) signals.push("ai-delegation");
+    existing.commonSignals = signals;
+
+    for (const dec of distill.decisions) {
+      if (!dec.domain) continue;
+      const domEntry = existing.byDomain[dec.domain] ?? { avgHDS: 0, decisionCount: 0 };
+      const dc = domEntry.decisionCount + 1;
+      domEntry.avgHDS = (domEntry.avgHDS * (dc - 1) + ds.averageHDS) / dc;
+      domEntry.decisionCount = dc;
+      existing.byDomain[dec.domain] = domEntry;
+    }
+
+    existing.dataPoints = newDp;
+    profile.directionPatterns = existing;
   }
 
   // Metadata

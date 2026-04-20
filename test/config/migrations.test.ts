@@ -78,14 +78,14 @@ describe("migrateV1ToV2", () => {
 
     const backend = v2.domainDistribution.find((d) => d.domain === "backend");
     expect(backend).toBeDefined();
-    expect(backend!.frequency).toBe(15);
-    expect(backend!.depth).toBe("moderate"); // 15 decisions → moderate
-    expect(backend!.depthTrend).toBe("stable"); // No historical comparison
-    expect(backend!.percentageOfTotal).toBeCloseTo(15 / 26, 2);
+    expect(backend?.frequency).toBe(15);
+    expect(backend?.depth).toBe("moderate"); // 15 decisions → moderate
+    expect(backend?.depthTrend).toBe("stable"); // No historical comparison
+    expect(backend?.percentageOfTotal).toBeCloseTo(15 / 26, 2);
 
     const database = v2.domainDistribution.find((d) => d.domain === "database");
     expect(database).toBeDefined();
-    expect(database!.depth).toBe("shallow"); // 3 decisions → shallow
+    expect(database?.depth).toBe("shallow"); // 3 decisions → shallow
   });
 
   it("migrates patterns with inferred categories", () => {
@@ -96,16 +96,16 @@ describe("migrateV1ToV2", () => {
 
     const explorationPattern = v2.patterns.find((p) => p.pattern.includes("alternatives"));
     expect(explorationPattern).toBeDefined();
-    expect(explorationPattern!.category).toBe("exploration");
-    expect(explorationPattern!.confidence).toBe(0.7);
+    expect(explorationPattern?.category).toBe("exploration");
+    expect(explorationPattern?.confidence).toBe(0.7);
 
     const aiPattern = v2.patterns.find((p) => p.pattern.includes("AI"));
     expect(aiPattern).toBeDefined();
-    expect(aiPattern!.category).toBe("ai_interaction");
+    expect(aiPattern?.category).toBe("ai_interaction");
 
     const domainPattern = v2.patterns.find((p) => p.pattern.includes("Polyglot"));
     expect(domainPattern).toBeDefined();
-    expect(domainPattern!.category).toBe("domain");
+    expect(domainPattern?.category).toBe("domain");
   });
 
   it("preserves temporal patterns from v1", () => {
@@ -137,7 +137,7 @@ describe("migrateProfileOnDisk", () => {
     const result = migrateProfileOnDisk(tmpDir);
 
     expect(result).not.toBeNull();
-    expect(result!.version).toBe(2);
+    expect(result?.version).toBe(2);
 
     // Backup exists
     expect(existsSync(join(profileDir, "reasoning_model.v1.backup.json"))).toBe(true);

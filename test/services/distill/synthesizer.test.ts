@@ -4,7 +4,11 @@ import { DailyDistillSchema } from "../../../src/schemas/distill.js";
 import type { CaptureEvent } from "../../../src/schemas/event.js";
 import { linkContext } from "../../../src/services/distill/context-linker.js";
 import { extractSignals } from "../../../src/services/distill/signal-extractor.js";
-import { synthesize, synthesizeFallback } from "../../../src/services/distill/synthesizer.js";
+import {
+  extractFirstJsonObjectFromModelText,
+  synthesize,
+  synthesizeFallback,
+} from "../../../src/services/distill/synthesizer.js";
 
 function makeEvent(overrides: Partial<CaptureEvent> = {}): CaptureEvent {
   return {
@@ -117,6 +121,24 @@ describe("synthesizeFallback", () => {
 
     const result = synthesizeFallback(linked);
     expect(result.patterns?.some((p) => p.includes("src/auth"))).toBe(true);
+  });
+});
+
+describe("extractFirstJsonObjectFromModelText", () => {
+  it("parses raw JSON object", () => {
+    const s = '{"a":1}';
+    expect(extractFirstJsonObjectFromModelText(s)).toBe(s);
+  });
+
+  it("strips ```json fence when output is fenced", () => {
+    const inner = '{"x":"y"}';
+    const wrapped = `\`\`\`json\n${inner}\n\`\`\``;
+    expect(extractFirstJsonObjectFromModelText(wrapped)).toBe(inner);
+  });
+
+  it("extracts object with preamble and trailing text", () => {
+    const text = 'Sure.\n{"k":true} thanks';
+    expect(extractFirstJsonObjectFromModelText(text)).toBe('{"k":true}');
   });
 });
 

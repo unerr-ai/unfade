@@ -1,16 +1,139 @@
 // FILE: src/services/distill/synthesizer.ts
 // UF-034 + UF-039: Stage 3 — Synthesizer.
-// LLM path: generateObject() with DailyDistillSchema for narrative synthesis.
-// Fallback path: structured signal summary without LLM — valid DailyDistill markdown.
+//
+// LLM path (all providers): plain `generateText` — no provider-specific response_format.
+// We rely on the lowest common denominator (assistant text), then extract JSON + validate
+// with `DailyDistillSchema`. Same contract for OpenAI, Anthropic, Ollama, and OpenAI-compatible
+// gateways (Fireworks, LM Studio, vLLM, etc.). API-native structured outputs vary too much
+// across hosts; Zod is the single source of truth for shape.
+//
+// Diagnostics: `.unfade/logs/llm-synthesis.jsonl` (NDJSON, no secrets).
 
-import { generateObject } from "ai";
+import { APICallError, generateText, RetryError } from "ai";
 import {
   type DailyDistill,
   DailyDistillSchema,
   type LinkedSignals,
 } from "../../schemas/distill.js";
 import { logger } from "../../utils/logger.js";
+import {
+  appendLlmSynthLog,
+  type LlmSynthLogEntry,
+  textSnippetsForLog,
+} from "./llm-synthesis-log.js";
 import type { LLMProviderResult } from "./providers/ai.js";
+
+export interface SynthesizeOptions {
+  /** Git / project cwd — used to resolve `.unfade/logs/llm-synthesis.jsonl`. */
+  cwd?: string;
+}
+
+const SYNTHESIS_MODE = "portable_json" as const;
+
+/** Thrown when the model reply is not extractable/parseable JSON (includes raw text for logs). */
+export class DistillAssistantParseError extends Error {
+  readonly assistantText: string;
+  constructor(message: string, assistantText: string) {
+    super(message);
+    this.name = "DistillAssistantParseError";
+    this.assistantText = assistantText;
+  }
+}
+
+/** Thrown when JSON parses but fails `DailyDistillSchema` (includes raw text for logs). */
+export class DistillAssistantSchemaError extends Error {
+  readonly assistantText: string;
+  constructor(message: string, assistantText: string) {
+    super(message);
+    this.name = "DistillAssistantSchemaError";
+    this.assistantText = assistantText;
+  }
+}
+
+/**
+ * Strip markdown fences and isolate the outermost `{ ... }` for JSON.parse.
+ * Exported for unit tests.
+ */
+export function extractFirstJsonObjectFromModelText(text: string): string {
+  let s = text.trim();
+  const fence = /^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?```\s*$/im;
+  const m = s.match(fence);
+  if (m) {
+    s = m[1].trim();
+  }
+  const start = s.indexOf("{");
+  if (start === -1) {
+    throw new SyntaxError("No JSON object start '{' found in model output");
+  }
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        return s.slice(start, i + 1);
+      }
+    }
+  }
+  throw new SyntaxError("Unbalanced braces in model JSON");
+}
+
+function distillSystemPromptPortable(): string {
+  return [
+    "You are Unfade's distillation engine.",
+    "Reply with exactly one JSON object and nothing else — no markdown code fences, no preamble or postscript.",
+    "The object must be valid JSON (double-quoted keys and strings).",
+    "Required keys: date (string YYYY-MM-DD), summary (string), decisions (array of { decision: string, rationale: string, optional domain string, optional alternativesConsidered integer }), eventsProcessed (integer).",
+    "Optional keys: tradeOffs, deadEnds, breakthroughs, patterns (string[]), themes (string[]), domains (string[]), synthesizedBy (string; use llm if you set it).",
+    "Use only the user message for factual content; do not invent events that are not supported by those signals.",
+  ].join(" ");
+}
+
+function synthesizeErrorFields(err: unknown): Partial<LlmSynthLogEntry> {
+  if (RetryError.isInstance(err)) {
+    const nested = synthesizeErrorFields(err.lastError);
+    return {
+      errorName: err.name,
+      errorMessage: err.message,
+      retryReason: err.reason,
+      ...nested,
+    };
+  }
+  if (APICallError.isInstance(err)) {
+    const snip = textSnippetsForLog(err.responseBody);
+    return {
+      errorName: err.name,
+      errorMessage: err.message,
+      httpStatus: err.statusCode,
+      httpUrl: err.url,
+      responseBodyHead: snip.textHead,
+      textLength: snip.textLength,
+      causeName: err.cause instanceof Error ? err.cause.name : undefined,
+      causeMessage: err.cause instanceof Error ? err.cause.message : undefined,
+    };
+  }
+  if (err instanceof DistillAssistantParseError || err instanceof DistillAssistantSchemaError) {
+    return {
+      errorName: err.name,
+      errorMessage: err.message,
+      ...textSnippetsForLog(err.assistantText),
+    };
+  }
+  if (err instanceof Error) {
+    const base = {
+      errorName: err.name,
+      errorMessage: err.message,
+      causeName: err.cause instanceof Error ? err.cause.name : undefined,
+      causeMessage: err.cause instanceof Error ? err.cause.message : undefined,
+    };
+    if (err.message.startsWith("Distill schema validation")) {
+      return { ...base, zodSummary: err.message.slice(0, 800) };
+    }
+    return base;
+  }
+  return { errorMessage: String(err) };
+}
 
 /**
  * Synthesize linked signals into a DailyDistill.
@@ -19,11 +142,26 @@ import type { LLMProviderResult } from "./providers/ai.js";
 export async function synthesize(
   linked: LinkedSignals,
   provider?: LLMProviderResult | null,
+  options?: SynthesizeOptions,
 ): Promise<DailyDistill> {
   if (provider) {
+    const promptChars = buildLLMPrompt(linked).length;
     try {
-      return await synthesizeWithLLM(linked, provider);
+      return await synthesizeWithLLM(linked, provider, options?.cwd);
     } catch (err) {
+      appendLlmSynthLog(
+        {
+          ts: new Date().toISOString(),
+          phase: "error",
+          date: linked.date,
+          provider: provider.provider,
+          modelName: provider.modelName,
+          promptChars,
+          synthesisMode: SYNTHESIS_MODE,
+          ...synthesizeErrorFields(err),
+        },
+        options?.cwd,
+      );
       logger.warn("LLM synthesis failed, falling back to structured summary", {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -34,23 +172,81 @@ export async function synthesize(
 }
 
 /**
- * LLM synthesis path — uses generateObject() with Zod schema.
+ * One code path for every LLM provider: text completion → extract JSON → Zod.
  */
 async function synthesizeWithLLM(
   linked: LinkedSignals,
   provider: LLMProviderResult,
+  cwd?: string,
 ): Promise<DailyDistill> {
   const prompt = buildLLMPrompt(linked);
 
-  const { object } = await generateObject({
+  appendLlmSynthLog(
+    {
+      ts: new Date().toISOString(),
+      phase: "start",
+      date: linked.date,
+      provider: provider.provider,
+      modelName: provider.modelName,
+      promptChars: prompt.length,
+      synthesisMode: SYNTHESIS_MODE,
+    },
+    cwd,
+  );
+
+  const result = await generateText({
     model: provider.model,
-    schema: DailyDistillSchema,
+    system: distillSystemPromptPortable(),
     prompt,
+    temperature: 0,
+    maxOutputTokens: 16_384,
+    maxRetries: 2,
   });
 
-  // Ensure date and eventsProcessed match the source data
+  let raw: unknown;
+  try {
+    const jsonSlice = extractFirstJsonObjectFromModelText(result.text);
+    raw = JSON.parse(jsonSlice) as unknown;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new DistillAssistantParseError(
+      `Could not parse model output as JSON: ${msg}`,
+      result.text,
+    );
+  }
+
+  const parsed = DailyDistillSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new DistillAssistantSchemaError(
+      `Distill schema validation failed: ${parsed.error.message.slice(0, 1200)}`,
+      result.text,
+    );
+  }
+
+  appendLlmSynthLog(
+    {
+      ts: new Date().toISOString(),
+      phase: "success",
+      date: linked.date,
+      provider: provider.provider,
+      modelName: provider.modelName,
+      promptChars: prompt.length,
+      synthesisMode: SYNTHESIS_MODE,
+      finishReason: result.finishReason,
+      usage: result.usage
+        ? {
+            inputTokens: result.usage.inputTokens,
+            outputTokens: result.usage.outputTokens,
+            totalTokens: result.usage.totalTokens,
+          }
+        : undefined,
+      warnings: result.warnings?.map((w) => JSON.stringify(w)),
+    },
+    cwd,
+  );
+
   return {
-    ...object,
+    ...parsed.data,
     date: linked.date,
     eventsProcessed: linked.stats.totalEvents,
     synthesizedBy: "llm",

@@ -70,10 +70,10 @@ describe("buildDecisionsIndex", () => {
     const index = buildDecisionsIndex(decisions);
 
     expect(index.totalDecisions).toBe(3);
-    expect(index.byDomain["infrastructure"]).toEqual([0, 2]);
-    expect(index.byDomain["auth"]).toEqual([1]);
-    expect(index.byKeyword["redis"]).toContain(0);
-    expect(index.byKeyword["redis"]).toContain(2);
+    expect(index.byDomain.infrastructure).toEqual([0, 2]);
+    expect(index.byDomain.auth).toEqual([1]);
+    expect(index.byKeyword.redis).toContain(0);
+    expect(index.byKeyword.redis).toContain(2);
   });
 });
 

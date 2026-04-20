@@ -1,29 +1,45 @@
 package capture
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/unfade-io/unfade-cli/daemon/internal/capture/parsers"
 )
 
-func TestAISessionWatcherName(t *testing.T) {
-	w := NewAISessionWatcher(&testLogger{})
+// mockParser implements parsers.AIToolParser for testing.
+type mockParser struct {
+	name      string
+	sources   []parsers.DataSource
+	tailTurns []parsers.ConversationTurn
+	tailOff   int64
+}
+
+func (m *mockParser) Name() string                   { return m.name }
+func (m *mockParser) Discover() []parsers.DataSource { return m.sources }
+func (m *mockParser) Parse(src parsers.DataSource, since time.Time) ([]parsers.ConversationTurn, error) {
+	return m.tailTurns, nil
+}
+func (m *mockParser) Tail(src parsers.DataSource, offset int64) ([]parsers.ConversationTurn, int64, error) {
+	if offset >= m.tailOff {
+		return nil, offset, nil
+	}
+	return m.tailTurns, m.tailOff, nil
+}
+
+func TestAISessionWatcherV2Name(t *testing.T) {
+	w := NewAISessionWatcher(&testLogger{}, nil)
 	if w.Name() != "ai-session" {
 		t.Errorf("Name() = %q, want ai-session", w.Name())
 	}
 }
 
-func TestAISessionWatcherStartStopNoDirectories(t *testing.T) {
-	// When no AI tool directories exist, watcher should start in poll-only mode.
+func TestAISessionWatcherV2StartStopNoDirs(t *testing.T) {
 	w := &AISessionWatcher{
-		logger: &testLogger{},
-		sources: []aiLogSource{
-			{name: "test", baseDir: "/nonexistent/path", pattern: "*.log"},
-		},
-		done:      make(chan struct{}),
-		seenFiles: make(map[string]int64),
+		logger:  &testLogger{},
+		parsers: []parsers.AIToolParser{&mockParser{name: "mock"}},
+		done:    make(chan struct{}),
+		offsets: make(map[string]int64),
 	}
 
 	ch := make(chan CaptureEvent, 10)
@@ -33,166 +49,177 @@ func TestAISessionWatcherStartStopNoDirectories(t *testing.T) {
 	w.Stop()
 }
 
-func TestAISessionParseJSONEntry(t *testing.T) {
-	w := &AISessionWatcher{
-		logger:    &testLogger{},
-		seenFiles: make(map[string]int64),
-	}
-
-	tests := []struct {
-		name      string
-		entry     map[string]any
-		wantType  string
-		wantNil   bool
-	}{
-		{
-			name:     "assistant completion",
-			entry:    map[string]any{"role": "assistant", "content": "Here is the solution"},
-			wantType: "ai-completion",
+// T-100: AISessionWatcher V2 emits events with direction_signals metadata.
+func TestAISessionWatcherV2EmitsClassifiedEvents(t *testing.T) {
+	mock := &mockParser{
+		name: "test-tool",
+		sources: []parsers.DataSource{
+			{Tool: "test", Path: "/tmp/nonexistent-test-file.jsonl", Format: "jsonl"},
 		},
-		{
-			name:     "user message",
-			entry:    map[string]any{"role": "user", "content": "How do I fix this bug?"},
-			wantType: "ai-conversation",
+		tailTurns: []parsers.ConversationTurn{
+			{
+				ConversationID: "conv-1", TurnIndex: 0, Role: "user",
+				Content:   "No, don't use a singleton — use dependency injection instead of singletons for testability",
+				Timestamp: time.Now(), SessionID: "sess-1",
+			},
+			{
+				ConversationID: "conv-1", TurnIndex: 1, Role: "assistant",
+				Content:   "I'll switch to dependency injection as you suggested.",
+				Timestamp: time.Now(), SessionID: "sess-1",
+			},
 		},
-		{
-			name:     "human message",
-			entry:    map[string]any{"role": "human", "message": "Explain this code"},
-			wantType: "ai-conversation",
-		},
-		{
-			name:     "error",
-			entry:    map[string]any{"type": "error", "error": "rate limited"},
-			wantType: "ai-rejection",
-		},
-		{
-			name:    "unknown type",
-			entry:   map[string]any{"type": "system", "data": "init"},
-			wantNil: true,
-		},
+		tailOff: 500,
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			event := w.parseJSONEntry(tt.entry, "test-tool", "/test/log.jsonl")
-			if tt.wantNil {
-				if event != nil {
-					t.Error("expected nil event")
-				}
-				return
-			}
-			if event == nil {
-				t.Fatal("expected non-nil event")
-			}
-			if event.Type != tt.wantType {
-				t.Errorf("type = %q, want %q", event.Type, tt.wantType)
-			}
-			if event.Source != "ai-session" {
-				t.Errorf("source = %q, want ai-session", event.Source)
-			}
-		})
-	}
-}
-
-func TestAISessionParsePlainText(t *testing.T) {
-	w := &AISessionWatcher{
-		logger:    &testLogger{},
-		seenFiles: make(map[string]int64),
-	}
-
-	tests := []struct {
-		line     string
-		wantType string
-		wantNil  bool
-	}{
-		{"2026-04-15 completion: generated code", "ai-completion", false},
-		{"prompt sent to model", "ai-conversation", false},
-		{"error: API rate limit exceeded", "ai-rejection", false},
-		{"starting server on port 3000", "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.line[:20], func(t *testing.T) {
-			event := w.parsePlainTextEntry(tt.line, "cursor", "/test/log")
-			if tt.wantNil {
-				if event != nil {
-					t.Error("expected nil event")
-				}
-				return
-			}
-			if event == nil {
-				t.Fatal("expected non-nil event")
-			}
-			if event.Type != tt.wantType {
-				t.Errorf("type = %q, want %q", event.Type, tt.wantType)
-			}
-		})
-	}
-}
-
-func TestAISessionTailFile(t *testing.T) {
-	dir := t.TempDir()
-	logFile := filepath.Join(dir, "test.jsonl")
-
-	// Write some JSONL lines.
-	lines := []map[string]any{
-		{"role": "user", "content": "help me"},
-		{"role": "assistant", "content": "sure thing"},
-		{"type": "error", "error": "timeout"},
-	}
-
-	f, err := os.Create(logFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, line := range lines {
-		data, _ := json.Marshal(line)
-		f.Write(data)
-		f.WriteString("\n")
-	}
-	f.Close()
 
 	ch := make(chan CaptureEvent, 10)
 	w := &AISessionWatcher{
-		logger:    &testLogger{},
-		eventCh:   ch,
-		done:      make(chan struct{}),
-		seenFiles: make(map[string]int64),
+		logger:  &testLogger{},
+		parsers: []parsers.AIToolParser{mock},
+		done:    make(chan struct{}),
+		offsets: make(map[string]int64),
+		eventCh: ch,
 	}
 
-	newOffset := w.tailFile(logFile, 0, "test")
-	if newOffset == 0 {
-		t.Error("expected non-zero offset after reading")
+	w.scanAndEmit()
+
+	select {
+	case event := <-ch:
+		if event.Source != "ai-session" {
+			t.Errorf("source = %q, want ai-session", event.Source)
+		}
+		if event.Type != "ai-conversation" {
+			t.Errorf("type = %q, want ai-conversation", event.Type)
+		}
+		if event.Metadata == nil {
+			t.Fatal("expected metadata")
+		}
+		if _, ok := event.Metadata["direction_signals"]; !ok {
+			t.Error("expected direction_signals in metadata")
+		}
+		if event.Metadata["ai_tool"] != "test-tool" {
+			t.Errorf("ai_tool = %q, want test-tool", event.Metadata["ai_tool"])
+		}
+		turnCount, _ := event.Metadata["turn_count"].(int)
+		if turnCount != 2 {
+			t.Errorf("turn_count = %d, want 2", turnCount)
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("no event emitted")
+	}
+}
+
+func TestAISessionWatcherV2OffsetTracking(t *testing.T) {
+	mock := &mockParser{
+		name:    "test",
+		sources: []parsers.DataSource{{Tool: "test", Path: "/tmp/test-offset.jsonl", Format: "jsonl"}},
+		tailTurns: []parsers.ConversationTurn{
+			{ConversationID: "c1", TurnIndex: 0, Role: "user", Content: "hello", Timestamp: time.Now()},
+		},
+		tailOff: 100,
 	}
 
-	// Should have emitted 3 events.
+	ch := make(chan CaptureEvent, 10)
+	w := &AISessionWatcher{
+		logger:  &testLogger{},
+		parsers: []parsers.AIToolParser{mock},
+		done:    make(chan struct{}),
+		offsets: make(map[string]int64),
+		eventCh: ch,
+	}
+
+	w.scanAndEmit()
+
+	// Offset should be updated.
+	w.mu.Lock()
+	off := w.offsets["/tmp/test-offset.jsonl"]
+	w.mu.Unlock()
+	if off != 100 {
+		t.Errorf("offset = %d, want 100", off)
+	}
+
+	// Second scan — no new data (offset already at 100).
+	w.scanAndEmit()
+
+	select {
+	case <-ch:
+		// First scan's event — drain it.
+	default:
+	}
+	select {
+	case <-ch:
+		t.Error("unexpected second event (no new data)")
+	case <-time.After(100 * time.Millisecond):
+		// Good.
+	}
+}
+
+func TestAISessionWatcherV2MultipleConversations(t *testing.T) {
+	mock := &mockParser{
+		name:    "multi",
+		sources: []parsers.DataSource{{Tool: "multi", Path: "/tmp/multi.jsonl", Format: "jsonl"}},
+		tailTurns: []parsers.ConversationTurn{
+			{ConversationID: "conv-A", TurnIndex: 0, Role: "user", Content: "question A", Timestamp: time.Now()},
+			{ConversationID: "conv-A", TurnIndex: 1, Role: "assistant", Content: "answer A", Timestamp: time.Now()},
+			{ConversationID: "conv-B", TurnIndex: 0, Role: "user", Content: "question B", Timestamp: time.Now()},
+			{ConversationID: "conv-B", TurnIndex: 1, Role: "assistant", Content: "answer B", Timestamp: time.Now()},
+		},
+		tailOff: 400,
+	}
+
+	ch := make(chan CaptureEvent, 10)
+	w := &AISessionWatcher{
+		logger:  &testLogger{},
+		parsers: []parsers.AIToolParser{mock},
+		done:    make(chan struct{}),
+		offsets: make(map[string]int64),
+		eventCh: ch,
+	}
+
+	w.scanAndEmit()
+
+	// Should emit 2 events (one per conversation).
 	count := 0
-	timeout := time.After(500 * time.Millisecond)
-drain:
+	timeout := time.After(1 * time.Second)
 	for {
 		select {
 		case <-ch:
 			count++
+			if count == 2 {
+				goto done
+			}
 		case <-timeout:
-			break drain
+			goto done
 		}
 	}
+done:
+	if count != 2 {
+		t.Errorf("got %d events, want 2 (one per conversation)", count)
+	}
+}
 
-	if count != 3 {
-		t.Errorf("got %d events, want 3", count)
+func TestTurnsToEventsDirectionSignals(t *testing.T) {
+	turns := []parsers.ConversationTurn{
+		{ConversationID: "c1", TurnIndex: 0, Role: "user", Content: "Refactor auth to use DI instead of singletons", Timestamp: time.Now()},
+		{ConversationID: "c1", TurnIndex: 1, Role: "assistant", Content: "I'll use a singleton pattern for AuthService.", Timestamp: time.Now()},
+		{ConversationID: "c1", TurnIndex: 2, Role: "user", Content: "No, don't use singletons — we need DI because our test framework uses isolated containers", Timestamp: time.Now()},
+		{ConversationID: "c1", TurnIndex: 3, Role: "assistant", Content: "Switching to dependency injection.", Timestamp: time.Now()},
 	}
 
-	// Reading again from the same offset should produce no new events.
-	newOffset2 := w.tailFile(logFile, newOffset, "test")
-	if newOffset2 != newOffset {
-		// May differ slightly due to seek mechanics, but no events should fire.
+	events := TurnsToEvents(turns, "claude-code")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
 	}
 
-	select {
-	case <-ch:
-		t.Error("unexpected event on re-read")
-	case <-time.After(100 * time.Millisecond):
-		// Good — no events.
+	ev := events[0]
+	signals, ok := ev.Metadata["direction_signals"].(parsers.DirectionSignals)
+	if !ok {
+		t.Fatal("direction_signals not found or wrong type")
+	}
+	if signals.HumanDirectionScore <= 0 {
+		t.Errorf("HDS = %.3f, want > 0", signals.HumanDirectionScore)
+	}
+	if signals.RejectionCount == 0 {
+		t.Error("expected rejection count > 0")
 	}
 }
 
@@ -214,16 +241,21 @@ func TestTruncateSummary(t *testing.T) {
 	}
 }
 
-func TestIsRelevantFile(t *testing.T) {
-	w := &AISessionWatcher{}
-
-	if !w.isRelevantFile("test.log") {
-		t.Error("expected .log to be relevant")
+func TestIsRelevantAIFile(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"test.jsonl", true},
+		{"test.log", true},
+		{"test.db", true},
+		{"test.md", true},
+		{"test.go", false},
+		{"readme.txt", false},
 	}
-	if !w.isRelevantFile("session.jsonl") {
-		t.Error("expected .jsonl to be relevant")
-	}
-	if w.isRelevantFile("readme.md") {
-		t.Error("expected .md to be irrelevant")
+	for _, tt := range tests {
+		if got := isRelevantAIFile(tt.name); got != tt.want {
+			t.Errorf("isRelevantAIFile(%q) = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

@@ -107,7 +107,7 @@ describe("trackDomains", () => {
         (c.domainA === "database" && c.domainB === "backend"),
     );
     expect(backendDb).toBeDefined();
-    expect(backendDb!.coOccurrences).toBe(2);
+    expect(backendDb?.coOccurrences).toBe(2);
   });
 
   // T-195: calculates depth trend (stable/deepening/broadening)
@@ -137,8 +137,8 @@ describe("trackDomains", () => {
     const domains = trackDomains({ decisions, existingDomains });
     const backend = domains.find((d) => d.domain === "backend");
     expect(backend).toBeDefined();
-    expect(backend!.depthTrend).toBe("deepening");
-    expect(backend!.depth).not.toBe("shallow");
+    expect(backend?.depthTrend).toBe("deepening");
+    expect(backend?.depth).not.toBe("shallow");
   });
 
   it("returns empty array for no decisions", () => {
@@ -164,7 +164,7 @@ describe("trackDomains", () => {
     const domains = trackDomains({ decisions, existingDomains });
     const oldDomain = domains.find((d) => d.domain === "old-domain");
     expect(oldDomain).toBeDefined();
-    expect(oldDomain!.frequency).toBe(5);
+    expect(oldDomain?.frequency).toBe(5);
   });
 
   it("calculates avgAlternativesInDomain correctly", () => {

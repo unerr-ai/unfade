@@ -1,8 +1,7 @@
 // FILE: src/server/pages/search.ts
-// UF-069 + UF-076: Search web UI page — similar decision search with htmx.
+// Search web UI page — similar decision search with htmx.
 // GET /search renders the search interface with personalization context.
 // Results fetched via htmx from GET /unfade/similar.
-// UF-076: Shows personalization indicator when profile enhances results.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,7 +22,8 @@ function hasPersonalizationProfile(cwd?: string): { hasProfile: boolean; topDoma
     const parsed = JSON.parse(readFileSync(profilePath, "utf-8"));
     if (parsed.version === 2 && parsed.dataPoints >= 2) {
       const profile = parsed as ReasoningModelV2;
-      const topDomains = [...profile.domainDistribution]
+      const domains = profile.domainDistribution ?? [];
+      const topDomains = [...domains]
         .sort((a, b) => b.frequency - a.frequency)
         .slice(0, 3)
         .map((d) => d.domain);
@@ -39,22 +39,20 @@ searchPage.get("/search", (c) => {
   const { hasProfile, topDomains } = hasPersonalizationProfile();
 
   const personalizationBanner = hasProfile
-    ? `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.75rem;background:rgba(0,153,255,0.08);border:1px solid rgba(0,153,255,0.2);border-radius:var(--radius);margin-bottom:1rem;font-size:0.85rem;">
-        <span style="color:var(--accent);">&#9679;</span>
-        <span style="color:var(--text-dim);">Personalized search active</span>
-        ${topDomains.length > 0 ? `<span style="color:var(--text-dim);margin-left:0.5rem;">Top domains: ${topDomains.map((d) => `<span class="badge" style="background:var(--bg-input);color:var(--accent);font-size:0.75rem;">${escapeHtml(d)}</span>`).join(" ")}</span>` : ""}
+    ? `<div class="flex items-center gap-2 px-4 py-2.5 bg-accent/10 border border-accent/20 rounded mb-4 text-sm">
+        <span class="text-accent">&#9679;</span>
+        <span class="text-muted">Personalized search active</span>
+        ${topDomains.length > 0 ? `<span class="text-muted ml-2">Top domains: ${topDomains.map((d) => `<span class="inline-block px-2 py-0.5 bg-raised text-accent text-xs rounded-full font-semibold">${escapeHtml(d)}</span>`).join(" ")}</span>` : ""}
       </div>`
     : "";
 
   const content = `
-    <h1>Search Reasoning History</h1>
-    <p style="color: var(--text-dim); margin-bottom: 1.5rem;">
-      Describe a problem or decision to find analogous past reasoning.
-    </p>
+    <h1 class="text-2xl font-heading font-semibold mb-2">Search Reasoning History</h1>
+    <p class="text-muted text-sm mb-6">Describe a problem or decision to find analogous past reasoning.</p>
 
     ${personalizationBanner}
 
-    <div class="card" style="margin-bottom: 1.5rem;">
+    <div class="bg-surface border border-border rounded p-5 mb-6">
       <input
         type="text"
         name="problem"
@@ -63,13 +61,13 @@ searchPage.get("/search", (c) => {
         hx-trigger="keyup changed delay:300ms"
         hx-target="#results"
         hx-include="this"
-        style="width: 100%; padding: 0.75rem 1rem; font-size: 1rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-family: var(--sans); outline: none;"
+        class="w-full px-4 py-3 text-base bg-raised text-foreground border border-border rounded outline-none focus:border-accent font-body"
       />
-      <span class="htmx-indicator" style="margin-left: 0.5rem; color: var(--text-dim);">Searching...</span>
+      <span class="htmx-indicator ml-2 text-muted text-sm">Searching...</span>
     </div>
 
     <div id="results">
-      <div class="empty">
+      <div class="text-center py-8 text-muted">
         <p>Type a problem description to search for similar past decisions.</p>
       </div>
     </div>
@@ -83,36 +81,36 @@ searchPage.get("/search", (c) => {
             var meta = data._meta || {};
             var html = '';
             if (results.length === 0) {
-              html = '<div class="empty"><p>No similar decisions found.</p></div>';
+              html = '<div class="text-center py-8 text-muted"><p>No similar decisions found.</p></div>';
             } else {
               for (var i = 0; i < results.length; i++) {
                 var r = results[i];
-                html += '<div class="card" style="margin-bottom: 0.75rem;">';
-                html += '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">';
-                html += '<span style="font-family: var(--mono); color: var(--accent); font-size: 0.85rem;">' + escapeStr(r.date) + '</span>';
-                html += '<span class="badge badge-ok" style="font-size: 0.75rem;">' + Math.round(r.relevance * 100) + '% match</span>';
+                html += '<div class="bg-surface border border-border rounded p-4 mb-3">';
+                html += '<div class="flex justify-between items-center mb-2">';
+                html += '<span class="font-mono text-cyan text-sm">' + escapeStr(r.date) + '</span>';
+                html += '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-success/15 text-success">' + Math.round(r.relevance * 100) + '% match</span>';
                 html += '</div>';
-                html += '<p style="font-weight: 600; margin-bottom: 0.25rem;">' + escapeStr(r.decision) + '</p>';
+                html += '<p class="font-semibold text-sm mb-1">' + escapeStr(r.decision) + '</p>';
                 if (r.rationale) {
-                  html += '<p style="color: var(--text-dim); font-size: 0.9rem; font-style: italic;">' + escapeStr(r.rationale) + '</p>';
+                  html += '<p class="text-muted text-sm italic">' + escapeStr(r.rationale) + '</p>';
                 }
                 if (r.domain) {
-                  html += '<span class="badge" style="background: var(--bg-input); color: var(--text-dim); margin-top: 0.5rem;">' + escapeStr(r.domain) + '</span>';
+                  html += '<span class="inline-block px-2 py-0.5 bg-raised text-muted text-xs rounded-full mt-2">' + escapeStr(r.domain) + '</span>';
                 }
                 if (r.alternativesConsidered != null) {
-                  html += '<span style="color: var(--text-dim); font-size: 0.8rem; margin-left: 0.5rem;">' + r.alternativesConsidered + ' alternatives evaluated</span>';
+                  html += '<span class="text-muted text-xs ml-2">' + r.alternativesConsidered + ' alternatives evaluated</span>';
                 }
                 html += '</div>';
               }
               var footer = data.data.total + ' total matches (showing top ' + results.length + ')';
               if (meta.personalizationLevel === 'personalized') {
-                footer += ' &middot; <span style="color:var(--accent);">&#9679;</span> personalized';
+                footer += ' &middot; <span class="text-accent">&#9679;</span> personalized';
               }
-              html += '<p style="color: var(--text-dim); font-size: 0.8rem; margin-top: 0.5rem;">' + footer + '</p>';
+              html += '<p class="text-muted text-xs mt-2">' + footer + '</p>';
             }
             e.detail.target.innerHTML = html;
           } catch(ex) {
-            e.detail.target.innerHTML = '<div class="empty"><p>Error parsing results.</p></div>';
+            e.detail.target.innerHTML = '<div class="text-center py-8 text-muted"><p>Error parsing results.</p></div>';
           }
         }
       });

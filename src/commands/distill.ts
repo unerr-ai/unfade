@@ -50,18 +50,23 @@ function printDistillSummary(d: DailyDistill): void {
 /**
  * Resolve LLM provider from CLI override or config.
  */
-async function resolveProvider(providerOverride: string | undefined, config: UnfadeConfig) {
-  if (!providerOverride) return undefined;
-
-  // Override the config's provider setting
-  const overrideConfig = {
+function withProviderOverride(
+  config: UnfadeConfig,
+  providerOverride: string | undefined,
+): UnfadeConfig {
+  if (!providerOverride?.trim()) return config;
+  return {
     ...config,
     distill: {
       ...config.distill,
-      provider: providerOverride as UnfadeConfig["distill"]["provider"],
+      provider: providerOverride.trim() as UnfadeConfig["distill"]["provider"],
     },
   };
-  return createLLMProvider(overrideConfig);
+}
+
+async function resolveProvider(providerOverride: string | undefined, config: UnfadeConfig) {
+  if (!providerOverride) return undefined;
+  return createLLMProvider(withProviderOverride(config, providerOverride));
 }
 
 /**
@@ -78,6 +83,9 @@ export async function distillCommand(options: DistillCommandOptions): Promise<vo
 
 async function _distillCommand(options: DistillCommandOptions, startMs: number): Promise<void> {
   const config = loadConfig();
+  const effectiveConfig = withProviderOverride(config, options.provider);
+  const { runOllamaGuardForConfig } = await import("../services/llm/ollama-cli-guard.js");
+  await runOllamaGuardForConfig(process.cwd(), effectiveConfig);
 
   // Resolve provider override if given
   const provider = await resolveProvider(options.provider, config);

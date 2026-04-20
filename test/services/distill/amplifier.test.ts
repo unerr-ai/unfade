@@ -92,7 +92,7 @@ describe("amplify", () => {
       (c) => c.today.includes("Redis") || c.today.includes("cache"),
     );
     expect(cacheConnection).toBeDefined();
-    expect(cacheConnection!.relevance).toBeGreaterThanOrEqual(0.7);
+    expect(cacheConnection?.relevance).toBeGreaterThanOrEqual(0.7);
   });
 
   // T-181: surfaces connection with date and context

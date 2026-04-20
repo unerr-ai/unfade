@@ -15,21 +15,25 @@ import { getProfileDir } from "../utils/paths.js";
  * Convert a v2 profile to ProfileOutput data shape.
  */
 function v2ToProfileData(profile: ReasoningModelV2): ProfileOutput["data"] {
+  const domains = profile.domainDistribution ?? [];
+  const patternRows = profile.patterns ?? [];
+  const style = profile.decisionStyle;
+  const temporal = profile.temporalPatterns;
   return {
     version: profile.version,
     updatedAt: profile.lastUpdated,
     distillCount: profile.dataPoints,
-    avgAlternativesEvaluated: profile.decisionStyle.avgAlternativesEvaluated,
-    aiAcceptanceRate: profile.decisionStyle.aiAcceptanceRate,
-    aiModificationRate: profile.decisionStyle.aiModificationRate,
-    avgDecisionsPerDay: profile.temporalPatterns.avgDecisionsPerDay,
+    avgAlternativesEvaluated: Number(style?.avgAlternativesEvaluated ?? 0),
+    aiAcceptanceRate: Number(style?.aiAcceptanceRate ?? 0),
+    aiModificationRate: Number(style?.aiModificationRate ?? 0),
+    avgDecisionsPerDay: Number(temporal?.avgDecisionsPerDay ?? 0),
     avgDeadEndsPerDay: 0, // Not tracked in v2 separately
-    domainDistribution: profile.domainDistribution.map((d) => ({
+    domainDistribution: domains.map((d) => ({
       domain: d.domain,
       frequency: d.frequency,
       lastSeen: d.lastSeen,
     })),
-    patterns: profile.patterns.map((p) => p.pattern),
+    patterns: patternRows.map((p) => p.pattern),
   };
 }
 
@@ -40,14 +44,14 @@ function v1ToProfileData(profile: ReasoningProfile): ProfileOutput["data"] {
   return {
     version: profile.version,
     updatedAt: profile.updatedAt,
-    distillCount: profile.distillCount,
-    avgAlternativesEvaluated: profile.avgAlternativesEvaluated,
-    aiAcceptanceRate: profile.aiAcceptanceRate,
-    aiModificationRate: profile.aiModificationRate,
-    avgDecisionsPerDay: profile.avgDecisionsPerDay,
-    avgDeadEndsPerDay: profile.avgDeadEndsPerDay,
-    domainDistribution: profile.domainDistribution,
-    patterns: profile.patterns,
+    distillCount: Number(profile.distillCount ?? 0),
+    avgAlternativesEvaluated: Number(profile.avgAlternativesEvaluated ?? 0),
+    aiAcceptanceRate: Number(profile.aiAcceptanceRate ?? 0),
+    aiModificationRate: Number(profile.aiModificationRate ?? 0),
+    avgDecisionsPerDay: Number(profile.avgDecisionsPerDay ?? 0),
+    avgDeadEndsPerDay: Number(profile.avgDeadEndsPerDay ?? 0),
+    domainDistribution: profile.domainDistribution ?? [],
+    patterns: profile.patterns ?? [],
   };
 }
 

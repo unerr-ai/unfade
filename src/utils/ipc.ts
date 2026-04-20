@@ -17,6 +17,16 @@ export interface IPCResponse {
   error?: string;
 }
 
+/** True when a short backoff + retry may succeed (socket race, brief restart). */
+export function isRetryableIpcConnectionError(error: string | undefined): boolean {
+  if (!error) return false;
+  return (
+    error === "Capture engine is not running" ||
+    error === "Connection to capture engine timed out" ||
+    error === "Capture engine closed connection without response"
+  );
+}
+
 /**
  * Send a command to the running daemon via Unix socket IPC.
  * Returns the daemon's response, or an error response if the daemon
@@ -96,6 +106,23 @@ export function queryDaemonStatus(cwd?: string): Promise<IPCResponse> {
 }
 
 /**
+ * Poll until the capture engine accepts IPC (or timeout).
+ * Prefer this over only checking for `daemon.sock` — the socket file can exist
+ * before listen(2) succeeds or after a crashed peer left a stale path.
+ */
+export async function waitForDaemonIPCReady(cwd?: string, maxWaitMs = 20_000): Promise<boolean> {
+  const started = Date.now();
+  let delayMs = 200;
+  while (Date.now() - started < maxWaitMs) {
+    const resp = await sendIPCCommand({ cmd: "status" }, cwd, 2500);
+    if (resp.ok) return true;
+    await new Promise((r) => setTimeout(r, delayMs));
+    delayMs = Math.min(Math.floor(delayMs * 1.5), 2000);
+  }
+  return false;
+}
+
+/**
  * Send a stop command to the daemon.
  */
 export function stopDaemon(cwd?: string): Promise<IPCResponse> {
@@ -107,6 +134,20 @@ export function stopDaemon(cwd?: string): Promise<IPCResponse> {
  */
 export function triggerDistill(cwd?: string): Promise<IPCResponse> {
   return sendIPCCommand({ cmd: "distill" }, cwd);
+}
+
+/**
+ * Start historical AI session ingest for N days.
+ */
+export function triggerIngest(days: number, cwd?: string): Promise<IPCResponse> {
+  return sendIPCCommand({ cmd: "ingest", args: { days } }, cwd, 10000);
+}
+
+/**
+ * Query the current historical ingest status.
+ */
+export function queryIngestStatus(cwd?: string): Promise<IPCResponse> {
+  return sendIPCCommand({ cmd: "ingest-status" }, cwd);
 }
 
 /**
