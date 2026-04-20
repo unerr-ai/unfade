@@ -53,7 +53,7 @@
     "@hono/node-server": "^1.19.14",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@resvg/resvg-js": "^2.6.2",
-    "ai": "^6.0.164",
+    "ai": "^6.0.168",
     "commander": "^14.0.0",
     "hono": "^4.12.14",
     "ink": "^7.0.0",
