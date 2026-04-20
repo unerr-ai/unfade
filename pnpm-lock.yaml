@@ -36,8 +36,8 @@ importers:
         specifier: ^4.12.14
         version: 4.12.14
       ink:
-        specifier: ^7.0.0
-        version: 7.0.0(@types/react@19.2.14)(react@19.2.5)
+        specifier: ^7.0.1
+        version: 7.0.1(@types/react@19.2.14)(react@19.2.5)
       node-notifier:
         specifier: ^10.0.1
         version: 10.0.1
@@ -1155,8 +1155,8 @@ packages:
       '@types/react':
         optional: true
 
-  ink@7.0.0:
-    resolution: {integrity: sha512-fMie5/VwIYXofMyND0s+fOVhwVBBPYx+uuqJ6V6rUBGjui+2UYp+0fWtvhSeKT4z+X1uH98a4ge5Vj3aTlL6mg==}
+  ink@7.0.1:
+    resolution: {integrity: sha512-o6LAC268PLawlGVYrXTyaTfke4VtJftEheuwbgkQf7yvSXyWp1nRwBbAyKEkWXFZZsW/la5wrMuNbuBvZK2C1w==}
     engines: {node: '>=22'}
     peerDependencies:
       '@types/react': '>=19.2.0'
@@ -1576,8 +1576,8 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
-  type-fest@5.5.0:
-    resolution: {integrity: sha512-PlBfpQwiUvGViBNX84Yxwjsdhd1TUlXr6zjX7eoirtCPIr08NAmxwa+fcYBTeRQxHo9YC9wwF3m9i700sHma8g==}
+  type-fest@5.6.0:
+    resolution: {integrity: sha512-8ZiHFm91orbSAe2PSAiSVBVko18pbhbiB3U9GglSzF/zCGkR+rxpHx6sEMCUm4kxY4LjDIUGgCfUMtwfZfjfUA==}
     engines: {node: '>=20'}
 
   type-is@2.0.1:
@@ -2615,7 +2615,7 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.14
 
-  ink@7.0.0(@types/react@19.2.14)(react@19.2.5):
+  ink@7.0.1(@types/react@19.2.14)(react@19.2.5):
     dependencies:
       '@alcalzone/ansi-tokenize': 0.3.0
       ansi-escapes: 7.3.0
@@ -2638,7 +2638,7 @@ snapshots:
       stack-utils: 2.0.6
       string-width: 8.2.0
       terminal-size: 4.0.1
-      type-fest: 5.5.0
+      type-fest: 5.6.0
       widest-line: 6.0.0
       wrap-ansi: 10.0.0
       ws: 8.20.0
@@ -3067,7 +3067,7 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.3
 
-  type-fest@5.5.0:
+  type-fest@5.6.0:
     dependencies:
       tagged-tag: 1.0.0
 
