@@ -1,6 +1,9 @@
 // T-341/T-342: Lineage endpoint tests
 import { describe, expect, it } from "vitest";
-import { getEventsForInsight, writeInsightMappings } from "../../../src/services/intelligence/lineage.js";
+import {
+  getEventsForInsight,
+  writeInsightMappings,
+} from "../../../src/services/intelligence/lineage.js";
 
 function createMockDb() {
   const mappings: Array<{
@@ -19,9 +22,30 @@ function createMockDb() {
     git_branch: string | null;
     domain: string | null;
   }> = [
-    { id: "evt-1", ts: "2026-04-20T10:00:00Z", source: "ai-session", content_summary: "Refactored auth", git_branch: "feat/auth", domain: "auth" },
-    { id: "evt-2", ts: "2026-04-20T11:00:00Z", source: "ai-session", content_summary: "Fixed login bug", git_branch: "feat/auth", domain: "auth" },
-    { id: "evt-3", ts: "2026-04-20T12:00:00Z", source: "mcp-active", content_summary: "Updated tests", git_branch: "feat/auth", domain: "testing" },
+    {
+      id: "evt-1",
+      ts: "2026-04-20T10:00:00Z",
+      source: "ai-session",
+      content_summary: "Refactored auth",
+      git_branch: "feat/auth",
+      domain: "auth",
+    },
+    {
+      id: "evt-2",
+      ts: "2026-04-20T11:00:00Z",
+      source: "ai-session",
+      content_summary: "Fixed login bug",
+      git_branch: "feat/auth",
+      domain: "auth",
+    },
+    {
+      id: "evt-3",
+      ts: "2026-04-20T12:00:00Z",
+      source: "mcp-active",
+      content_summary: "Updated tests",
+      git_branch: "feat/auth",
+      domain: "testing",
+    },
   ];
 
   return {
@@ -41,28 +65,53 @@ function createMockDb() {
         const insightId = sql.match(/'([^']+)'/)?.[1] ?? "";
         const matches = mappings.filter((m) => m.insight_id === insightId);
         if (matches.length === 0) return [];
-        return [{
-          columns: ["event_id", "insight_id", "analyzer", "contribution_weight", "computed_at"],
-          values: matches.map((m) => [m.event_id, m.insight_id, m.analyzer, m.contribution_weight, m.computed_at]),
-        }];
+        return [
+          {
+            columns: ["event_id", "insight_id", "analyzer", "contribution_weight", "computed_at"],
+            values: matches.map((m) => [
+              m.event_id,
+              m.insight_id,
+              m.analyzer,
+              m.contribution_weight,
+              m.computed_at,
+            ]),
+          },
+        ];
       }
       if (sql.includes("FROM event_insight_map WHERE event_id")) {
         const eventId = sql.match(/'([^']+)'/)?.[1] ?? "";
         const matches = mappings.filter((m) => m.event_id === eventId);
         if (matches.length === 0) return [];
-        return [{
-          columns: ["event_id", "insight_id", "analyzer", "contribution_weight", "computed_at"],
-          values: matches.map((m) => [m.event_id, m.insight_id, m.analyzer, m.contribution_weight, m.computed_at]),
-        }];
+        return [
+          {
+            columns: ["event_id", "insight_id", "analyzer", "contribution_weight", "computed_at"],
+            values: matches.map((m) => [
+              m.event_id,
+              m.insight_id,
+              m.analyzer,
+              m.contribution_weight,
+              m.computed_at,
+            ]),
+          },
+        ];
       }
       if (sql.includes("FROM events WHERE id IN")) {
-        const ids = params as string[] ?? [];
+        const ids = (params as string[]) ?? [];
         const matches = events.filter((e) => ids.includes(e.id));
         if (matches.length === 0) return [];
-        return [{
-          columns: ["id", "ts", "source", "content_summary", "git_branch", "domain"],
-          values: matches.map((e) => [e.id, e.ts, e.source, e.content_summary, e.git_branch, e.domain]),
-        }];
+        return [
+          {
+            columns: ["id", "ts", "source", "content_summary", "git_branch", "domain"],
+            values: matches.map((e) => [
+              e.id,
+              e.ts,
+              e.source,
+              e.content_summary,
+              e.git_branch,
+              e.domain,
+            ]),
+          },
+        ];
       }
       return [];
     },

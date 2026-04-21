@@ -12,7 +12,6 @@ import { escapeHtml, layout } from "./layout.js";
 
 export const settingsPage = new Hono();
 
-
 /**
  * Read current distill config from config.json for form defaults.
  */
@@ -149,6 +148,84 @@ settingsPage.get("/settings", (c) => {
         toggleLlmFields();
       </script>
     </div>
+
+    <!-- Proactive Actions (Phase 12) -->
+    <div class="mb-8">
+      <h2 class="text-lg font-heading font-semibold mb-2">Proactive Actions</h2>
+      <p class="text-muted text-sm mb-4">When enabled, Unfade can automatically write learned rules to your AI tool config files, inject session context, and generate weekly digest cards.</p>
+      <div class="bg-surface border border-border rounded p-5 space-y-4" id="actions-panel">
+        <div class="text-center py-4 text-muted text-sm" id="actions-loading">Loading…</div>
+      </div>
+    </div>
+
+    <script>
+    (function(){
+      fetch('/unfade/settings/status').then(function(r){return r.json();}).then(function(cfg){
+        var actions=cfg.actions||{enabled:false,autoRules:false,ruleTarget:null,sessionContext:false,weeklyDigest:false,digestDay:'monday'};
+        var el=document.getElementById('actions-panel');
+        el.innerHTML=
+          '<div class="flex items-center justify-between py-2">'+
+            '<div><p class="text-sm font-semibold text-foreground">Master toggle</p><p class="text-xs text-muted">Enable all proactive actions</p></div>'+
+            '<label class="relative inline-flex cursor-pointer"><input type="checkbox" id="act-enabled" '+(actions.enabled?'checked ':'')+' onchange="saveActions()" class="sr-only peer"/><div class="w-9 h-5 bg-raised peer-checked:bg-accent rounded-full transition-colors"></div></label>'+
+          '</div>'+
+          '<div class="border-t border-border pt-3 space-y-3" id="act-sub" style="'+(actions.enabled?'':'opacity:0.5;pointer-events:none')+'">'+
+            '<div class="flex items-center justify-between">'+
+              '<div><p class="text-sm text-foreground">Auto-write rules</p><p class="text-xs text-muted">Write learned patterns to your AI tool config</p></div>'+
+              '<input type="checkbox" id="act-rules" '+(actions.autoRules?'checked ':'')+' onchange="saveActions()" class="accent-accent w-4 h-4"/>'+
+            '</div>'+
+            '<div class="pl-2">'+
+              '<label class="text-xs text-muted block mb-1">Rule target</label>'+
+              '<select id="act-target" onchange="saveActions()" class="w-full px-2 py-1.5 text-xs bg-raised text-foreground border border-border rounded font-body">'+
+                '<option value=""'+((!actions.ruleTarget)?' selected':'')+'>Auto-detect</option>'+
+                '<option value=".cursor/rules/unfade.mdc"'+((actions.ruleTarget==='.cursor/rules/unfade.mdc')?' selected':'')+'>Cursor (.cursor/rules/unfade.mdc)</option>'+
+                '<option value="CLAUDE.md"'+((actions.ruleTarget==='CLAUDE.md')?' selected':'')+'>Claude Code (CLAUDE.md)</option>'+
+                '<option value=".github/copilot-instructions.md"'+((actions.ruleTarget==='.github/copilot-instructions.md')?' selected':'')+'>Copilot (.github/copilot-instructions.md)</option>'+
+              '</select>'+
+            '</div>'+
+            '<div class="flex items-center justify-between">'+
+              '<div><p class="text-sm text-foreground">Session context</p><p class="text-xs text-muted">Update CLAUDE.md with recent context on session end</p></div>'+
+              '<input type="checkbox" id="act-context" '+(actions.sessionContext?'checked ':'')+' onchange="saveActions()" class="accent-accent w-4 h-4"/>'+
+            '</div>'+
+            '<div class="flex items-center justify-between">'+
+              '<div><p class="text-sm text-foreground">Weekly digest card</p><p class="text-xs text-muted">Auto-generate a shareable reasoning card each week</p></div>'+
+              '<input type="checkbox" id="act-weekly" '+(actions.weeklyDigest?'checked ':'')+' onchange="saveActions()" class="accent-accent w-4 h-4"/>'+
+            '</div>'+
+            '<div class="pl-2">'+
+              '<label class="text-xs text-muted block mb-1">Digest day</label>'+
+              '<select id="act-day" onchange="saveActions()" class="px-2 py-1.5 text-xs bg-raised text-foreground border border-border rounded font-body">'+
+                ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].map(function(d){return'<option value="'+d+'"'+((actions.digestDay===d)?' selected':'')+'>'+d.charAt(0).toUpperCase()+d.slice(1)+'</option>';}).join('')+
+              '</select>'+
+            '</div>'+
+          '</div>'+
+          '<div id="act-save-result" class="text-xs mt-2"></div>';
+
+        document.getElementById('act-enabled').addEventListener('change',function(){
+          var sub=document.getElementById('act-sub');
+          sub.style.opacity=this.checked?'1':'0.5';
+          sub.style.pointerEvents=this.checked?'auto':'none';
+        });
+      }).catch(function(){
+        document.getElementById('actions-loading').textContent='Could not load settings';
+      });
+    })();
+
+    function saveActions(){
+      var body={
+        enabled:document.getElementById('act-enabled').checked,
+        autoRules:document.getElementById('act-rules').checked,
+        ruleTarget:document.getElementById('act-target').value||null,
+        sessionContext:document.getElementById('act-context').checked,
+        weeklyDigest:document.getElementById('act-weekly').checked,
+        digestDay:document.getElementById('act-day').value
+      };
+      fetch('/unfade/settings/actions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(res){
+        var el=document.getElementById('act-save-result');
+        el.textContent=res.saved?'Saved':'Error: '+(res.error||'unknown');
+        el.className='text-xs mt-2 '+(res.saved?'text-success':'text-error');
+        setTimeout(function(){el.textContent='';},3000);
+      }).catch(function(){});
+    }
+    </script>
 
     <!-- Capture sources -->
     <div class="mb-8">

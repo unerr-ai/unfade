@@ -7,8 +7,8 @@
 import { existsSync } from "node:fs";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { loadConfig } from "../../config/manager.js";
 import { applyFeatureTag } from "../../commands/tag.js";
+import { loadConfig } from "../../config/manager.js";
 import { getAmplification } from "../../tools/unfade-amplify.js";
 import { getCoachInsights } from "../../tools/unfade-coach.js";
 import { getComprehension } from "../../tools/unfade-comprehension.js";
@@ -20,9 +20,9 @@ import { logReasoningEvent, UnfadeLogInputSchema } from "../../tools/unfade-log.
 import { getProfile } from "../../tools/unfade-profile.js";
 import { queryEvents } from "../../tools/unfade-query.js";
 import { getSimilar } from "../../tools/unfade-similar.js";
-import { CacheManager } from "../cache/manager.js";
 import { logger } from "../../utils/logger.js";
 import { getProjectDataDir } from "../../utils/paths.js";
+import { CacheManager } from "../cache/manager.js";
 import { distill } from "../distill/distiller.js";
 import { enrichMcpMeta } from "../intelligence/mcp-enrichment.js";
 
@@ -673,7 +673,12 @@ export function registerTools(server: McpServer): void {
                 type: "text" as const,
                 text: JSON.stringify({
                   data: null,
-                  _meta: { tool: "unfade-tag", durationMs: 0, degraded: true, degradedReason: "Cache not available" },
+                  _meta: {
+                    tool: "unfade-tag",
+                    durationMs: 0,
+                    degraded: true,
+                    degradedReason: "Cache not available",
+                  },
                 }),
               },
             ],
@@ -708,7 +713,12 @@ export function registerTools(server: McpServer): void {
               type: "text" as const,
               text: JSON.stringify({
                 data: null,
-                _meta: { tool: "unfade-tag", durationMs: 0, degraded: true, degradedReason: String(err) },
+                _meta: {
+                  tool: "unfade-tag",
+                  durationMs: 0,
+                  degraded: true,
+                  degradedReason: String(err),
+                },
               }),
             },
           ],

@@ -7,8 +7,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getStateDir } from "../../utils/paths.js";
-import { writeFirstRunCard } from "../cards/identity.js";
 import { countAllEvents } from "../capture/event-store.js";
+import { writeFirstRunCard } from "../cards/identity.js";
 import { analyzeFirstRun, type FirstRunReport } from "./first-run-analyzer.js";
 
 const REPORT_FILENAME = "first-run-report.json";

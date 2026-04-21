@@ -40,7 +40,12 @@ const SiteSchema = z.object({
   outputDir: z.string().default(".unfade/site"),
 });
 
-const PricingSchema = z.record(z.string(), z.number()).default({});
+const PricingSchema = z.record(z.string(), z.number()).default({
+  "claude-code": 0.01,
+  "cursor": 0.005,
+  "codex": 0.008,
+  "aider": 0.006,
+});
 
 const ActionsSchema = z.object({
   enabled: z.boolean().default(false),

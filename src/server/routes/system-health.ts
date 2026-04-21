@@ -29,6 +29,7 @@ interface SystemHealthResponse {
   repoCount: number;
   repos: RepoHealth[];
   ingestStatus: string | null;
+  intelligenceReady: boolean;
   degradedReasons: string[];
 }
 
@@ -83,11 +84,24 @@ systemHealthRoutes.get("/api/system/health", (c) => {
       degradedReasons.push(`Capture engine not running for ${repo.label}`);
     }
     if (repo.daemonRestartCount > 0) {
-      degradedReasons.push(`Capture engine for ${repo.label} restarted ${repo.daemonRestartCount} time(s)`);
+      degradedReasons.push(
+        `Capture engine for ${repo.label} restarted ${repo.daemonRestartCount} time(s)`,
+      );
     }
     if (repo.materializerLagMs > 30_000) {
-      degradedReasons.push(`Materializer lag for ${repo.label}: ${Math.round(repo.materializerLagMs / 1000)}s`);
+      degradedReasons.push(
+        `Materializer lag for ${repo.label}: ${Math.round(repo.materializerLagMs / 1000)}s`,
+      );
     }
+  }
+
+  // Check intelligence readiness
+  let intelligenceReady = false;
+  try {
+    const intelligenceDir = join(getProjectDataDir(), "intelligence");
+    intelligenceReady = existsSync(join(intelligenceDir, "efficiency.json"));
+  } catch {
+    // not ready
   }
 
   const status: SystemHealthResponse = {
@@ -100,6 +114,7 @@ systemHealthRoutes.get("/api/system/health", (c) => {
     repoCount: repoManager?.size ?? 0,
     repos,
     ingestStatus,
+    intelligenceReady,
     degradedReasons,
   };
 

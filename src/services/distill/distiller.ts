@@ -157,11 +157,15 @@ export async function distill(
     const cache = new CacheManager(cwd);
     const db = await cache.getDb();
     if (db) {
-      const { computeValueReceipt, formatValueReceiptSection } = await import("../intelligence/value-receipt.js");
+      const { computeValueReceipt, formatValueReceiptSection } = await import(
+        "../intelligence/value-receipt.js"
+      );
       const receipt = computeValueReceipt(db, config.pricing as Record<string, number> | undefined);
       valueReceiptSection = formatValueReceiptSection(receipt);
 
-      const { detectDebuggingArcs, formatDebuggingArcsSection } = await import("../intelligence/debugging-arcs.js");
+      const { detectDebuggingArcs, formatDebuggingArcsSection } = await import(
+        "../intelligence/debugging-arcs.js"
+      );
       const arcs = detectDebuggingArcs(db);
       debuggingArcsSection = formatDebuggingArcsSection(arcs);
     }

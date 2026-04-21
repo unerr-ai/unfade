@@ -205,6 +205,8 @@ function createMaterializerForRepo(
 ): MaterializerDaemon {
   let lastPartialMs = 0;
   let engine: import("../intelligence/engine.js").IntelligenceEngine | null = null;
+  let lastCorrelationMs = 0;
+  let lastDebuggingArcMs = 0;
 
   return new MaterializerDaemon({
     intervalMs: 2000,
@@ -260,7 +262,9 @@ function createMaterializerForRepo(
 
       // 12C.13: Materialize session metrics
       try {
-        const { materializeSessionMetrics } = await import("../intelligence/session-materializer.js");
+        const { materializeSessionMetrics } = await import(
+          "../intelligence/session-materializer.js"
+        );
         materializeSessionMetrics(db);
       } catch {
         // non-fatal — session materialization is additive
@@ -336,6 +340,65 @@ function createMaterializerForRepo(
         }
       } catch {
         // non-fatal — intelligence is additive
+      }
+
+      // 13A / UF-402: Decision durability (runs after intelligence engine, needs decisions table)
+      try {
+        const { computeDecisionDurability, writeDecisionDurability } = await import(
+          "../intelligence/decision-durability.js"
+        );
+        const report = computeDecisionDurability(db);
+        if (report.decisions.length > 0) {
+          writeDecisionDurability(report, repoRoot);
+        }
+      } catch {
+        // non-fatal — decision durability is additive
+      }
+
+      // 13B / UF-405: Cross-analyzer correlations (5 min throttle)
+      if (Date.now() - lastCorrelationMs > 300_000) {
+        try {
+          const { computeCorrelations, writeCorrelations } = await import(
+            "../intelligence/cross-analyzer.js"
+          );
+          const report = computeCorrelations({
+            repoRoot,
+            db,
+            config: config as unknown as Record<string, unknown>,
+          });
+          if (report.correlations.length > 0) {
+            writeCorrelations(report, repoRoot);
+            lastCorrelationMs = Date.now();
+
+            // 13B / UF-406: Narrative synthesis (only when fresh correlations exist)
+            try {
+              const { synthesizeNarratives } = await import(
+                "../intelligence/narrative-synthesizer.js"
+              );
+              synthesizeNarratives(repoRoot);
+            } catch {
+              // non-fatal
+            }
+          }
+        } catch {
+          // non-fatal — correlations are additive
+        }
+      }
+
+      // 13B / UF-407: Debugging arcs (60s throttle)
+      if (Date.now() - lastDebuggingArcMs > 60_000) {
+        try {
+          const { detectDebuggingArcs, writeDebuggingArcs } = await import(
+            "../intelligence/debugging-arcs.js"
+          );
+          const arcs = detectDebuggingArcs(db);
+          if (arcs.length > 0) {
+            writeDebuggingArcs(arcs, repoRoot);
+          }
+          lastDebuggingArcMs = Date.now();
+        } catch {
+          // non-fatal — debugging arcs are additive
+        }
       }
 
       // 12B.9: Check weekly digest schedule

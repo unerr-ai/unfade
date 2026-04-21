@@ -2,37 +2,54 @@
 import { describe, expect, it } from "vitest";
 import { computeCorrelations } from "../../../src/services/intelligence/cross-analyzer.js";
 
-function createMockDb(dailyData: Array<{ day: string; hds: number; loops: number; turns: number; outcome: string; domain: string }>) {
+function createMockDb(
+  dailyData: Array<{
+    day: string;
+    hds: number;
+    loops: number;
+    turns: number;
+    outcome: string;
+    domain: string;
+  }>,
+) {
   return {
     run(): void {},
     exec(sql: string): Array<{ columns: string[]; values: unknown[][] }> {
       // efficiency-loops query: returns day, avg_hds, loop_count
       if (sql.includes("avg_hds") && sql.includes("loop_count")) {
-        return [{
-          columns: ["day", "avg_hds", "loop_count"],
-          values: dailyData.map((d) => [d.day, d.hds, d.loops]),
-        }];
+        return [
+          {
+            columns: ["day", "avg_hds", "loop_count"],
+            values: dailyData.map((d) => [d.day, d.hds, d.loops]),
+          },
+        ];
       }
       // comprehension-velocity: returns day, avg_comprehension, avg_turns
       if (sql.includes("avg_comprehension") && sql.includes("avg_turns")) {
-        return [{
-          columns: ["day", "avg_comprehension", "avg_turns"],
-          values: dailyData.map((d) => [d.day, d.hds, d.turns]),
-        }];
+        return [
+          {
+            columns: ["day", "avg_comprehension", "avg_turns"],
+            values: dailyData.map((d) => [d.day, d.hds, d.turns]),
+          },
+        ];
       }
       // cost-outcomes: returns day, session_count, success_count
       if (sql.includes("session_count") && sql.includes("success_count")) {
-        return [{
-          columns: ["day", "session_count", "success_count"],
-          values: dailyData.map((d) => [d.day, 5, d.outcome === "success" ? 4 : 1]),
-        }];
+        return [
+          {
+            columns: ["day", "session_count", "success_count"],
+            values: dailyData.map((d) => [d.day, 5, d.outcome === "success" ? 4 : 1]),
+          },
+        ];
       }
       // blindspots-loops: returns domain, avg_hds, failure_rate
       if (sql.includes("failure_rate") && sql.includes("domain")) {
-        return [{
-          columns: ["domain", "avg_hds", "failure_rate"],
-          values: dailyData.map((d) => [d.domain, d.hds, d.loops > 2 ? 0.8 : 0.1]),
-        }];
+        return [
+          {
+            columns: ["domain", "avg_hds", "failure_rate"],
+            values: dailyData.map((d) => [d.domain, d.hds, d.loops > 2 ? 0.8 : 0.1]),
+          },
+        ];
       }
       // Load existing correlations
       if (sql.includes("correlation.json")) {

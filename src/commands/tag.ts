@@ -17,10 +17,7 @@ interface TagCommandOptions {
  * Tag recent events with a feature name.
  * This provides an explicit override when automatic feature detection fails.
  */
-export async function tagCommand(
-  featureName: string,
-  options: TagCommandOptions,
-): Promise<void> {
+export async function tagCommand(featureName: string, options: TagCommandOptions): Promise<void> {
   try {
     if (!featureName || featureName.trim().length === 0) {
       logger.error("Feature name is required. Usage: unfade tag <feature-name>");
@@ -88,7 +85,10 @@ function resolveTargetEvents(
  * Creates a feature entry if it doesn't exist yet.
  */
 export function applyFeatureTag(
-  db: { run(sql: string, params?: unknown[]): void; exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> },
+  db: {
+    run(sql: string, params?: unknown[]): void;
+    exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }>;
+  },
   featureName: string,
   eventIds: string[],
 ): number {
@@ -118,10 +118,10 @@ export function applyFeatureTag(
   }
 
   // Update feature event count
-  db.run("UPDATE features SET event_count = event_count + ?, last_seen = datetime('now') WHERE id = ?", [
-    tagged,
-    featureId,
-  ]);
+  db.run(
+    "UPDATE features SET event_count = event_count + ?, last_seen = datetime('now') WHERE id = ?",
+    [tagged, featureId],
+  );
 
   return tagged;
 }

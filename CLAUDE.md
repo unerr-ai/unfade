@@ -161,3 +161,4 @@ make clean        # Remove binaries
 - `.internal/architecture/PHASE_6_POST_LAUNCH.md` — Windows, cloud distill, team/enterprise prep
 - `.internal/architecture/PHASE_7_BREAKTHROUGH_INTELLIGENCE.md` — Active intelligence layer (roadmap)
 - `.internal/architecture/PHASE_7_WEB_UI_UX_ARCHITECTURE.md` — Web UI re-architecture (localhost:7654), RRVV spec
+- `.internal/architecture/PHASE_13_GAP_REMEDIATION_AND_COHERENCE.md` — U2D audit: gap analysis + remediation sprints (13A–13E)

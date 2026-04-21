@@ -18,10 +18,12 @@ export const CostAttributionSchema = z.object({
   byDomain: z.array(CostDimensionSchema),
   byBranch: z.array(CostDimensionSchema),
   byFeature: z.array(CostDimensionSchema).optional(),
-  abandonedWaste: z.object({
-    eventCount: z.number().int(),
-    estimatedCost: z.number(),
-  }).optional(),
+  abandonedWaste: z
+    .object({
+      eventCount: z.number().int(),
+      estimatedCost: z.number(),
+    })
+    .optional(),
   wasteRatio: z.number().min(0).max(1).nullable(),
   contextOverhead: z.number().min(0).max(1).nullable(),
   projectedMonthlyCost: z.number().nullable(),

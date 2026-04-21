@@ -99,7 +99,13 @@ export function getCoachInsights(opts?: { domain?: string }, cwd?: string): Coac
         narrativeInsights = content
           .split("\n")
           .filter(Boolean)
-          .map((line) => { try { return JSON.parse(line) as NarrativeInsight; } catch { return null; } })
+          .map((line) => {
+            try {
+              return JSON.parse(line) as NarrativeInsight;
+            } catch {
+              return null;
+            }
+          })
           .filter((n): n is NarrativeInsight => n !== null)
           .filter((n) => n.severity === "warning" || n.severity === "critical")
           .slice(-5)
@@ -116,10 +122,15 @@ export function getCoachInsights(opts?: { domain?: string }, cwd?: string): Coac
   }
 
   const hasData =
-    effectivePatterns.length > 0 || antiPatterns.length > 0 || activeLoopWarnings.length > 0 || narrativeInsights.length > 0;
+    effectivePatterns.length > 0 ||
+    antiPatterns.length > 0 ||
+    activeLoopWarnings.length > 0 ||
+    narrativeInsights.length > 0;
 
   return {
-    data: hasData ? { effectivePatterns, antiPatterns, activeLoopWarnings, narrativeInsights } : null,
+    data: hasData
+      ? { effectivePatterns, antiPatterns, activeLoopWarnings, narrativeInsights }
+      : null,
     _meta: {
       tool: "unfade-coach",
       durationMs: Date.now() - start,

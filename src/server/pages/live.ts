@@ -33,6 +33,16 @@ livePage.get("/live", (c) => {
         <span>Server</span>
         <span class="text-muted" id="chip-server-detail">running</span>
       </div>
+      <div class="flex items-center gap-2 bg-surface border border-border rounded-md px-3 py-2 text-xs">
+        <span id="chip-ingest-icon">${iconCheck({ size: 14 })}</span>
+        <span>Ingest</span>
+        <span class="text-muted" id="chip-ingest-detail">checking…</span>
+      </div>
+      <div class="flex items-center gap-2 bg-surface border border-border rounded-md px-3 py-2 text-xs">
+        <span id="chip-intel-icon">${iconCheck({ size: 14 })}</span>
+        <span>Intelligence</span>
+        <span class="text-muted" id="chip-intel-detail">checking…</span>
+      </div>
     </div>
 
     <!-- Controls bar -->
@@ -112,12 +122,27 @@ livePage.get("/live", (c) => {
         if(autoScroll.checked)stream.scrollTop=stream.scrollHeight;
       }
 
-      fetch('/unfade/health').then(function(r){return r.json();}).then(function(h){
+      fetch('/api/system/health').then(function(r){return r.json();}).then(function(resp){
+        var h=resp.data||resp;
         if(h.repoCount!==undefined){
-          setChipOk('daemon',h.repoCount+' repos');
-          if(h.repos&&h.repos[0])setChipOk('materializer','lag '+((h.repos[0].materializerLagMs/1000).toFixed(1))+'s');
+          if(h.repos&&h.repos[0]){
+            if(h.repos[0].daemonRunning)setChipOk('daemon','running · '+h.repoCount+' repos');
+            else setChipWarn('daemon','not running');
+            var lagS=(h.repos[0].materializerLagMs/1000).toFixed(1);
+            if(h.repos[0].materializerLagMs<10000)setChipOk('materializer',lagS+'s lag');
+            else setChipWarn('materializer',lagS+'s behind');
+          }else{
+            setChipOk('daemon',h.repoCount+' repos');
+          }
         }
         setChipOk('server','pid '+h.pid);
+        if(h.ingestStatus){
+          if(h.ingestStatus==='complete')setChipOk('ingest','complete');
+          else if(h.ingestStatus==='running')setChipWarn('ingest','running…');
+          else setChipOk('ingest',h.ingestStatus);
+        }else{setChipOk('ingest','idle');}
+        if(h.intelligenceReady)setChipOk('intel','active');
+        else setChipWarn('intel','warming up');
       }).catch(function(){setChipWarn('server','unreachable');});
 
       if(typeof EventSource!=='undefined'){

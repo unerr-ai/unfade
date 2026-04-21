@@ -46,10 +46,7 @@ export function classifyOutcomes(db: DbLike, eventIds: string[]): number {
     const outcome = deriveOutcome(metadata, db, eventId);
     metadata.outcome = outcome;
 
-    db.run("UPDATE events SET metadata = ? WHERE id = ?", [
-      JSON.stringify(metadata),
-      eventId,
-    ]);
+    db.run("UPDATE events SET metadata = ? WHERE id = ?", [JSON.stringify(metadata), eventId]);
     classified++;
   }
 
@@ -83,11 +80,7 @@ export function classifyAllUnclassified(db: DbLike): number {
  * 4. Context switch (next event touches different files) → partial
  * 5. conversation_complete with output → success
  */
-function deriveOutcome(
-  metadata: Record<string, unknown>,
-  db: DbLike,
-  eventId: string,
-): Outcome {
+function deriveOutcome(metadata: Record<string, unknown>, db: DbLike, eventId: string): Outcome {
   const filesModified = metadata.files_modified as string[] | undefined;
   const iterationCount = (metadata.iteration_count as number) ?? 0;
   const promptsAll = metadata.prompts_all as string[] | undefined;

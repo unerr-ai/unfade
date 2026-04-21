@@ -57,10 +57,25 @@ describe("GET /unfade/profile", () => {
         },
         tradeOffPreferences: [],
         domainDistribution: [
-          { domain: "TypeScript", frequency: 10, percentageOfTotal: 1, lastSeen: "2026-04-15", depth: "moderate", depthTrend: "stable", avgAlternativesInDomain: 2 },
+          {
+            domain: "TypeScript",
+            frequency: 10,
+            percentageOfTotal: 1,
+            lastSeen: "2026-04-15",
+            depth: "moderate",
+            depthTrend: "stable",
+            avgAlternativesInDomain: 2,
+          },
         ],
         patterns: [
-          { pattern: "Polyglot", confidence: 0.9, observedSince: "2026-04-01", lastObserved: "2026-04-15", examples: 5, category: "exploration" },
+          {
+            pattern: "Polyglot",
+            confidence: 0.9,
+            observedSince: "2026-04-01",
+            lastObserved: "2026-04-15",
+            examples: 5,
+            category: "exploration",
+          },
         ],
         temporalPatterns: { mostProductiveHours: [], avgDecisionsPerDay: 3, peakDecisionDays: [] },
       }),

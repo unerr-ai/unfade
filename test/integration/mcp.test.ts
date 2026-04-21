@@ -142,7 +142,7 @@ describe("MCP integration (stdio)", () => {
       expect(toolsResponse).toHaveProperty("result");
       const toolsResult = toolsResponse.result as Record<string, unknown>;
       const tools = toolsResult.tools as Array<{ name: string }>;
-      expect(tools.length).toBe(12);
+      expect(tools.length).toBe(13);
 
       const toolNames = tools.map((t) => t.name).sort();
       expect(toolNames).toEqual([
@@ -158,6 +158,7 @@ describe("MCP integration (stdio)", () => {
         "unfade_profile",
         "unfade_query",
         "unfade_similar",
+        "unfade_tag",
       ]);
     } finally {
       proc.kill("SIGTERM");

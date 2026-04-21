@@ -17,10 +17,7 @@ export const events = sqliteTable(
     gitBranch: text("git_branch"),
     metadata: text("metadata", { mode: "json" }),
   },
-  (table) => [
-    index("idx_events_ts").on(table.ts),
-    index("idx_events_source").on(table.source),
-  ],
+  (table) => [index("idx_events_ts").on(table.ts), index("idx_events_source").on(table.source)],
 );
 
 export const decisions = sqliteTable(

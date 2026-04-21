@@ -3,9 +3,9 @@
 // The cache is a materialized read-only view over the JSONL source of truth.
 // Exposes a compatible db interface: { run, exec } for all existing consumers.
 
-import Database from "better-sqlite3";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { logger } from "../../utils/logger.js";
 import { getCacheDir } from "../../utils/paths.js";
 
@@ -68,7 +68,10 @@ export class CacheManager {
         exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> {
           try {
             const stmt = raw.prepare(sql);
-            const rows = (params && params.length > 0 ? stmt.all(...params) : stmt.all()) as Record<string, unknown>[];
+            const rows = (params && params.length > 0 ? stmt.all(...params) : stmt.all()) as Record<
+              string,
+              unknown
+            >[];
             if (rows.length === 0) {
               // Return columns from the statement
               const columns = stmt.columns().map((c) => c.name);
@@ -217,6 +220,21 @@ export class CacheManager {
         link_type TEXT NOT NULL,
         metadata JSON,
         PRIMARY KEY (from_event, to_event, link_type)
+      );
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        start_ts TEXT,
+        end_ts TEXT,
+        event_count INTEGER DEFAULT 0,
+        turn_count INTEGER DEFAULT 0,
+        outcome TEXT,
+        estimated_cost REAL DEFAULT 0,
+        execution_phases TEXT,
+        branch TEXT,
+        domain TEXT,
+        feature_id TEXT,
+        updated_at TEXT
       );
     `);
 

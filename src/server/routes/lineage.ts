@@ -3,7 +3,7 @@
 
 import { Hono } from "hono";
 import { CacheManager } from "../../services/cache/manager.js";
-import { getInsightsForEvent, getEventsForInsight } from "../../services/intelligence/lineage.js";
+import { getEventsForInsight, getInsightsForEvent } from "../../services/intelligence/lineage.js";
 
 export const lineageRoutes = new Hono();
 
@@ -20,7 +20,10 @@ lineageRoutes.get("/api/lineage/:id", async (c) => {
   const cache = new CacheManager();
   const db = await cache.getDb();
   if (!db) {
-    return c.json({ data: null, _meta: { degraded: true, degradedReason: "No cache database" } }, 503);
+    return c.json(
+      { data: null, _meta: { degraded: true, degradedReason: "No cache database" } },
+      503,
+    );
   }
 
   try {
@@ -39,9 +42,12 @@ lineageRoutes.get("/api/lineage/:id", async (c) => {
       },
     });
   } catch (err) {
-    return c.json({
-      data: null,
-      _meta: { degraded: true, degradedReason: err instanceof Error ? err.message : String(err) },
-    }, 500);
+    return c.json(
+      {
+        data: null,
+        _meta: { degraded: true, degradedReason: err instanceof Error ? err.message : String(err) },
+      },
+      500,
+    );
   }
 });

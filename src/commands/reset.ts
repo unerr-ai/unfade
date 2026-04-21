@@ -57,8 +57,6 @@ export async function resetCommand(opts: {
     }
   }
 
-  writeLine(
-    `  ${theme.muted("Run")} ${theme.cyan("unfade")} ${theme.muted("to set up again.")}`,
-  );
+  writeLine(`  ${theme.muted("Run")} ${theme.cyan("unfade")} ${theme.muted("to set up again.")}`);
   writeBlank();
 }

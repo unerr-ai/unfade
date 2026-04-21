@@ -24,7 +24,9 @@ logsRoutes.get("/api/logs", (c) => {
     : undefined;
 
   const level = levelParam && LOG_LEVELS.includes(levelParam) ? levelParam : undefined;
-  const limit = limitParam ? Math.min(Math.max(Number.parseInt(limitParam, 10) || 100, 1), 500) : 100;
+  const limit = limitParam
+    ? Math.min(Math.max(Number.parseInt(limitParam, 10) || 100, 1), 500)
+    : 100;
 
   const entries = logBuffer.query({ source: sources, level, since, limit });
 

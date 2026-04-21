@@ -67,7 +67,7 @@ intelligencePage.get("/intelligence", (c) => {
       var subWeights={directionDensity:'30%',tokenEfficiency:'20%',iterationRatio:'20%',contextLeverage:'15%',modificationDepth:'15%'};
 
       fetch('/api/intelligence/efficiency').then(function(r){
-        if(r.status===204)return null;
+        if(r.status===202||r.status===204)return null;
         return r.json();
       }).then(function(data){
         loading.classList.add('hidden');

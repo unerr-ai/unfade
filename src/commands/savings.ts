@@ -38,9 +38,24 @@ export async function savingsCommand(options: SavingsOptions): Promise<void> {
 }
 
 function formatSavingsOutput(receipt: {
-  today: { injections: number; estimatedTokensSaved: number; estimatedCostSaved: number; estimatedMinutesSaved: number };
-  thisWeek: { injections: number; estimatedTokensSaved: number; estimatedCostSaved: number; estimatedMinutesSaved: number };
-  thisMonth: { injections: number; estimatedTokensSaved: number; estimatedCostSaved: number; estimatedMinutesSaved: number };
+  today: {
+    injections: number;
+    estimatedTokensSaved: number;
+    estimatedCostSaved: number;
+    estimatedMinutesSaved: number;
+  };
+  thisWeek: {
+    injections: number;
+    estimatedTokensSaved: number;
+    estimatedCostSaved: number;
+    estimatedMinutesSaved: number;
+  };
+  thisMonth: {
+    injections: number;
+    estimatedTokensSaved: number;
+    estimatedCostSaved: number;
+    estimatedMinutesSaved: number;
+  };
 }): void {
   logger.info("Estimated Savings from MCP Context Injections\n");
   logger.info("  All values are conservative estimates prefixed with ~\n");
@@ -55,9 +70,10 @@ function formatSavingsOutput(receipt: {
     if (data.injections === 0) {
       logger.info(`  ${label}: No injections recorded`);
     } else {
-      const tokens = data.estimatedTokensSaved >= 1000
-        ? `~${(data.estimatedTokensSaved / 1000).toFixed(1)}K`
-        : `~${data.estimatedTokensSaved}`;
+      const tokens =
+        data.estimatedTokensSaved >= 1000
+          ? `~${(data.estimatedTokensSaved / 1000).toFixed(1)}K`
+          : `~${data.estimatedTokensSaved}`;
       const hours = (data.estimatedMinutesSaved / 60).toFixed(1);
       logger.info(`  ${label}:`);
       logger.info(`    ~${data.injections} context injections`);

@@ -173,8 +173,15 @@ async function triggerIngestWhenReady(repoRoot: string): Promise<void> {
         // Crash recovery: if running for > 1 hour, mark as failed
         const startedAt = Date.parse(ingest.startedAt ?? "");
         if (startedAt > 0 && Date.now() - startedAt > 3600_000) {
-          logger.warn("Stale ingest detected (>1h), marking as failed for re-trigger", { repoRoot });
-          const recovered = { ...ingest, status: "failed", failedAt: new Date().toISOString(), reason: "Timeout — process likely crashed" };
+          logger.warn("Stale ingest detected (>1h), marking as failed for re-trigger", {
+            repoRoot,
+          });
+          const recovered = {
+            ...ingest,
+            status: "failed",
+            failedAt: new Date().toISOString(),
+            reason: "Timeout — process likely crashed",
+          };
           const tmpPath = `${ingestPath}.tmp.${process.pid}`;
           writeFileSync(tmpPath, JSON.stringify(recovered, null, 2), "utf-8");
           renameSync(tmpPath, ingestPath);

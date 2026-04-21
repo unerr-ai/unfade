@@ -41,7 +41,9 @@ export const efficiencyAnalyzer: Analyzer = {
       context.value * WEIGHTS.contextLeverage +
       modification.value * WEIGHTS.modificationDepth;
 
-    const aes = Math.round(Math.min(100, Math.max(0, rawAes * phaseMultiplier * outcomeAdjustment)));
+    const aes = Math.round(
+      Math.min(100, Math.max(0, rawAes * phaseMultiplier * outcomeAdjustment)),
+    );
 
     const minConfidence = [direction, tokenEff, iteration, context, modification].reduce(
       (min, m) => {
@@ -108,6 +110,7 @@ function computeDirectionDensity(db: AnalyzerContext["db"]): EfficiencySubMetric
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
         AND json_extract(metadata, '$.direction_signals.human_direction_score') IS NOT NULL
+        AND COALESCE(json_extract(metadata, '$.is_continuation'), 0) != 1
         AND ts >= datetime('now', '-24 hours')
     `);
     const avg = (result[0]?.values[0]?.[0] as number) ?? 0;
@@ -130,6 +133,7 @@ function computeTokenEfficiency(db: AnalyzerContext["db"]): EfficiencySubMetric 
              SUM(CASE WHEN CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) >= 0.5 THEN 1 ELSE 0 END) as directed
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
+        AND COALESCE(json_extract(metadata, '$.is_continuation'), 0) != 1
         AND ts >= datetime('now', '-24 hours')
     `);
     const total = (result[0]?.values[0]?.[0] as number) ?? 0;
@@ -303,7 +307,7 @@ function computePhaseMultiplier(db: AnalyzerContext["db"]): number {
     const planningRatio = planning / total;
     const debuggingRatio = debugging / total;
     // Weighted: planning boosts score, debugging dampens it
-    return 1.0 + (planningRatio * 0.5) - (debuggingRatio * 0.3);
+    return 1.0 + planningRatio * 0.5 - debuggingRatio * 0.3;
   } catch {
     return 1.0;
   }
@@ -329,7 +333,7 @@ function computeOutcomeAdjustment(db: AnalyzerContext["db"]): number {
 
     const failureRatio = failures / total;
     // Up to 20% penalty for high failure rate
-    return 1.0 - (failureRatio * 0.2);
+    return 1.0 - failureRatio * 0.2;
   } catch {
     return 1.0;
   }

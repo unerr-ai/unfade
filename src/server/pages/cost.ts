@@ -70,7 +70,7 @@ costPage.get("/cost", (c) => {
       var live=document.getElementById('cost-live');
 
       fetch('/api/intelligence/costs').then(function(r){
-        if(r.status===204)return null;
+        if(r.status===202||r.status===204)return null;
         return r.json();
       }).then(function(data){
         loading.classList.add('hidden');

@@ -130,7 +130,8 @@ export function aggregateComprehensionByModule(db: {
       SELECT
         e.content_detail,
         e.content_summary,
-        cp.score
+        cp.score,
+        e.metadata
       FROM comprehension_proxy cp
       INNER JOIN events e ON cp.event_id = e.id
       WHERE e.source IN ('ai-session', 'mcp-active')
@@ -144,8 +145,27 @@ export function aggregateComprehensionByModule(db: {
       const detail = (row[0] as string) ?? "";
       const summary = (row[1] as string) ?? "";
       const score = row[2] as number;
+      const metadataStr = (row[3] as string) ?? "{}";
 
-      const module = extractModule(`${summary} ${detail}`);
+      // Try text-based module extraction first
+      let module = extractModule(`${summary} ${detail}`);
+
+      // Fallback: use files_referenced / files_modified from metadata
+      if (module === "general") {
+        try {
+          const meta = typeof metadataStr === "string" ? JSON.parse(metadataStr) : metadataStr;
+          const files: string[] = [
+            ...((meta.files_referenced as string[]) ?? []),
+            ...((meta.files_modified as string[]) ?? []),
+          ];
+          if (files.length > 0) {
+            module = extractModule(files.join(" "));
+          }
+        } catch {
+          // metadata parse failed — stay with "general"
+        }
+      }
+
       const entry = moduleScores.get(module) ?? { total: 0, count: 0 };
       entry.total += score;
       entry.count++;

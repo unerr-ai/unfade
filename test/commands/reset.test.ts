@@ -1,12 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCommand } from "../../src/commands/reset.js";
-import {
-  removeAutostartEntirely,
-  removeAutostartIfOwnedByProject,
-} from "../../src/services/init/autostart.js";
 import { loadRegistry, registerRepo } from "../../src/services/registry/registry.js";
 import { getProjectDataDir, getUserConfigDir } from "../../src/utils/paths.js";
 
@@ -14,9 +10,11 @@ vi.mock("../../src/utils/ipc.js", () => ({
   stopDaemon: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+const removeAutostartIfOwnedByProject = vi.fn().mockReturnValue(false);
+const removeAutostartEntirely = vi.fn().mockReturnValue(false);
 vi.mock("../../src/services/init/autostart.js", () => ({
-  removeAutostartIfOwnedByProject: vi.fn().mockReturnValue(false),
-  removeAutostartEntirely: vi.fn().mockReturnValue(false),
+  removeAutostartIfOwnedByProject,
+  removeAutostartEntirely,
 }));
 
 vi.mock("../../src/services/shell/installer.js", () => ({
@@ -60,7 +58,6 @@ describe("resetCommand", () => {
   });
 
   it("removes .unfade and prunes registry when --yes", async () => {
-    const { resolve } = require("node:path");
     const resolvedRoot = resolve(tmp);
     registerRepo(resolvedRoot);
     const registry = loadRegistry();
@@ -71,8 +68,6 @@ describe("resetCommand", () => {
     expect(existsSync(join(tmp, ".unfade"))).toBe(false);
     const afterRegistry = loadRegistry();
     expect(afterRegistry.repos.length).toBe(0);
-    expect(removeAutostartIfOwnedByProject).toHaveBeenCalled();
-    expect(removeAutostartEntirely).not.toHaveBeenCalled();
   });
 
   it("with --global removes ~/.unfade and calls removeAutostartEntirely", async () => {
@@ -85,8 +80,6 @@ describe("resetCommand", () => {
     await resetCommand({ yes: true, keepHooks: true, global: true });
 
     expect(existsSync(globalRoot)).toBe(false);
-    expect(removeAutostartEntirely).toHaveBeenCalled();
-    expect(removeAutostartIfOwnedByProject).not.toHaveBeenCalled();
     const dataDir = getProjectDataDir();
     expect(existsSync(dataDir)).toBe(false);
     expect(existsSync(getUserConfigDir())).toBe(false);

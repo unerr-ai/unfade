@@ -68,6 +68,38 @@ intelligenceRoutes.get("/api/intelligence/replays", (c) =>
   jsonOr202(c, readIntelligenceFile("replays.json")),
 );
 
+// 13A / UF-401: Decision durability endpoint (consumed by velocity-page.ts)
+intelligenceRoutes.get("/api/intelligence/decision-durability", (c) =>
+  jsonOr202(c, readIntelligenceFile("decision-durability.json")),
+);
+
+// 13C / UF-410: Actions log endpoint — reads .unfade/logs/actions.jsonl
+intelligenceRoutes.get("/api/intelligence/actions", (c) => {
+  const logsDir = join(getProjectDataDir(), "logs");
+  const filePath = join(logsDir, "actions.jsonl");
+  if (!existsSync(filePath)) return c.json({ actions: [], count: 0 });
+  try {
+    const content = readFileSync(filePath, "utf-8").trim();
+    if (!content) return c.json({ actions: [], count: 0 });
+    const actions = content
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean)
+      .reverse()
+      .slice(0, 10);
+    return c.json({ actions, count: actions.length });
+  } catch {
+    return c.json({ actions: [], count: 0 });
+  }
+});
+
 // 11E.4: Lineage endpoint — returns source events and analyzer chain for an insight
 intelligenceRoutes.get("/api/intelligence/lineage/:insightId", async (c) => {
   const insightId = c.req.param("insightId");
@@ -87,7 +119,10 @@ intelligenceRoutes.get("/api/intelligence/lineage/:insightId", async (c) => {
   try {
     const mappings = getEventsForInsight(db, insightId);
     if (mappings.length === 0) {
-      return c.json({ data: { insight: insightId, sourceEvents: [], analyzerChain: [] }, _meta: { tool: "lineage" } });
+      return c.json({
+        data: { insight: insightId, sourceEvents: [], analyzerChain: [] },
+        _meta: { tool: "lineage" },
+      });
     }
 
     // Get unique analyzers in the chain
@@ -120,7 +155,10 @@ intelligenceRoutes.get("/api/intelligence/lineage/:insightId", async (c) => {
     });
   } catch (err) {
     return c.json(
-      { data: null, _meta: { degraded: true, degradedReason: err instanceof Error ? err.message : String(err) } },
+      {
+        data: null,
+        _meta: { degraded: true, degradedReason: err instanceof Error ? err.message : String(err) },
+      },
       500,
     );
   }
@@ -137,7 +175,13 @@ intelligenceRoutes.get("/api/intelligence/narratives", (c) => {
     const narratives = content
       .split("\n")
       .filter(Boolean)
-      .map((line) => { try { return JSON.parse(line); } catch { return null; } })
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
       .filter(Boolean);
     return c.json({ narratives, count: narratives.length });
   } catch {

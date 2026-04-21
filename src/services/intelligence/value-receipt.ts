@@ -44,7 +44,8 @@ function computePeriod(injections: number, costPer1K: number): ValuePeriod {
   return {
     injections,
     estimatedTokensSaved: injections * TOKENS_PER_INJECTION,
-    estimatedCostSaved: Math.round(injections * TOKENS_PER_INJECTION * (costPer1K / 1000) * 100) / 100,
+    estimatedCostSaved:
+      Math.round(injections * TOKENS_PER_INJECTION * (costPer1K / 1000) * 100) / 100,
     estimatedMinutesSaved: Math.round(injections * MINUTES_PER_INJECTION * 10) / 10,
   };
 }
@@ -52,10 +53,7 @@ function computePeriod(injections: number, costPer1K: number): ValuePeriod {
 /**
  * Compute the value receipt from MCP invocation data.
  */
-export function computeValueReceipt(
-  db: DbLike,
-  pricing?: Record<string, number>,
-): ValueReceipt {
+export function computeValueReceipt(db: DbLike, pricing?: Record<string, number>): ValueReceipt {
   const costPer1K = pricing?.default ?? DEFAULT_COST_PER_1K_INPUT;
   const now = new Date();
 

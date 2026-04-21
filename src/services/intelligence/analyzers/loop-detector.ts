@@ -36,7 +36,10 @@ export const loopDetectorAnalyzer: Analyzer = {
       updatedAt: now,
     };
 
-    const sourceEventIds = entries.slice(0, 20).map((e) => e.eventId).filter(Boolean);
+    const sourceEventIds = entries
+      .slice(0, 20)
+      .map((e) => e.eventId)
+      .filter(Boolean);
 
     return {
       analyzer: "loop-detector",

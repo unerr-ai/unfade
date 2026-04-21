@@ -20,10 +20,7 @@ function resolveLevel(config: LoggerConfig): string {
 function createPinoInstance(level: string): pino.Logger {
   // Always write to stderr (fd 2) synchronously for predictable output.
   // pino-pretty is used via transport only if PINO_PRETTY=1 env is set.
-  return pino(
-    { level },
-    pino.destination({ dest: 2, sync: true }),
-  );
+  return pino({ level }, pino.destination({ dest: 2, sync: true }));
 }
 
 class Logger {

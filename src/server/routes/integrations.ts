@@ -4,8 +4,8 @@
 // GET /api/integrations/status — checks which tools have unfade configured.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { Hono } from "hono";
 import { logger } from "../../utils/logger.js";
 
@@ -30,21 +30,24 @@ const TOOLS: Record<string, ToolConfig> = {
     label: "Claude Code",
     getPath: () => join(homedir(), ".claude", "settings.json"),
     wrapEntry: (entry) => ({ mcpServers: { unfade: entry } }),
-    checkConnected: (parsed) => !!(parsed as { mcpServers?: { unfade?: unknown } }).mcpServers?.unfade,
+    checkConnected: (parsed) =>
+      !!(parsed as { mcpServers?: { unfade?: unknown } }).mcpServers?.unfade,
   },
   cursor: {
     name: "cursor",
     label: "Cursor",
     getPath: () => join(homedir(), ".cursor", "mcp.json"),
     wrapEntry: (entry) => ({ mcpServers: { unfade: entry } }),
-    checkConnected: (parsed) => !!(parsed as { mcpServers?: { unfade?: unknown } }).mcpServers?.unfade,
+    checkConnected: (parsed) =>
+      !!(parsed as { mcpServers?: { unfade?: unknown } }).mcpServers?.unfade,
   },
   windsurf: {
     name: "windsurf",
     label: "Windsurf",
     getPath: () => join(homedir(), ".codeium", "windsurf", "mcp_config.json"),
     wrapEntry: (entry) => ({ mcpServers: { unfade: entry } }),
-    checkConnected: (parsed) => !!(parsed as { mcpServers?: { unfade?: unknown } }).mcpServers?.unfade,
+    checkConnected: (parsed) =>
+      !!(parsed as { mcpServers?: { unfade?: unknown } }).mcpServers?.unfade,
   },
 };
 
@@ -61,7 +64,10 @@ integrationsRoutes.post("/api/integrations/install", async (c) => {
   if (!toolKey || !TOOLS[toolKey]) {
     logger.warn("integrations.install: unknown tool", { reqId, tool: toolKey });
     return c.json(
-      { success: false, error: `Unknown tool: ${toolKey}. Supported: ${Object.keys(TOOLS).join(", ")}` },
+      {
+        success: false,
+        error: `Unknown tool: ${toolKey}. Supported: ${Object.keys(TOOLS).join(", ")}`,
+      },
       400,
     );
   }

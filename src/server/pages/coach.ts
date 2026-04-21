@@ -60,8 +60,22 @@ coachPage.get("/coach", (c) => {
         });
       };
 
+      window.applyRule=function(text,btn){
+        btn.textContent='Applying…';
+        fetch('/api/actions/apply-rule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rule:text})}).then(function(r){return r.json();}).then(function(res){
+          if(res.applied){
+            btn.innerHTML=checkIcon+' Applied to '+res.target.split('/').pop();
+            btn.classList.add('text-success');
+          }else{
+            btn.textContent='Error: '+(res.error||'unknown').slice(0,30);
+            btn.classList.add('text-error');
+          }
+          setTimeout(function(){btn.textContent='Apply to project';btn.classList.remove('text-success','text-error');},3000);
+        }).catch(function(){btn.textContent='Apply to project';});
+      };
+
       fetch('/api/intelligence/coach').then(function(r){
-        if(r.status===204)return null;
+        if(r.status===202||r.status===204)return null;
         return r.json();
       }).then(function(data){
         loading.classList.add('hidden');
@@ -80,7 +94,10 @@ coachPage.get("/coach", (c) => {
                 '<p class="text-sm text-foreground mt-2">'+p.pattern+'</p>'+
                 '<p class="text-xs text-muted mt-1">'+p.sampleSize+' sessions analyzed</p>'+
               '</div>'+
-              '<button onclick="copyRule(\\''+p.pattern.replace(/'/g,"\\\\'")+'\\''+',this)" class="flex items-center gap-1 text-xs text-muted hover:text-accent bg-transparent border border-border rounded-md px-2 py-1 cursor-pointer whitespace-nowrap" style="font:inherit">'+copyIcon+' CLAUDE.md</button>'+
+              '<div class="flex flex-col gap-1.5 flex-shrink-0">'+
+                '<button onclick="copyRule(\\''+p.pattern.replace(/'/g,"\\\\'")+'\\''+',this)" class="flex items-center gap-1 text-xs text-muted hover:text-accent bg-transparent border border-border rounded-md px-2 py-1 cursor-pointer whitespace-nowrap" style="font:inherit">'+copyIcon+' CLAUDE.md</button>'+
+                '<button onclick="applyRule(\\''+p.pattern.replace(/'/g,"\\\\'")+'\\''+',this)" class="flex items-center gap-1 text-xs text-accent hover:text-accent-dim bg-transparent border border-accent/30 rounded-md px-2 py-1 cursor-pointer whitespace-nowrap" style="font:inherit">Apply to project</button>'+
+              '</div>'+
             '</div>'+
           '</div>';
         }).join('')||'<p class="text-muted text-sm">No effective patterns detected yet.</p>';

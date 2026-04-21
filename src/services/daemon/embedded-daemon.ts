@@ -7,9 +7,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
-import { logBuffer } from "../logs/ring-buffer.js";
 import { logger } from "../../utils/logger.js";
 import { getBinDir } from "../../utils/paths.js";
+import { logBuffer } from "../logs/ring-buffer.js";
 
 const DAEMON_BINARY = process.platform === "win32" ? "unfaded.exe" : "unfaded";
 const MAX_BACKOFF_MS = 30_000;

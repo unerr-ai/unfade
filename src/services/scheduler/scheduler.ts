@@ -3,15 +3,15 @@
 // Configurable time (default 18:00 local), jitter ±5 min.
 // Skip zero-event days silently.
 
-import { Cron } from "croner";
-import type { UnfadeConfig } from "../../schemas/config.js";
-import { logBuffer } from "../logs/ring-buffer.js";
-import { logger } from "../../utils/logger.js";
-import { countEvents } from "../capture/event-store.js";
-import { distill } from "../distill/distiller.js";
-import { getDistillsDir, getEventsDir } from "../../utils/paths.js";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { Cron } from "croner";
+import type { UnfadeConfig } from "../../schemas/config.js";
+import { logger } from "../../utils/logger.js";
+import { getDistillsDir, getEventsDir } from "../../utils/paths.js";
+import { countEvents } from "../capture/event-store.js";
+import { distill } from "../distill/distiller.js";
+import { logBuffer } from "../logs/ring-buffer.js";
 
 const JITTER_RANGE_MS = 5 * 60 * 1000; // ±5 minutes
 
@@ -71,40 +71,44 @@ function toCronPattern(schedule: string): string {
 export function startScheduler(config: UnfadeConfig, cwd?: string): SchedulerHandle {
   const cronPattern = toCronPattern(config.distill.schedule);
 
-  const job = new Cron(cronPattern, { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, async () => {
-    // Apply jitter: delay ±5 minutes randomly
-    const jitter = Math.floor(Math.random() * JITTER_RANGE_MS * 2) - JITTER_RANGE_MS;
-    if (jitter > 0) {
-      await new Promise((r) => setTimeout(r, jitter));
-    }
+  const job = new Cron(
+    cronPattern,
+    { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    async () => {
+      // Apply jitter: delay ±5 minutes randomly
+      const jitter = Math.floor(Math.random() * JITTER_RANGE_MS * 2) - JITTER_RANGE_MS;
+      if (jitter > 0) {
+        await new Promise((r) => setTimeout(r, jitter));
+      }
 
-    const today = new Date().toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10);
 
-    // Skip zero-event days
-    const eventCount = countEvents(today, cwd);
-    if (eventCount === 0) {
-      logger.debug("Zero events today, skipping scheduled distill", { date: today });
-      logBuffer.append("scheduler", "debug", `Zero events for ${today}, skipping distill`);
-      return;
-    }
+      // Skip zero-event days
+      const eventCount = countEvents(today, cwd);
+      if (eventCount === 0) {
+        logger.debug("Zero events today, skipping scheduled distill", { date: today });
+        logBuffer.append("scheduler", "debug", `Zero events for ${today}, skipping distill`);
+        return;
+      }
 
-    // Skip if distill is already fresh
-    if (isDistillFresh(today, cwd)) {
-      logger.debug("Distill already exists with no new events since, skipping", { date: today });
-      logBuffer.append("scheduler", "info", `Distill for ${today} already fresh, skipping`);
-      return;
-    }
+      // Skip if distill is already fresh
+      if (isDistillFresh(today, cwd)) {
+        logger.debug("Distill already exists with no new events since, skipping", { date: today });
+        logBuffer.append("scheduler", "info", `Distill for ${today} already fresh, skipping`);
+        return;
+      }
 
-    try {
-      await distill(today, config, { cwd });
-      logger.debug("Scheduled distillation complete", { date: today });
-      logBuffer.append("scheduler", "info", `Distill completed for ${today}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error("Scheduled distillation failed", { date: today, error: msg });
-      logBuffer.append("scheduler", "error", `Distill failed for ${today}: ${msg}`);
-    }
-  });
+      try {
+        await distill(today, config, { cwd });
+        logger.debug("Scheduled distillation complete", { date: today });
+        logBuffer.append("scheduler", "info", `Distill completed for ${today}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error("Scheduled distillation failed", { date: today, error: msg });
+        logBuffer.append("scheduler", "error", `Distill failed for ${today}: ${msg}`);
+      }
+    },
+  );
 
   logger.debug("Scheduler started", {
     pattern: cronPattern,

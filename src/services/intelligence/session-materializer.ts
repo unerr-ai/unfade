@@ -99,8 +99,19 @@ export function materializeSessionMetrics(db: DbLike): number {
          (id, start_ts, end_ts, event_count, turn_count, outcome, estimated_cost,
           execution_phases, branch, domain, feature_id, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-        [sessionId, startTs, endTs, eventCount, turnCount, outcome, estimatedCost,
-         phases, branch, domain, featureId],
+        [
+          sessionId,
+          startTs,
+          endTs,
+          eventCount,
+          turnCount,
+          outcome,
+          estimatedCost,
+          phases,
+          branch,
+          domain,
+          featureId,
+        ],
       );
       upserted++;
     }

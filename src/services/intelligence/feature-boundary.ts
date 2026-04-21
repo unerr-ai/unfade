@@ -128,7 +128,10 @@ export function linkRelatedEvents(db: DbLike, newEventIds: string[]): void {
       );
       for (const row of nearbyResult[0]?.values ?? []) {
         const otherId = row[0] as string;
-        const otherMeta = typeof row[1] === "string" ? JSON.parse(row[1]) : (row[1] as Record<string, unknown>) ?? {};
+        const otherMeta =
+          typeof row[1] === "string"
+            ? JSON.parse(row[1])
+            : ((row[1] as Record<string, unknown>) ?? {});
         const otherFiles = [
           ...((otherMeta?.files_referenced as string[]) ?? []),
           ...((otherMeta?.files_modified as string[]) ?? []),
@@ -153,13 +156,23 @@ function assignFeature(
   event: EventForFeature,
   activeFeatures: Feature[],
 ): { featureId: string; isNew: boolean } {
-  const eventBranch = event.gitBranch || (event.metadata?.feature_signals as Record<string, unknown>)?.branch as string || "";
+  const eventBranch =
+    event.gitBranch ||
+    ((event.metadata?.feature_signals as Record<string, unknown>)?.branch as string) ||
+    "";
   const eventFiles = getEventFiles(event);
   const eventTime = new Date(event.ts).getTime();
 
   // Strategy 1: Branch match (strongest signal)
-  if (eventBranch && eventBranch !== "main" && eventBranch !== "master" && eventBranch !== "develop") {
-    const branchFeature = activeFeatures.find((f) => f.branch === eventBranch && f.status === "active");
+  if (
+    eventBranch &&
+    eventBranch !== "main" &&
+    eventBranch !== "master" &&
+    eventBranch !== "develop"
+  ) {
+    const branchFeature = activeFeatures.find(
+      (f) => f.branch === eventBranch && f.status === "active",
+    );
     if (branchFeature) {
       return { featureId: branchFeature.id, isNew: false };
     }
@@ -186,7 +199,9 @@ function assignFeature(
 
   // Strategy 3: Temporal proximity to most recent active feature (< 2h)
   const recentFeature = activeFeatures
-    .filter((f) => f.status === "active" && eventTime - new Date(f.lastSeen).getTime() < 2 * 3600 * 1000)
+    .filter(
+      (f) => f.status === "active" && eventTime - new Date(f.lastSeen).getTime() < 2 * 3600 * 1000,
+    )
     .sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime())[0];
 
   if (recentFeature) {
@@ -199,10 +214,25 @@ function assignFeature(
 }
 
 function createFeatureFromEvent(event: EventForFeature, featureId: string): Feature {
-  const branch = event.gitBranch || (event.metadata?.feature_signals as Record<string, unknown>)?.branch as string || null;
+  const branch =
+    event.gitBranch ||
+    ((event.metadata?.feature_signals as Record<string, unknown>)?.branch as string) ||
+    null;
+
+  let summaryForName = event.contentSummary;
+  if (summaryForName.startsWith("This session is being continued from a previous conversation")) {
+    summaryForName = summaryForName.replace(
+      /^This session is being continued from a previous conversation[^.]*\.\s*/,
+      "",
+    );
+    if (!summaryForName || summaryForName.length < 5) {
+      summaryForName = "Continuation session";
+    }
+  }
+
   const name = branch
     ? branch.replace(/^(feat|fix|feature|bugfix)\//, "")
-    : event.contentSummary.slice(0, 60) || "Unnamed feature";
+    : summaryForName.slice(0, 60) || "Unnamed feature";
 
   return {
     id: featureId,
@@ -222,7 +252,8 @@ function getEventFiles(event: EventForFeature): string[] {
   const meta = event.metadata;
   const refs = (meta?.files_referenced as string[]) ?? [];
   const mods = (meta?.files_modified as string[]) ?? [];
-  const cluster = ((meta?.feature_signals as Record<string, unknown>)?.file_cluster as string[]) ?? [];
+  const cluster =
+    ((meta?.feature_signals as Record<string, unknown>)?.file_cluster as string[]) ?? [];
   const allFiles = new Set([...refs, ...mods, ...cluster]);
   return [...allFiles];
 }
@@ -286,7 +317,10 @@ function loadEvent(db: DbLike, eventId: string): EventForFeature | null {
     return {
       id: row[0] as string,
       ts: row[1] as string,
-      metadata: typeof row[2] === "string" ? JSON.parse(row[2]) : (row[2] as Record<string, unknown>) ?? {},
+      metadata:
+        typeof row[2] === "string"
+          ? JSON.parse(row[2])
+          : ((row[2] as Record<string, unknown>) ?? {}),
       gitBranch: row[3] as string,
       contentSummary: row[4] as string,
     };

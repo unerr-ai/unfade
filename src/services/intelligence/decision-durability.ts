@@ -5,8 +5,8 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DbLike } from "../cache/manager.js";
 import { getProjectDataDir } from "../../utils/paths.js";
+import type { DbLike } from "../cache/manager.js";
 
 export interface DurabilityRecord {
   decisionId: string;
@@ -83,11 +83,17 @@ export function computeDecisionDurability(db: DbLike): DurabilityReport {
       heldRate: decided > 0 ? Math.round((held.length / decided) * 100) : 0,
       deepDeliberationHeldRate:
         deepDecisions.length > 0
-          ? Math.round((deepDecisions.filter((d) => d.status === "held").length / deepDecisions.length) * 100)
+          ? Math.round(
+              (deepDecisions.filter((d) => d.status === "held").length / deepDecisions.length) *
+                100,
+            )
           : null,
       quickDecisionHeldRate:
         quickDecisions.length > 0
-          ? Math.round((quickDecisions.filter((d) => d.status === "held").length / quickDecisions.length) * 100)
+          ? Math.round(
+              (quickDecisions.filter((d) => d.status === "held").length / quickDecisions.length) *
+                100,
+            )
           : null,
     },
     updatedAt: new Date().toISOString(),

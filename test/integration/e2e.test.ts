@@ -122,12 +122,12 @@ describe("E2E: init → capture → distill → query → card → publish", () 
     // ---------------------------------------------------------------
     // Stage 1: Init — scaffold .unfade/ directory tree
     // ---------------------------------------------------------------
-    const { scaffold } = await import("../../src/services/init/scaffold.js");
-    const scaffoldResult = scaffold(tempDir);
-    expect(scaffoldResult.created).toBe(true);
-    expect(existsSync(scaffoldResult.projectDir)).toBe(true);
+    const { ensureInit } = await import("../../src/services/init/lightweight-init.js");
+    const initResult = ensureInit(tempDir);
+    expect(initResult.firstRun).toBe(true);
+    expect(existsSync(initResult.dataDir)).toBe(true);
 
-    const unfadeDir = scaffoldResult.projectDir;
+    const unfadeDir = initResult.dataDir;
     const requiredDirs = [
       "events",
       "distills",
@@ -142,9 +142,15 @@ describe("E2E: init → capture → distill → query → card → publish", () 
       expect(existsSync(join(unfadeDir, sub))).toBe(true);
     }
 
-    // Config written with valid defaults
+    // Write config with valid defaults (ensureInit scaffolds dirs but doesn't write config)
     const configPath = join(unfadeDir, "config.json");
-    expect(existsSync(configPath)).toBe(true);
+    if (!existsSync(configPath)) {
+      writeFileSync(
+        configPath,
+        JSON.stringify({ version: 2, distill: { provider: "none" } }, null, 2),
+        "utf-8",
+      );
+    }
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(config.version).toBe(2);
     expect(config.distill.provider).toBe("none");

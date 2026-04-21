@@ -68,7 +68,7 @@ velocityPage.get("/velocity", (c) => {
       var stableIcon='${iconMinus({ size: 16 }).replace(/'/g, "\\'")}';
 
       fetch('/api/intelligence/velocity').then(function(r){
-        if(r.status===204)return null;
+        if(r.status===202||r.status===204)return null;
         return r.json();
       }).then(function(data){
         loading.classList.add('hidden');
@@ -124,7 +124,7 @@ velocityPage.get("/velocity", (c) => {
 
       // 12C.7: Decision durability section
       fetch('/api/intelligence/decision-durability').then(function(r){
-        if(r.status===204||!r.ok)return null;
+        if(r.status===202||r.status===204||!r.ok)return null;
         return r.json();
       }).then(function(data){
         if(!data||!data.stats||data.stats.totalTracked===0)return;

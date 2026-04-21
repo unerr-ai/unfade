@@ -416,12 +416,19 @@ func conversationToEvent(convID string, turns []parsers.ConversationTurn, signal
 		}
 	}
 
+	// Detect Claude Code continuation boilerplate
+	isContinuation := false
+	if summary != "" && strings.HasPrefix(summary, "This session is being continued from a previous conversation") {
+		isContinuation = true
+	}
+
 	metadata := map[string]any{
 		"ai_tool":           toolName,
 		"session_id":        sessionID,
 		"conversation_id":   convID,
 		"turn_count":        len(turns),
 		"direction_signals": signals,
+		"is_continuation":   isContinuation,
 		// Project context
 		"repo_root": project,
 		"repo_name": repoName,
@@ -807,12 +814,12 @@ func buildConversationDetail(turns []parsers.ConversationTurn) string {
 		b.WriteString(t.Role)
 		b.WriteString(": ")
 		content := strings.TrimSpace(t.Content)
-		if len(content) > 100 {
-			content = content[:97] + "..."
+		if len(content) > 300 {
+			content = content[:297] + "..."
 		}
 		content = strings.ReplaceAll(content, "\n", " ")
 		b.WriteString(content)
-		if b.Len() > 1500 {
+		if b.Len() > 4000 {
 			b.WriteString(" | ...")
 			break
 		}

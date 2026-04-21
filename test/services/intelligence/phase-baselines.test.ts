@@ -2,9 +2,9 @@
 import { describe, expect, it } from "vitest";
 import {
   computePhaseBaselines,
+  getPhaseExpectedRange,
   isHdsConcerning,
   normalizeHds,
-  getPhaseExpectedRange,
   type PhaseBaseline,
 } from "../../../src/services/intelligence/phase-baselines.js";
 
@@ -13,10 +13,12 @@ function createMockDb(events: Array<{ phase: string; hds: number }>) {
     run(): void {},
     exec(sql: string): Array<{ columns: string[]; values: unknown[][] }> {
       if (sql.includes("execution_phase") && sql.includes("human_direction_score")) {
-        return [{
-          columns: ["phase", "hds"],
-          values: events.map((e) => [e.phase, e.hds]),
-        }];
+        return [
+          {
+            columns: ["phase", "hds"],
+            values: events.map((e) => [e.phase, e.hds]),
+          },
+        ];
       }
       return [];
     },

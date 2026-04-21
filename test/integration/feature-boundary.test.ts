@@ -133,7 +133,6 @@ describe("Feature Boundary Detection (11C.3)", () => {
     expect(featureResult[0].values[0][0]).toBe("feat/auth");
   });
 
-
   it("merges by file overlap (Jaccard > 0.4)", async () => {
     const events = [
       makeEvent({
@@ -376,9 +375,7 @@ describe("Cross-Event Linking (11C.3)", () => {
     linkRelatedEvents(db, ["far-evt-2"]);
 
     // Should NOT create a related_events link (>1 hour apart)
-    const result = db.exec(
-      "SELECT * FROM event_links WHERE link_type = 'related_events'",
-    );
+    const result = db.exec("SELECT * FROM event_links WHERE link_type = 'related_events'");
     expect(result[0].values.length).toBe(0);
   });
 });

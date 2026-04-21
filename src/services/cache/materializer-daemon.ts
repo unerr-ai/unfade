@@ -3,12 +3,12 @@
 // On each tick: incremental materialization → summary.json update.
 // Runs inside the standalone server process so it survives CLI exit.
 
-import { watch, type FSWatcher } from "chokidar";
 import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { logBuffer } from "../logs/ring-buffer.js";
+import { type FSWatcher, watch } from "chokidar";
 import { logger } from "../../utils/logger.js";
 import { getEventsDir, getStateDir } from "../../utils/paths.js";
+import { logBuffer } from "../logs/ring-buffer.js";
 import { CacheManager } from "./manager.js";
 import { materializeIncremental, rebuildAll } from "./materializer.js";
 

@@ -4,8 +4,8 @@
 
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DbLike } from "../cache/manager.js";
 import { getProjectDataDir } from "../../utils/paths.js";
+import type { DbLike } from "../cache/manager.js";
 
 export interface DebuggingArc {
   id: string;
@@ -53,9 +53,7 @@ export function detectDebuggingArcs(db: DbLike): DebuggingArc[] {
   const arcEvents = events.map(toArcEvent);
   const groups = groupByProximityAndOverlap(arcEvents);
 
-  return groups
-    .filter((g) => g.length >= MIN_ARC_EVENTS)
-    .map((group, idx) => buildArc(group, idx));
+  return groups.filter((g) => g.length >= MIN_ARC_EVENTS).map((group, idx) => buildArc(group, idx));
 }
 
 /**
@@ -66,7 +64,11 @@ export function writeDebuggingArcs(arcs: DebuggingArc[], repoRoot: string): void
   mkdirSync(dir, { recursive: true });
   const target = join(dir, "debugging-arcs.json");
   const tmp = `${target}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify({ arcs, updatedAt: new Date().toISOString() }, null, 2), "utf-8");
+  writeFileSync(
+    tmp,
+    JSON.stringify({ arcs, updatedAt: new Date().toISOString() }, null, 2),
+    "utf-8",
+  );
   renameSync(tmp, target);
 }
 
@@ -79,7 +81,12 @@ export function formatDebuggingArcsSection(arcs: DebuggingArc[]): string {
   const lines: string[] = ["## Debugging Arcs", ""];
 
   for (const arc of arcs.slice(0, 5)) {
-    const status = arc.resolution === "resolved" ? "Resolved" : arc.resolution === "abandoned" ? "Abandoned" : "Ongoing";
+    const status =
+      arc.resolution === "resolved"
+        ? "Resolved"
+        : arc.resolution === "abandoned"
+          ? "Abandoned"
+          : "Ongoing";
     lines.push(`- **${arc.errorDescription}** (${status}, ~${arc.durationMinutes} min)`);
     lines.push(`  ${arc.hypothesesTested} approaches tested across ${arc.files.length} files`);
     if (arc.resolutionSummary) {
@@ -125,7 +132,11 @@ function loadDebuggingEvents(db: DbLike): RawEvent[] {
 
 function parseJson(val: unknown): Record<string, unknown> {
   if (typeof val === "string") {
-    try { return JSON.parse(val); } catch { return {}; }
+    try {
+      return JSON.parse(val);
+    } catch {
+      return {};
+    }
   }
   if (typeof val === "object" && val !== null) return val as Record<string, unknown>;
   return {};
@@ -198,16 +209,18 @@ function buildArc(group: ArcEvent[], idx: number): DebuggingArc {
 
   // Determine resolution from last event
   const lastSummary = last.summary.toLowerCase();
-  const resolution: DebuggingArc["resolution"] =
-    /fix|resolv|solved|work/i.test(lastSummary) ? "resolved"
-    : /abandon|gave up|revert|skip/i.test(lastSummary) ? "abandoned"
-    : "ongoing";
+  const resolution: DebuggingArc["resolution"] = /fix|resolv|solved|work/i.test(lastSummary)
+    ? "resolved"
+    : /abandon|gave up|revert|skip/i.test(lastSummary)
+      ? "abandoned"
+      : "ongoing";
 
-  const resolutionSummary = resolution === "resolved"
-    ? `Resolved by: ${last.summary}`
-    : resolution === "abandoned"
-      ? `Abandoned after ${group.length} iterations`
-      : null;
+  const resolutionSummary =
+    resolution === "resolved"
+      ? `Resolved by: ${last.summary}`
+      : resolution === "abandoned"
+        ? `Abandoned after ${group.length} iterations`
+        : null;
 
   return {
     id: `arc-${idx}-${first.ts.slice(0, 10)}`,

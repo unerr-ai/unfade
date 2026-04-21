@@ -116,8 +116,16 @@ function materializeEventsIncremental(
     // 11A.5: Staleness detection — if cursor is far behind current file size, warn and reprocess
     if (streamCursor && startOffset > 0) {
       const currentSize = statSync(filePath).size;
-      if (streamCursor.fileSize && streamCursor.fileSize > 0 && currentSize > streamCursor.fileSize * 2) {
-        logger.info("Cursor stale — file grew significantly since last tick, reprocessing", { file, cursorSize: streamCursor.fileSize, currentSize });
+      if (
+        streamCursor.fileSize &&
+        streamCursor.fileSize > 0 &&
+        currentSize > streamCursor.fileSize * 2
+      ) {
+        logger.info("Cursor stale — file grew significantly since last tick, reprocessing", {
+          file,
+          cursorSize: streamCursor.fileSize,
+          currentSize,
+        });
         delete cursor.streams[streamKey];
         startOffset = 0;
       }
@@ -131,9 +139,13 @@ function materializeEventsIncremental(
     const lines = newContent.split("\n");
     let lastValidLine = "";
     let bytesProcessed = startOffset;
+    const endsWithNewline = newContent.endsWith("\n");
 
-    for (const line of lines) {
-      const rawLineLength = Buffer.byteLength(line, "utf-8") + 1;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const isLastSegment = i === lines.length - 1;
+      const newlineSize = isLastSegment && !endsWithNewline ? 0 : 1;
+      const rawLineLength = Buffer.byteLength(line, "utf-8") + newlineSize;
       const trimmed = line.trim();
       if (!trimmed) {
         bytesProcessed += rawLineLength;

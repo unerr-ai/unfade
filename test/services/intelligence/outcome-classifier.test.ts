@@ -80,9 +80,7 @@ describe("classifyOutcomes", () => {
   });
 
   it("T-330: iteration_count > 5 with no files → failed", () => {
-    const db = createMockDb([
-      { id: "ev-3", metadata: { iteration_count: 8, session_id: "s1" } },
-    ]);
+    const db = createMockDb([{ id: "ev-3", metadata: { iteration_count: 8, session_id: "s1" } }]);
     const count = classifyOutcomes(db, ["ev-3"]);
     expect(count).toBe(1);
     const meta = db.getMetadata("ev-3");

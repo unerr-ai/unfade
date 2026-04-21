@@ -37,6 +37,12 @@ alertsPage.get("/alerts", (c) => {
       <p class="text-xs text-muted text-center" id="cap-notice"></p>
     </div>
 
+    <!-- What Unfade Did (Phase 12 actions log) -->
+    <div class="mt-8" id="actions-section" style="display:none">
+      <h2 class="font-heading text-lg font-semibold mb-4 flex items-center gap-2">${iconCheck({ size: 20 })} What Unfade Did</h2>
+      <div id="actions-list" class="space-y-2"></div>
+    </div>
+
     <script>
     (function(){
       var loading=document.getElementById('alerts-loading');
@@ -48,8 +54,8 @@ alertsPage.get("/alerts", (c) => {
       var severityStyles={critical:'border-error bg-error/10',warning:'border-warning bg-warning/10',info:'border-accent bg-accent/10'};
 
       Promise.all([
-        fetch('/api/intelligence/alerts').then(function(r){return r.status===204?null:r.json();}).catch(function(){return null;}),
-        fetch('/api/intelligence/replays').then(function(r){return r.status===204?null:r.json();}).catch(function(){return null;})
+        fetch('/api/intelligence/alerts').then(function(r){return(r.status===202||r.status===204)?null:r.json();}).catch(function(){return null;}),
+        fetch('/api/intelligence/replays').then(function(r){return(r.status===202||r.status===204)?null:r.json();}).catch(function(){return null;})
       ]).then(function(results){
         loading.classList.add('hidden');
         var alertsData=results[0];
@@ -107,6 +113,25 @@ alertsPage.get("/alerts", (c) => {
                       (replaysData?replaysData.replays.filter(function(r){return r.dismissed;}).length:0);
         document.getElementById('cap-notice').textContent='Up to 4 alerts/week. Dismissed: '+dismissed+'.';
       });
+
+      // 13C / UF-410: Load recent proactive actions
+      fetch('/api/intelligence/actions').then(function(r){return r.json();}).then(function(data){
+        if(!data||!data.actions||data.actions.length===0)return;
+        document.getElementById('actions-section').style.display='';
+        var el=document.getElementById('actions-list');
+        el.innerHTML=data.actions.map(function(a){
+          var typeLabel=a.action||a.type||'action';
+          var time=a.timestamp?new Date(a.timestamp).toLocaleString():'-';
+          var target=a.target||a.path||'-';
+          return'<div class="bg-surface border border-border rounded p-3 flex items-center justify-between text-xs">'+
+            '<div class="flex items-center gap-3">'+
+              '<span class="inline-block px-2 py-0.5 rounded bg-success/15 text-success font-medium">'+typeLabel+'</span>'+
+              '<span class="text-muted">'+time+'</span>'+
+            '</div>'+
+            '<span class="text-muted font-mono truncate max-w-[300px]">'+target+'</span>'+
+          '</div>';
+        }).join('');
+      }).catch(function(){});
     })();
     </script>
   `;

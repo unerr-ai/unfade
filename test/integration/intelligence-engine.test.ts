@@ -156,10 +156,14 @@ describe("12A.7: Intelligence files generated", () => {
 
 describe("12A.8: Intelligence routes return data or 202", () => {
   it("returns 202 warming_up when file does not exist", async () => {
-    // Import and call the route handler logic directly
+    // Point getProjectDataDir to a temp dir with no intelligence files
+    const emptyDir = join(testDir, ".unfade-empty");
+    mkdirSync(emptyDir, { recursive: true });
+    vi.doMock("../../src/utils/paths.js", () => ({
+      getProjectDataDir: () => emptyDir,
+    }));
     const { intelligenceRoutes } = await import("../../src/server/routes/intelligence.js");
 
-    // Use Hono's test client approach
     const res = await intelligenceRoutes.request("/api/intelligence/efficiency");
     expect(res.status).toBe(202);
     const body = await res.json();
@@ -186,6 +190,40 @@ describe("12A.8: Intelligence routes return data or 202", () => {
     expect([200, 202]).toContain(res.status);
 
     vi.doUnmock("../../src/utils/paths.js");
+  });
+});
+
+describe("13E / UF-419: Decision durability API route", () => {
+  it("returns 202 when decision-durability.json does not exist", async () => {
+    const emptyDir = join(testDir, ".unfade-dur-empty");
+    mkdirSync(emptyDir, { recursive: true });
+    vi.doMock("../../src/utils/paths.js", () => ({
+      getProjectDataDir: () => emptyDir,
+    }));
+    const { intelligenceRoutes } = await import("../../src/server/routes/intelligence.js");
+    const res = await intelligenceRoutes.request("/api/intelligence/decision-durability");
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.status).toBe("warming_up");
+  });
+
+  it("returns 200 with data when decision-durability.json exists", async () => {
+    const dataDir = join(testDir, ".unfade-dur-data");
+    mkdirSync(join(dataDir, "intelligence"), { recursive: true });
+    writeFileSync(
+      join(dataDir, "intelligence", "decision-durability.json"),
+      JSON.stringify({
+        decisions: [],
+        stats: { totalTracked: 0, heldRate: 0 },
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+    vi.doMock("../../src/utils/paths.js", () => ({
+      getProjectDataDir: () => dataDir,
+    }));
+    const { intelligenceRoutes } = await import("../../src/server/routes/intelligence.js");
+    const res = await intelligenceRoutes.request("/api/intelligence/decision-durability");
+    expect([200, 202]).toContain(res.status);
   });
 });
 

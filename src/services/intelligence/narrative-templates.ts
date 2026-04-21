@@ -51,7 +51,9 @@ export const narrativeTemplates: NarrativeTemplate[] = [
     triggerCorrelation: "blindspots-loops",
     condition: (pair) => pair.direction === "positive" && pair.r >= 0.6,
     formatClaim: (pair, data) => {
-      const blindSpots = getNestedValue(data, "comprehension-radar.blindSpots") as string[] | undefined;
+      const blindSpots = getNestedValue(data, "comprehension-radar.blindSpots") as
+        | string[]
+        | undefined;
       const area = blindSpots?.[0] ?? "areas with low comprehension";
       return `You're getting stuck where you're weakest. Failure rate is highest in ${area} — consider breaking problems in this area into smaller sub-tasks or pair-programming.`;
     },
@@ -87,7 +89,9 @@ export const narrativeTemplates: NarrativeTemplate[] = [
     triggerCorrelation: "cost-outcomes",
     condition: (pair) => pair.direction === "negative" && Math.abs(pair.r) >= 0.6,
     formatClaim: (pair, data) => {
-      const waste = getNestedValue(data, "cost-attribution.abandonedWaste.estimatedCost") as number | undefined;
+      const waste = getNestedValue(data, "cost-attribution.abandonedWaste.estimatedCost") as
+        | number
+        | undefined;
       const wasteStr = waste != null ? ` (~$${waste.toFixed(2)} on abandoned sessions)` : "";
       return `Higher spending doesn't produce better outcomes${wasteStr}. Consider shorter exploratory sessions before committing to a direction.`;
     },
@@ -122,13 +126,17 @@ export const narrativeTemplates: NarrativeTemplate[] = [
     id: "learning-curve-expected",
     triggerCorrelation: "comprehension-velocity",
     condition: (pair, data) => {
-      const newDomains = getNestedValue(data, "comprehension-radar.byModule") as Record<string, { decisionsCount: number }> | undefined;
+      const newDomains = getNestedValue(data, "comprehension-radar.byModule") as
+        | Record<string, { decisionsCount: number }>
+        | undefined;
       if (!newDomains) return false;
       // Check if any module has < 10 events (new domain)
       return Object.values(newDomains).some((m) => m.decisionsCount < 10);
     },
     formatClaim: (_pair, data) => {
-      const modules = getNestedValue(data, "comprehension-radar.byModule") as Record<string, { decisionsCount: number }> | undefined;
+      const modules = getNestedValue(data, "comprehension-radar.byModule") as
+        | Record<string, { decisionsCount: number }>
+        | undefined;
       const newOnes = modules
         ? Object.entries(modules)
             .filter(([, m]) => m.decisionsCount < 10)
@@ -150,7 +158,9 @@ export const narrativeTemplates: NarrativeTemplate[] = [
       return pair.r >= 0.6 && (alerts?.some((a) => a.type === "high-acceptance") ?? false);
     },
     formatClaim: (_pair, data) => {
-      const blindSpots = getNestedValue(data, "comprehension-radar.blindSpots") as string[] | undefined;
+      const blindSpots = getNestedValue(data, "comprehension-radar.blindSpots") as
+        | string[]
+        | undefined;
       const area = blindSpots?.[0] ?? "certain modules";
       return `High acceptance rate combined with blind spots in ${area}. You may be on autopilot — consider reviewing AI output more carefully in this area.`;
     },

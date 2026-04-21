@@ -238,7 +238,7 @@ homePage.get("/", (c) => {
         if(narratives.length>0){
           el.innerHTML=narratives.slice(-5).reverse().map(function(n){
             var badge='<span class="inline-block text-[10px] px-1.5 py-0.5 rounded mr-1 '+severityClass(n.severity)+'">'+(n.severity||'info')+'</span>';
-            var why='<button class="text-xs text-muted hover:text-accent cursor-pointer underline underline-offset-2 bg-transparent border-none p-0 ml-2" onclick="toggleLineage(\''+n.id+'\',\'lineage-'+n.id.slice(0,8)+'\')">Why? →</button>';
+            var why='<button class="text-xs text-muted hover:text-accent cursor-pointer underline underline-offset-2 bg-transparent border-none p-0 ml-2" onclick="toggleLineage(''+n.id+'','lineage-'+n.id.slice(0,8)+'')">Why? →</button>';
             var lineageDetail='<div class="lineage-detail hidden mt-2 pl-3 border-l-2 border-border" id="lineage-'+n.id.slice(0,8)+'-detail"><div class="text-xs text-muted">Loading…</div></div>';
             return'<div class="py-2 border-b border-border last:border-0">'+badge+'<span class="text-foreground text-sm">'+n.claim+'</span>'+why+lineageDetail+'</div>';
           }).join('');

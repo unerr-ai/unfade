@@ -85,7 +85,7 @@ comprehensionPage.get("/comprehension", (c) => {
       }
 
       fetch('/api/intelligence/comprehension').then(function(r){
-        if(r.status===204)return fetch('/api/heatmap').then(function(r2){return r2.status===204?null:r2.json();});
+        if(r.status===202||r.status===204)return fetch('/api/heatmap').then(function(r2){return(r2.status===202||r2.status===204)?null:r2.json();});
         return r.json();
       }).then(function(data){
         loading.classList.add('hidden');

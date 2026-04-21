@@ -8,13 +8,13 @@ package capture
 // CaptureEvent is the universal event format written by the daemon.
 // Field names use camelCase JSON tags to match the TypeScript schema exactly.
 type CaptureEvent struct {
-	ID        string            `json:"id"`
-	Timestamp string            `json:"timestamp"`
-	Source    string            `json:"source"`    // git | ai-session | terminal | browser | manual
-	Type      string            `json:"type"`      // commit | diff | branch-switch | ...
-	Content   EventContent      `json:"content"`
-	GitContext *GitContext       `json:"gitContext,omitempty"`
-	Metadata  map[string]any    `json:"metadata,omitempty"`
+	ID         string         `json:"id"`
+	Timestamp  string         `json:"timestamp"`
+	Source     string         `json:"source"` // git | ai-session | terminal | browser | manual | mcp-active
+	Type       string         `json:"type"`   // commit | diff | branch-switch | ...
+	Content    EventContent   `json:"content"`
+	GitContext *GitContext    `json:"gitContext,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 // EventContent holds the primary payload of a capture event.

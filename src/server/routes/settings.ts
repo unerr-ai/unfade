@@ -41,6 +41,7 @@ settingsRoutes.get("/settings/status", async (c) => {
   let model = "llama3.2";
   let apiKey = "";
   let apiBase = "";
+  let actions: Record<string, unknown> = {};
 
   try {
     const raw = JSON.parse(readFileSync(configPath, "utf-8"));
@@ -49,6 +50,7 @@ settingsRoutes.get("/settings/status", async (c) => {
     model = distill.model ?? "llama3.2";
     apiKey = distill.apiKey ?? "";
     apiBase = distill.apiBase ?? "";
+    actions = raw?.actions ?? {};
   } catch {
     // No config file — unconfigured
   }
@@ -62,7 +64,7 @@ settingsRoutes.get("/settings/status", async (c) => {
       validated: false,
       reason: "No LLM provider configured",
     };
-    return c.json({ data: status, _meta: { tool: "settings-status", durationMs: 0 } });
+    return c.json({ data: status, actions, _meta: { tool: "settings-status", durationMs: 0 } });
   }
 
   // Validate connectivity based on provider type
@@ -93,7 +95,7 @@ settingsRoutes.get("/settings/status", async (c) => {
     reason,
   };
 
-  return c.json({ data: status, _meta: { tool: "settings-status", durationMs: 0 } });
+  return c.json({ data: status, actions, _meta: { tool: "settings-status", durationMs: 0 } });
 });
 
 /**
@@ -194,7 +196,10 @@ settingsRoutes.post("/settings/llm", async (c) => {
   try {
     updateSetupStatus({ configuredAt: new Date().toISOString(), llmProvider: provider });
   } catch (err) {
-    logger.warn("settings.llm: failed to update setup-status", { reqId, error: err instanceof Error ? err.message : String(err) });
+    logger.warn("settings.llm: failed to update setup-status", {
+      reqId,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   const providerLabel =
@@ -206,15 +211,30 @@ settingsRoutes.post("/settings/llm", async (c) => {
   if (provider !== "none") {
     let connectivityHtml = "";
     if (provider === "ollama") {
-      const result = await checkOllamaReady(apiBase || "http://localhost:11434", model || "llama3.2");
-      logger.info("settings.llm: connectivity test", { reqId, provider: "ollama", model, ready: result.ready, reason: result.reason || undefined });
+      const result = await checkOllamaReady(
+        apiBase || "http://localhost:11434",
+        model || "llama3.2",
+      );
+      logger.info("settings.llm: connectivity test", {
+        reqId,
+        provider: "ollama",
+        model,
+        ready: result.ready,
+        reason: result.reason || undefined,
+      });
       connectivityHtml = result.ready
         ? `<div class="mt-2 text-sm text-success">✓ Connected — Ollama is running and model is available.</div>`
         : `<div class="mt-2 text-sm text-warning">⚠ ${escapeHtmlAttr(result.reason ?? "Ollama not reachable")} — distills will fall back to structured summaries until resolved.</div>`;
     } else if (apiKey) {
       // Send a real test completion to validate the API key and model work
       const testResult = await testLlmCompletion(provider, apiKey, model, apiBase);
-      logger.info("settings.llm: connectivity test", { reqId, provider, model, success: testResult.success, reason: testResult.reason || undefined });
+      logger.info("settings.llm: connectivity test", {
+        reqId,
+        provider,
+        model,
+        success: testResult.success,
+        reason: testResult.reason || undefined,
+      });
       connectivityHtml = testResult.success
         ? `<div class="mt-2 text-sm text-success">✓ Verified — sent a test message and received a valid response.</div>`
         : `<div class="mt-2 text-sm text-warning">⚠ ${escapeHtmlAttr(testResult.reason)} — distills will fall back to structured summaries until resolved.</div>`;
@@ -230,6 +250,47 @@ settingsRoutes.post("/settings/llm", async (c) => {
   return c.html(
     `<div class="alert alert-ok">LLM updated to <strong>${escapeHtmlAttr(providerLabel)}</strong>. Distills will use structured summaries (no AI).</div>`,
   );
+});
+
+/**
+ * POST /settings/actions — update config.actions section.
+ */
+settingsRoutes.post("/settings/actions", async (c) => {
+  const body = await c.req.json<{
+    enabled?: boolean;
+    autoRules?: boolean;
+    ruleTarget?: string | null;
+    sessionContext?: boolean;
+    weeklyDigest?: boolean;
+    digestDay?: string;
+  }>();
+
+  const projectDir = getProjectDataDir();
+  const configPath = join(projectDir, "config.json");
+  let rawConfig: Record<string, unknown> = {};
+  try {
+    rawConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch {
+    // fresh config
+  }
+
+  rawConfig.actions = {
+    enabled: body.enabled ?? false,
+    autoRules: body.autoRules ?? false,
+    ruleTarget: body.ruleTarget || null,
+    sessionContext: body.sessionContext ?? false,
+    weeklyDigest: body.weeklyDigest ?? false,
+    digestDay: body.digestDay ?? "monday",
+  };
+
+  const tmpPath = join(projectDir, `config.json.tmp.${process.pid}`);
+  try {
+    writeFileSync(tmpPath, `${JSON.stringify(rawConfig, null, 2)}\n`, "utf-8");
+    renameSync(tmpPath, configPath);
+    return c.json({ saved: true });
+  } catch (err) {
+    return c.json({ saved: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
 });
 
 /**
@@ -298,7 +359,8 @@ async function testLlmCompletion(
     });
     if (res.ok) return { success: true, reason: "" };
     if (res.status === 401) return { success: false, reason: "Invalid API key" };
-    if (res.status === 404) return { success: false, reason: `Model "${model}" not found or not accessible` };
+    if (res.status === 404)
+      return { success: false, reason: `Model "${model}" not found or not accessible` };
     if (res.status === 429) return { success: true, reason: "" }; // Rate limited = key works
     const body = await res.text().catch(() => "");
     return { success: false, reason: `API error (${res.status}): ${body.slice(0, 100)}` };
@@ -314,4 +376,3 @@ async function testLlmCompletion(
     clearTimeout(timeout);
   }
 }
-

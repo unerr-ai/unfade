@@ -153,9 +153,13 @@ function parseDuration(s: string): number {
   if (!match) return 7;
   const n = Number.parseInt(match[1], 10);
   switch (match[2]) {
-    case "d": return n;
-    case "w": return n * 7;
-    case "m": return n * 30;
-    default: return 7;
+    case "d":
+      return n;
+    case "w":
+      return n * 7;
+    case "m":
+      return n * 30;
+    default:
+      return 7;
   }
 }

@@ -4,11 +4,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { historyCommand } from "../../src/commands/history.js";
 import type { DbLike } from "../../src/services/cache/manager.js";
-import {
-  computeValueReceipt,
-  formatValueReceiptSection,
-} from "../../src/services/intelligence/value-receipt.js";
 import {
   detectDebuggingArcs,
   formatDebuggingArcsSection,
@@ -17,7 +14,10 @@ import {
   computeDecisionDurability,
   writeDecisionDurability,
 } from "../../src/services/intelligence/decision-durability.js";
-import { historyCommand } from "../../src/commands/history.js";
+import {
+  computeValueReceipt,
+  formatValueReceiptSection,
+} from "../../src/services/intelligence/value-receipt.js";
 
 let testDir: string;
 
@@ -80,9 +80,24 @@ describe("12C.9: Value receipt computation", () => {
 
   it("formats value receipt as markdown section", () => {
     const receipt = {
-      today: { injections: 5, estimatedTokensSaved: 10000, estimatedCostSaved: 0.3, estimatedMinutesSaved: 15 },
-      thisWeek: { injections: 20, estimatedTokensSaved: 40000, estimatedCostSaved: 1.2, estimatedMinutesSaved: 60 },
-      thisMonth: { injections: 50, estimatedTokensSaved: 100000, estimatedCostSaved: 3.0, estimatedMinutesSaved: 150 },
+      today: {
+        injections: 5,
+        estimatedTokensSaved: 10000,
+        estimatedCostSaved: 0.3,
+        estimatedMinutesSaved: 15,
+      },
+      thisWeek: {
+        injections: 20,
+        estimatedTokensSaved: 40000,
+        estimatedCostSaved: 1.2,
+        estimatedMinutesSaved: 60,
+      },
+      thisMonth: {
+        injections: 50,
+        estimatedTokensSaved: 100000,
+        estimatedCostSaved: 3.0,
+        estimatedMinutesSaved: 150,
+      },
       updatedAt: new Date().toISOString(),
     };
 
@@ -94,9 +109,24 @@ describe("12C.9: Value receipt computation", () => {
 
   it("returns empty string when no injections", () => {
     const receipt = {
-      today: { injections: 0, estimatedTokensSaved: 0, estimatedCostSaved: 0, estimatedMinutesSaved: 0 },
-      thisWeek: { injections: 0, estimatedTokensSaved: 0, estimatedCostSaved: 0, estimatedMinutesSaved: 0 },
-      thisMonth: { injections: 0, estimatedTokensSaved: 0, estimatedCostSaved: 0, estimatedMinutesSaved: 0 },
+      today: {
+        injections: 0,
+        estimatedTokensSaved: 0,
+        estimatedCostSaved: 0,
+        estimatedMinutesSaved: 0,
+      },
+      thisWeek: {
+        injections: 0,
+        estimatedTokensSaved: 0,
+        estimatedCostSaved: 0,
+        estimatedMinutesSaved: 0,
+      },
+      thisMonth: {
+        injections: 0,
+        estimatedTokensSaved: 0,
+        estimatedCostSaved: 0,
+        estimatedMinutesSaved: 0,
+      },
       updatedAt: new Date().toISOString(),
     };
     expect(formatValueReceiptSection(receipt)).toBe("");

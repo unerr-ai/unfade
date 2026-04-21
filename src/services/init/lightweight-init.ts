@@ -7,7 +7,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
-import { getBinDir, getDaemonProjectRoot, getProjectDataDir, getStateDir } from "../../utils/paths.js";
+import {
+  getBinDir,
+  getDaemonProjectRoot,
+  getProjectDataDir,
+  getStateDir,
+} from "../../utils/paths.js";
 import { registerRepo } from "../registry/registry.js";
 
 export interface EnsureInitResult {

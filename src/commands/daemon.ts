@@ -90,9 +90,7 @@ export async function daemonUpdateCommand(): Promise<void> {
     process.stderr.write(theme.muted("Restarting capture engine with new binary...\n"));
     await daemonRestartCommand();
   } else {
-    process.stderr.write(
-      theme.muted("Capture engine is not running — start it with `unfade`\n"),
-    );
+    process.stderr.write(theme.muted("Capture engine is not running — start it with `unfade`\n"));
   }
 }
 

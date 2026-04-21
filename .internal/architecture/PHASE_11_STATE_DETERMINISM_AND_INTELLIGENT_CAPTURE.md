@@ -661,7 +661,7 @@ curl -s localhost:7654/api/intelligence/comprehension | jq '.phaseBaselines' && 
 
 | ID | Task | Files | Done |
 |---|---|---|---|
-| **11E.1** | Cross-analyzer correlation module — After all 8 analyzers produce output, compute pairwise correlations: efficiency↔loops (are loops causing efficiency drops?), comprehension↔velocity (does understanding correlate with speed?), cost↔outcomes (does spending more produce better outcomes?), blind-spots↔loops (are you stuck where you're weakest?). Require Pearson r > 0.6 AND temporal ordering to assert causality. Output: `correlation.json` with `{ pairs: [{ a, b, r, direction, temporalLag }] }` | `src/services/intelligence/cross-analyzer.ts` | [x] |
+| **11E.1** | Cross-analyzer correlation module — After all 8 analyzers produce output, compute pairwise correlations: efficiency↔loops (are loops causing efficiency drops?), comprehension↔velocity (does understanding correlate with speed?), cost↔outcomes (does spending more produce better outcomes?), blind-spots↔loops (are you stuck where you're weakest?). Require Pearson r > 0.6 AND temporal ordering to assert causality. Output: `correlation.json` with `{ correlations: [{ a, b, r, direction, temporalLag }] }` | `src/services/intelligence/cross-analyzer.ts` | [x] |
 | **11E.2** | Narrative synthesis layer — Template-based (no LLM) causal claim generator. Runs every 60s. Reads correlation.json + individual analyzer outputs. Produces human-readable "because" statements: "Your efficiency dropped 15% this week because the loop detector found 3 stuck sessions on auth middleware (blind spot: score 28/100)." Output: `narratives.jsonl` ring buffer (max 50 entries). Each entry: `{ id, ts, claim, severity, sources: [analyzerId], confidence, sourceEventIds }` | `src/services/intelligence/narrative-synthesizer.ts` | [x] |
 | **11E.3** | Narrative templates — Define 10-15 causal narrative templates that map correlation pairs to human-readable explanations. Each template: trigger condition (which correlations/thresholds), claim format string, severity rules, source attribution. Examples: loop+blindspot → "stuck in weak area", cost+abandoned → "spending on dead ends", velocity_drop+new_domain → "learning curve expected" | `src/services/intelligence/narrative-templates.ts` | [x] |
 | **11E.4** | Lineage API endpoint — `GET /api/intelligence/lineage/:insightId` returns `{ insight, sourceEvents: Event[], analyzerChain: string[] }`. Uses `event_insight_map` table (populated by 12A.10). Enables UI drill-through on any insight claim | `src/server/routes/intelligence.ts` | [x] |
@@ -876,17 +876,19 @@ Cross-referencing Reddit frequency, theme scores from `unfade_support.md` §1, a
 
 ### 9.4 Root Cause Analysis
 
-#### Why did the IntelligenceEngine remain unwired?
+#### Why did the IntelligenceEngine remain unwired? *(historical — resolved in Phase 12A)*
+
+> **Status update (Phase 12A/13A):** The IntelligenceEngine IS now wired in `repo-manager.ts` (lines 310–324). All 8 analyzers run on materializer ticks. Secondary pipelines (correlations, narratives, debugging arcs, decision durability) were wired in Phase 13B. The analysis below is preserved for historical context on how this gap occurred.
 
 The materializer tick was built incrementally across Phases 4-6, adding individual function calls directly into `onTick`. When Phase 7 introduced `IntelligenceEngine` as the orchestrator, the existing direct calls were already working. The engine was built as the "proper" way to run analyzers, but the integration step was never executed.
 
-**Failure mode:**
+**Failure mode (historical):**
 1. Individual modules built and tested in isolation ✓
 2. Integration test coverage validates individual features, not end-to-end pipeline
 3. No smoke test asserts "intelligence/*.json files exist after N ticks"
 4. Graceful 204 degradation masks the failure — every downstream consumer handles null without error
 
-**Structural pattern:** Graceful degradation hid a critical integration failure. The system silently produces zero value from its most sophisticated modules.
+**Resolved:** Phase 12A wired `engine.run()`. Phase 13A added decision-durability route + 202/204 UI alignment. Phase 13B wired secondary pipelines.
 
 #### Why are 5 high-signal user features entirely unbuilt?
 
@@ -1052,7 +1054,7 @@ Phase 12C (Sprint 12C) — Deep Intelligence
 | `prompts_all` (full prompts) | ✅ | ✅ (content column) | ❌ (use `content_summary` 200-char) | ❌ | **CRITICAL** |
 | `execution_phase` | ✅ | ✅ | ❌ (only distill uses for time %) | ❌ | HIGH |
 | `intent_summary` | ✅ | ✅ | ❌ | ❌ | HIGH |
-| `outcome` (success/partial/failure/abandoned) | ✅ | ✅ | ❌ (hardcoded 5-rule classifier) | ❌ | HIGH |
+| `outcome` (success/partial/failed/abandoned) | ✅ | ✅ | ❌ (hardcoded 5-rule classifier) | ❌ | HIGH |
 | `feature_signals` | ✅ | ✅ (feature boundary) | ❌ (not cross-referenced) | ❌ | MEDIUM |
 | `session_id` / boundaries | ✅ | ✅ | ❌ | ❌ | HIGH |
 | `sequence_id` | ✅ | ✅ | ❌ | ❌ | MEDIUM |
@@ -1108,7 +1110,7 @@ User-Visible Value: █                               3%   (summary.json + disti
 - They query `content_summary` (200-char truncation) instead of full `prompts_all`
 - `execution_phase` is ignored by all analyzers — no breakdown of planning vs implementation vs debugging time
 - `intent_summary` could power the loop detector (detect repeated intents → stuck loop) but isn't used
-- `outcome` field (success/partial/failure/abandoned) is available but analyzers use hardcoded heuristic classifiers
+- `outcome` field (success/partial/failed/abandoned) is available but analyzers use hardcoded heuristic classifiers
 
 **Gap 3: No Cross-Analyzer Signal Integration**
 - Each analyzer runs independently, produces isolated JSON

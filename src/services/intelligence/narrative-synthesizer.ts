@@ -3,12 +3,19 @@
 // Reads correlation.json + individual analyzer outputs. Produces narratives.jsonl ring buffer (max 50).
 // Each entry: { id, ts, claim, severity, sources, confidence, sourceEventIds }
 
-import { existsSync, readFileSync, writeFileSync, renameSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
 import { createHash } from "node:crypto";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import type { CorrelationReport } from "./cross-analyzer.js";
-import { narrativeTemplates, type NarrativeSeverity } from "./narrative-templates.js";
+import { type NarrativeSeverity, narrativeTemplates } from "./narrative-templates.js";
 
 export interface NarrativeInsight {
   id: string;
@@ -34,9 +41,7 @@ export function synthesizeNarratives(repoRoot: string): NarrativeInsight[] {
     const intelligenceDir = join(repoRoot, ".unfade", "intelligence");
 
     // Load correlation report
-    const correlation = loadJsonFile<CorrelationReport>(
-      join(intelligenceDir, "correlation.json"),
-    );
+    const correlation = loadJsonFile<CorrelationReport>(join(intelligenceDir, "correlation.json"));
     if (!correlation?.correlations?.length) return [];
 
     // Load all analyzer outputs into a single data map
@@ -121,6 +126,7 @@ export function readNarratives(repoRoot: string): NarrativeInsight[] {
  * Append new narratives to the ring buffer, enforcing MAX_NARRATIVES limit.
  */
 function appendNarratives(intelligenceDir: string, insights: NarrativeInsight[]): void {
+  mkdirSync(intelligenceDir, { recursive: true });
   const filePath = join(intelligenceDir, NARRATIVE_FILE);
 
   // Read existing
@@ -132,7 +138,11 @@ function appendNarratives(intelligenceDir: string, insights: NarrativeInsight[])
         .split("\n")
         .filter(Boolean)
         .map((line) => {
-          try { return JSON.parse(line) as NarrativeInsight; } catch { return null; }
+          try {
+            return JSON.parse(line) as NarrativeInsight;
+          } catch {
+            return null;
+          }
         })
         .filter((n): n is NarrativeInsight => n !== null);
     } catch {
@@ -177,7 +187,7 @@ function loadJsonFile<T>(path: string): T | null {
 
 function loadAnalyzerData(intelligenceDir: string): Record<string, unknown> {
   const files: Record<string, string> = {
-    "efficiency": "efficiency.json",
+    efficiency: "efficiency.json",
     "cost-attribution": "costs.json",
     "comprehension-radar": "comprehension.json",
     "loop-detector": "rejections.idx.json",

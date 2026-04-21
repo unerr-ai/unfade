@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CorrelationReport } from "../../../src/services/intelligence/cross-analyzer.js";
-import { readNarratives, synthesizeNarratives } from "../../../src/services/intelligence/narrative-synthesizer.js";
+import {
+  readNarratives,
+  synthesizeNarratives,
+} from "../../../src/services/intelligence/narrative-synthesizer.js";
 
 const TEST_ROOT = join("/tmp", "narrative-test-" + process.pid);
 const INTEL_DIR = join(TEST_ROOT, ".unfade", "intelligence");
@@ -112,16 +115,18 @@ describe("narrative synthesizer", () => {
 
   it("enforces MAX_NARRATIVES=50 ring buffer limit", () => {
     // Pre-fill with 48 narratives
-    const existing = Array.from({ length: 48 }, (_, i) => JSON.stringify({
-      id: `old-${i}`,
-      ts: new Date(Date.now() - 86400 * 1000 * 2).toISOString(), // 2 days ago (outside 24h dedup)
-      claim: `Old claim ${i}`,
-      severity: "info",
-      sources: ["test"],
-      confidence: 0.5,
-      sourceEventIds: [],
-      correlationId: "test",
-    }));
+    const existing = Array.from({ length: 48 }, (_, i) =>
+      JSON.stringify({
+        id: `old-${i}`,
+        ts: new Date(Date.now() - 86400 * 1000 * 2).toISOString(), // 2 days ago (outside 24h dedup)
+        claim: `Old claim ${i}`,
+        severity: "info",
+        sources: ["test"],
+        confidence: 0.5,
+        sourceEventIds: [],
+        correlationId: "test",
+      }),
+    );
     writeFileSync(join(INTEL_DIR, "narratives.jsonl"), existing.join("\n") + "\n", "utf-8");
 
     const report: CorrelationReport = {

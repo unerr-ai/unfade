@@ -68,7 +68,10 @@ let tempDir: string;
 describe("State Determinism (11C.1)", () => {
   beforeEach(() => {
     vi.resetModules();
-    tempDir = join(tmpdir(), `unfade-state-det-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    tempDir = join(
+      tmpdir(),
+      `unfade-state-det-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
     mkdirSync(tempDir, { recursive: true });
   });
 
@@ -89,7 +92,10 @@ describe("State Determinism (11C.1)", () => {
 
     // Write 10 events to a JSONL file
     const events = Array.from({ length: 10 }, (_, i) =>
-      makeEvent({ id: `evt-${i}`, timestamp: `${TEST_DATE}T${String(10 + i).padStart(2, "0")}:00:00Z` }),
+      makeEvent({
+        id: `evt-${i}`,
+        timestamp: `${TEST_DATE}T${String(10 + i).padStart(2, "0")}:00:00Z`,
+      }),
     );
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
     writeFileSync(jsonlPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
@@ -123,7 +129,10 @@ describe("State Determinism (11C.1)", () => {
 
     // Write 10 events initially
     const events1 = Array.from({ length: 10 }, (_, i) =>
-      makeEvent({ id: `evt-${i}`, timestamp: `${TEST_DATE}T${String(10 + i).padStart(2, "0")}:00:00Z` }),
+      makeEvent({
+        id: `evt-${i}`,
+        timestamp: `${TEST_DATE}T${String(10 + i).padStart(2, "0")}:00:00Z`,
+      }),
     );
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
     writeFileSync(jsonlPath, events1.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
@@ -144,10 +153,17 @@ describe("State Determinism (11C.1)", () => {
 
     // Simulate recovery: append 3 more events
     const events2 = Array.from({ length: 3 }, (_, i) =>
-      makeEvent({ id: `evt-${i + 10}`, timestamp: `${TEST_DATE}T${String(20 + i).padStart(2, "0")}:00:00Z` }),
+      makeEvent({
+        id: `evt-${i + 10}`,
+        timestamp: `${TEST_DATE}T${String(20 + i).padStart(2, "0")}:00:00Z`,
+      }),
     );
     const existing = readFileSync(jsonlPath, "utf-8");
-    writeFileSync(jsonlPath, existing + events2.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(
+      jsonlPath,
+      existing + events2.map((e) => JSON.stringify(e)).join("\n") + "\n",
+      "utf-8",
+    );
 
     // Second tick: self-healing cursor detects mismatch, reprocesses from 0 (upserts are idempotent)
     const second = await materializeIncremental(cache, tempDir);
@@ -218,9 +234,7 @@ describe("State Determinism (11C.1)", () => {
     mkdirSync(stateDir, { recursive: true });
 
     // Write events
-    const events = Array.from({ length: 3 }, (_, i) =>
-      makeEvent({ id: `evt-${i}` }),
-    );
+    const events = Array.from({ length: 3 }, (_, i) => makeEvent({ id: `evt-${i}` }));
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
     writeFileSync(jsonlPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
     writeEpochFile(jsonlPath);
@@ -258,9 +272,7 @@ describe("State Determinism (11C.1)", () => {
     mkdirSync(stateDir, { recursive: true });
 
     // Write 2 small events initially
-    const smallEvents = Array.from({ length: 2 }, (_, i) =>
-      makeEvent({ id: `small-${i}` }),
-    );
+    const smallEvents = Array.from({ length: 2 }, (_, i) => makeEvent({ id: `small-${i}` }));
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
     writeFileSync(jsonlPath, smallEvents.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
     writeEpochFile(jsonlPath);
@@ -304,10 +316,18 @@ describe("State Determinism (11C.1)", () => {
 
     // Write events to two separate date files with distinct content
     const eventsA = Array.from({ length: 3 }, (_, i) =>
-      makeEvent({ id: `a-${i}`, timestamp: "2026-04-14T10:00:00Z", content: { summary: `File A event ${i}` } }),
+      makeEvent({
+        id: `a-${i}`,
+        timestamp: "2026-04-14T10:00:00Z",
+        content: { summary: `File A event ${i}` },
+      }),
     );
     const eventsB = Array.from({ length: 3 }, (_, i) =>
-      makeEvent({ id: `b-${i}`, timestamp: `${TEST_DATE}T10:00:00Z`, content: { summary: `File B event ${i}` } }),
+      makeEvent({
+        id: `b-${i}`,
+        timestamp: `${TEST_DATE}T10:00:00Z`,
+        content: { summary: `File B event ${i}` },
+      }),
     );
 
     const fileA = join(eventsDir, "2026-04-14.jsonl");
@@ -328,7 +348,11 @@ describe("State Determinism (11C.1)", () => {
 
     // Rewrite file A with different content and new epoch
     const eventsC = Array.from({ length: 4 }, (_, i) =>
-      makeEvent({ id: `c-${i}`, timestamp: "2026-04-14T11:00:00Z", content: { summary: `Rewritten event ${i}` } }),
+      makeEvent({
+        id: `c-${i}`,
+        timestamp: "2026-04-14T11:00:00Z",
+        content: { summary: `Rewritten event ${i}` },
+      }),
     );
     writeFileSync(fileA, eventsC.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
     writeEpochFile(fileA); // New epoch — different from original

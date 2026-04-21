@@ -13,8 +13,8 @@ export interface StreamCursor {
   file: string;
   byteOffset: number;
   lastLineHash: string;
-  epoch?: string;      // SHA-256 of first 64 bytes — must match .epoch file
-  fileSize?: number;   // Total file size at cursor save time
+  epoch?: string; // SHA-256 of first 64 bytes — must match .epoch file
+  fileSize?: number; // Total file size at cursor save time
 }
 
 export interface MaterializerCursor {
@@ -85,7 +85,8 @@ export function isCursorValid(cursor: StreamCursor, filePath: string): boolean {
     }
 
     const content = readFileSync(filePath, "utf-8");
-    if (content.length < cursor.byteOffset) return false;
+    const contentBytes = Buffer.byteLength(content, "utf-8");
+    if (contentBytes < cursor.byteOffset) return false;
 
     const precedingContent = content.slice(0, cursor.byteOffset);
     const lines = precedingContent.split("\n");

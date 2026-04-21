@@ -173,6 +173,38 @@ program
     await savingsCommand({ json: program.opts().json ?? false });
   });
 
+// --- Daemon management (power user) ---
+
+const daemonCmd = program.command("daemon").description("Manage the capture engine");
+daemonCmd
+  .command("status")
+  .description("Show daemon status")
+  .action(async () => {
+    const { daemonStatusCommand } = await import("../commands/daemon.js");
+    await daemonStatusCommand();
+  });
+daemonCmd
+  .command("stop")
+  .description("Stop the capture engine")
+  .action(async () => {
+    const { daemonStopCommand } = await import("../commands/daemon.js");
+    await daemonStopCommand();
+  });
+daemonCmd
+  .command("restart")
+  .description("Restart the capture engine")
+  .action(async () => {
+    const { daemonRestartCommand } = await import("../commands/daemon.js");
+    await daemonRestartCommand();
+  });
+daemonCmd
+  .command("update")
+  .description("Update capture engine binary")
+  .action(async () => {
+    const { daemonUpdateCommand } = await import("../commands/daemon.js");
+    await daemonUpdateCommand();
+  });
+
 // --- MCP (hidden — IDE integration only) ---
 
 program

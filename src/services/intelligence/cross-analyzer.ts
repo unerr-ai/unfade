@@ -3,7 +3,7 @@
 // Computes pairwise correlations between analyzer outputs. Requires Pearson r > 0.6 AND
 // temporal ordering to assert causality. Confidence decays 0.7× per week after 14 days.
 
-import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import type { AnalyzerContext } from "./analyzers/index.js";
@@ -67,6 +67,7 @@ export function computeCorrelations(ctx: AnalyzerContext): CorrelationReport {
  */
 export function writeCorrelations(report: CorrelationReport, repoRoot: string): void {
   const dir = join(repoRoot, ".unfade", "intelligence");
+  mkdirSync(dir, { recursive: true });
   const target = join(dir, "correlation.json");
   const tmp = join(dir, `correlation.json.tmp.${process.pid}`);
   try {
@@ -108,7 +109,7 @@ function mergeWithDecay(
       decayed.push(c);
     } else {
       const weeksOverThreshold = (ageDays - DECAY_START_DAYS) / 7;
-      const newConfidence = c.confidence * Math.pow(DECAY_FACTOR_PER_WEEK, weeksOverThreshold);
+      const newConfidence = c.confidence * DECAY_FACTOR_PER_WEEK ** weeksOverThreshold;
       if (newConfidence >= MIN_CONFIDENCE) {
         decayed.push({ ...c, confidence: Math.round(newConfidence * 100) / 100 });
       }
@@ -247,10 +248,7 @@ function correlateComprehensionAndVelocity(
 /**
  * cost ↔ outcomes: Does spending more produce better outcomes?
  */
-function correlateCostAndOutcomes(
-  db: AnalyzerContext["db"],
-  now: string,
-): CorrelationPair | null {
+function correlateCostAndOutcomes(db: AnalyzerContext["db"], now: string): CorrelationPair | null {
   try {
     const result = db.exec(`
       SELECT
