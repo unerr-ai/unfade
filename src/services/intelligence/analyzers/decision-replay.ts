@@ -48,14 +48,33 @@ export const decisionReplayAnalyzer: Analyzer = {
       updatedAt: now,
     };
 
+    const sourceEventIds = collectSourceEventIds(db);
+
     return {
       analyzer: "decision-replay",
       updatedAt: now,
       data: replaysFile as unknown as Record<string, unknown>,
       insightCount: newReplays.length,
+      sourceEventIds,
     };
   },
 };
+
+function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
+  try {
+    const result = db.exec(`
+      SELECT id FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND ts >= datetime('now', '-7 days')
+      ORDER BY ts DESC
+      LIMIT 20
+    `);
+    if (!result[0]?.values.length) return [];
+    return result[0].values.map((row) => row[0] as string);
+  } catch {
+    return [];
+  }
+}
 
 function detectDomainDrift(db: AnalyzerContext["db"], existing: ReplaysFile): DecisionReplay[] {
   const replays: DecisionReplay[] = [];

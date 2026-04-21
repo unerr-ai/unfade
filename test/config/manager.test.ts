@@ -31,7 +31,7 @@ describe("loadConfig", () => {
     expect(config.capture.sources.git).toBe(true);
     expect(config.capture.sources.aiSession).toBe(true);
     expect(config.capture.sources.terminal).toBe(false);
-    expect(config.distill.provider).toBe("ollama");
+    expect(config.distill.provider).toBe("none");
     expect(config.distill.model).toBe("llama3.2");
     expect(config.mcp.enabled).toBe(true);
     expect(config.mcp.httpPort).toBe(7654);

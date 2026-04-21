@@ -3,7 +3,7 @@
 // Incremental mode tail-reads JSONL past cursor byte_offset. Rebuild mode does full DELETE+replay.
 // Both modes produce identical DB state — rebuild is the repair path.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getEventsDir, getGraphDir, getMetricsDir } from "../../utils/paths.js";
@@ -12,6 +12,7 @@ import {
   isCursorValid,
   loadCursor,
   type MaterializerCursor,
+  readEpochFile,
   saveCursor,
 } from "./cursor.js";
 import type { CacheManager } from "./manager.js";
@@ -85,6 +86,13 @@ function materializeEventsIncremental(
   const eventsDir = getEventsDir(cwd);
   if (!existsSync(eventsDir)) return 0;
 
+  // Check for ingest lock — defer materialization while Go daemon is writing
+  const lockPath = join(eventsDir, ".ingest.lock");
+  if (existsSync(lockPath)) {
+    logger.debug("Ingest lock present — deferring materialization");
+    return 0;
+  }
+
   const files = readdirSync(eventsDir)
     .filter((f) => f.endsWith(".jsonl"))
     .sort();
@@ -96,12 +104,25 @@ function materializeEventsIncremental(
     const streamKey = `events/${file}`;
     const streamCursor = cursor.streams[streamKey];
 
+    let startOffset = streamCursor?.byteOffset ?? 0;
+
+    // Per-file rebuild: if cursor is invalid, reset this file only
     if (streamCursor && !isCursorValid(streamCursor, filePath)) {
-      logger.debug("Cursor invalid for file, rebuilding", { file });
-      return -1;
+      logger.info("Cursor invalid for file, rebuilding file-only", { file });
+      delete cursor.streams[streamKey];
+      startOffset = 0;
     }
 
-    const startOffset = streamCursor?.byteOffset ?? 0;
+    // 11A.5: Staleness detection — if cursor is far behind current file size, warn and reprocess
+    if (streamCursor && startOffset > 0) {
+      const currentSize = statSync(filePath).size;
+      if (streamCursor.fileSize && streamCursor.fileSize > 0 && currentSize > streamCursor.fileSize * 2) {
+        logger.info("Cursor stale — file grew significantly since last tick, reprocessing", { file, cursorSize: streamCursor.fileSize, currentSize });
+        delete cursor.streams[streamKey];
+        startOffset = 0;
+      }
+    }
+
     const content = readFileSync(filePath, "utf-8");
 
     if (content.length <= startOffset) continue;
@@ -135,6 +156,8 @@ function materializeEventsIncremental(
       file: filePath,
       byteOffset: bytesProcessed,
       lastLineHash: lastValidLine ? hashLine(lastValidLine) : (streamCursor?.lastLineHash ?? ""),
+      epoch: readEpochFile(filePath) ?? undefined,
+      fileSize: statSync(filePath).size,
     };
   }
 
@@ -142,7 +165,7 @@ function materializeEventsIncremental(
     refreshFts(db);
   }
 
-  return totalNew < 0 ? 0 : totalNew;
+  return totalNew;
 }
 
 function materializeDecisionsIncremental(
@@ -421,6 +444,8 @@ function buildCursorFromCurrentState(cursor: MaterializerCursor, cwd?: string): 
         file: filePath,
         byteOffset: Buffer.byteLength(content, "utf-8"),
         lastLineHash: lastNonEmpty ? hashLine(lastNonEmpty) : "",
+        epoch: readEpochFile(filePath) ?? undefined,
+        fileSize: statSync(filePath).size,
       };
     }
   }
@@ -440,6 +465,8 @@ function buildCursorFromCurrentState(cursor: MaterializerCursor, cwd?: string): 
       file: decisionsPath,
       byteOffset: Buffer.byteLength(content, "utf-8"),
       lastLineHash: lastNonEmpty ? hashLine(lastNonEmpty) : "",
+      epoch: readEpochFile(decisionsPath) ?? undefined,
+      fileSize: statSync(decisionsPath).size,
     };
   }
 
@@ -458,6 +485,8 @@ function buildCursorFromCurrentState(cursor: MaterializerCursor, cwd?: string): 
       file: metricsPath,
       byteOffset: Buffer.byteLength(content, "utf-8"),
       lastLineHash: lastNonEmpty ? hashLine(lastNonEmpty) : "",
+      epoch: readEpochFile(metricsPath) ?? undefined,
+      fileSize: statSync(metricsPath).size,
     };
   }
 }

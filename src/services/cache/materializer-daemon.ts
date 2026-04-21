@@ -1,9 +1,14 @@
 // FILE: src/services/cache/materializer-daemon.ts
-// UF-211: Background materializer that runs on a debounced timer.
+// UF-211: Background materializer with chokidar file watching + heartbeat fallback.
 // On each tick: incremental materialization → summary.json update.
 // Runs inside the standalone server process so it survives CLI exit.
 
+import { watch, type FSWatcher } from "chokidar";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { logBuffer } from "../logs/ring-buffer.js";
 import { logger } from "../../utils/logger.js";
+import { getEventsDir, getStateDir } from "../../utils/paths.js";
 import { CacheManager } from "./manager.js";
 import { materializeIncremental, rebuildAll } from "./materializer.js";
 
@@ -13,12 +18,17 @@ export interface MaterializerDaemonConfig {
   onTick?: (newRows: number) => void | Promise<void>;
 }
 
+const HEARTBEAT_INTERVAL_MS = 30_000; // 30s fallback heartbeat
+const DEBOUNCE_MS = 100; // 100ms debounce for rapid writes
+
 /**
- * Background materializer that periodically tail-reads JSONL and upserts into SQLite.
- * Uses setInterval for testability (compatible with fake timers).
+ * Background materializer that watches .unfade/events/ for changes via chokidar.
+ * Falls back to a 30s heartbeat interval for missed watcher events.
  */
 export class MaterializerDaemon {
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private watcher: FSWatcher | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private busy = false;
   private cache: CacheManager;
@@ -32,26 +42,47 @@ export class MaterializerDaemon {
   }
 
   /**
-   * Start the background materializer loop.
-   * Performs an initial rebuild if the DB is empty, then switches to incremental.
+   * Start the background materializer.
+   * Sets up chokidar watcher on events dir + heartbeat fallback.
    */
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
 
+    await this.writeResumeState();
     await this.initialBuild();
 
-    this.timer = setInterval(() => {
-      void this.tick();
-    }, this.config.intervalMs);
+    // Set up file watcher on events directory
+    const eventsDir = getEventsDir(this.config.cwd);
+    if (existsSync(eventsDir)) {
+      this.watcher = watch(eventsDir, {
+        ignoreInitial: true,
+        awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 20 },
+      });
 
-    logger.debug("MaterializerDaemon started", { intervalMs: this.config.intervalMs });
+      this.watcher.on("change", () => this.debouncedTick());
+      this.watcher.on("add", () => this.debouncedTick());
+    }
+
+    // Heartbeat fallback for missed events + health/freshness
+    this.heartbeatTimer = setInterval(() => {
+      void this.tick();
+    }, HEARTBEAT_INTERVAL_MS);
+
+    logger.debug("MaterializerDaemon started", {
+      intervalMs: this.config.intervalMs,
+      mode: this.watcher ? "chokidar+heartbeat" : "heartbeat-only",
+    });
   }
 
   stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
     }
     this.running = false;
     logger.debug("MaterializerDaemon stopped");
@@ -71,11 +102,15 @@ export class MaterializerDaemon {
   }
 
   /**
-   * Graceful close: final tick → save cursor → close DB.
-   * Call this on server shutdown to persist resume state.
+   * Graceful close: stop watcher → final tick → save cursor → close DB.
    */
   async close(): Promise<void> {
     this.stop();
+
+    if (this.watcher) {
+      await this.watcher.close();
+      this.watcher = null;
+    }
 
     try {
       await this.tick();
@@ -113,6 +148,43 @@ export class MaterializerDaemon {
     }
   }
 
+  private debouncedTick(): void {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    this.debounceTimer = setTimeout(() => {
+      void this.tick();
+    }, DEBOUNCE_MS);
+  }
+
+  private async writeResumeState(): Promise<void> {
+    try {
+      const { loadCursor } = await import("./cursor.js");
+      const cursor = loadCursor(this.config.cwd);
+      let totalBytes = 0;
+      const streamCount = Object.keys(cursor.streams).length;
+      for (const stream of Object.values(cursor.streams)) {
+        totalBytes += stream.byteOffset;
+      }
+
+      if (totalBytes > 0) {
+        const stateDir = getStateDir(this.config.cwd);
+        mkdirSync(stateDir, { recursive: true });
+        const resumeData = {
+          resumedAt: new Date().toISOString(),
+          fromBytes: totalBytes,
+          estimatedEvents: Math.floor(totalBytes / 200),
+          streamCount,
+        };
+        const targetPath = join(stateDir, "resume.json");
+        const tmpPath = join(stateDir, `resume.json.tmp.${process.pid}`);
+        writeFileSync(tmpPath, JSON.stringify(resumeData, null, 2), "utf-8");
+        renameSync(tmpPath, targetPath);
+        logger.debug("Materializer resuming from checkpoint", resumeData);
+      }
+    } catch {
+      // non-fatal — resume state is informational only
+    }
+  }
+
   private async initialBuild(): Promise<void> {
     if (this.initialBuildDone) return;
 
@@ -144,15 +216,18 @@ export class MaterializerDaemon {
       const newRows = await materializeIncremental(this.cache, this.config.cwd);
       this.lastTickMs = Date.now();
 
-      if (newRows > 0 && this.config.onTick) {
-        await this.config.onTick(newRows);
+      if (newRows > 0) {
+        logBuffer.append("materializer", "debug", `Materialized ${newRows} new rows`);
+        if (this.config.onTick) {
+          await this.config.onTick(newRows);
+        }
       }
 
       return newRows;
     } catch (err) {
-      logger.debug("Materializer tick failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.debug("Materializer tick failed", { error: msg });
+      logBuffer.append("materializer", "error", `Tick failed: ${msg}`);
       return 0;
     } finally {
       this.busy = false;

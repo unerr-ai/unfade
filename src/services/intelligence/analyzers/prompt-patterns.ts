@@ -36,6 +36,7 @@ export const promptPatternsAnalyzer: Analyzer = {
         updatedAt: now,
         data: { effectivePatterns: [], antiPatterns: [], updatedAt: now, totalPromptsAnalyzed: 0 },
         insightCount: 0,
+        sourceEventIds: [],
       };
     }
 
@@ -49,26 +50,47 @@ export const promptPatternsAnalyzer: Analyzer = {
       totalPromptsAnalyzed: features.length,
     };
 
+    const sourceEventIds = collectSourceEventIds(db);
+
     return {
       analyzer: "prompt-patterns",
       updatedAt: now,
       data: patterns as unknown as Record<string, unknown>,
       insightCount: effectivePatterns.length + antiPatterns.length,
+      sourceEventIds,
     };
   },
 };
 
-function extractPromptFeatures(db: AnalyzerContext["db"]): PromptFeatures[] {
+function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
   try {
     const result = db.exec(`
+      SELECT id FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND (json_extract(metadata, '$.prompt_full') IS NOT NULL OR content_summary IS NOT NULL)
+      ORDER BY ts DESC
+      LIMIT 20
+    `);
+    if (!result[0]?.values.length) return [];
+    return result[0].values.map((row) => row[0] as string);
+  } catch {
+    return [];
+  }
+}
+
+function extractPromptFeatures(db: AnalyzerContext["db"]): PromptFeatures[] {
+  try {
+    // Read full prompt text from metadata.prompt_full when available,
+    // falling back to content_summary + content_detail for older events.
+    const result = db.exec(`
       SELECT
-        content_summary,
-        content_detail,
+        COALESCE(json_extract(metadata, '$.prompt_full'), content_summary) as prompt_text,
+        COALESCE(json_extract(metadata, '$.prompts_all'), content_detail) as prompts_context,
         json_extract(metadata, '$.direction_signals.human_direction_score') as hds,
         json_extract(metadata, '$.direction_signals.prompt_specificity') as spec
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND content_summary IS NOT NULL
+        AND (json_extract(metadata, '$.prompt_full') IS NOT NULL OR content_summary IS NOT NULL)
       ORDER BY ts DESC
       LIMIT 500
     `);
@@ -76,9 +98,9 @@ function extractPromptFeatures(db: AnalyzerContext["db"]): PromptFeatures[] {
     if (!result[0]?.values.length) return [];
 
     return result[0].values.map((row) => {
-      const summary = (row[0] as string) ?? "";
-      const detail = (row[1] as string) ?? "";
-      const text = `${summary} ${detail}`;
+      const promptText = (row[0] as string) ?? "";
+      const promptsContext = (row[1] as string) ?? "";
+      const text = `${promptText} ${promptsContext}`;
       const hds = (row[2] as number) ?? 0.5;
 
       const len = text.length;

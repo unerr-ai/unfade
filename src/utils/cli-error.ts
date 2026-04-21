@@ -24,7 +24,7 @@ const ERROR_HINTS: ErrorHint[] = [
   {
     match: (err) => /\.unfade/.test(err.message) && /ENOENT/.test(err.message),
     message: "No .unfade/ directory found.",
-    suggestion: 'Run "unfade init" to set up your project.',
+    suggestion: 'Run "unfade" to set up your project.',
   },
   {
     match: (err) => /not a git repository/i.test(err.message) || /ENOENT.*\.git/.test(err.message),

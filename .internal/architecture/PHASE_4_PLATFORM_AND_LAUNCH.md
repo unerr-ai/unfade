@@ -44,7 +44,7 @@ Phase 4 consolidates everything built in Phases 0--3 into a production-ready pla
 
 2. **Continuous intelligence.** Transform Unfade from a batch-oriented logger (distill when you remember) into a continuous intelligence layer where direction ratio, comprehension score, and reasoning velocity update while you work.
 
-3. **Ecosystem distribution.** The Thinking Graph transforms `.unfade/` data into a shareable visual identity. ClawHub skill and MCP Registry entry make Unfade discoverable. npm package enables `npx unfade init`.
+3. **Ecosystem distribution.** The Thinking Graph transforms `.unfade/` data into a shareable visual identity. ClawHub skill and MCP Registry entry make Unfade discoverable. npm package enables `npx unfade`.
 
 ---
 
@@ -186,7 +186,6 @@ One `unfade` process manages N Go daemon children -- one per registered repo. Ea
 | Command | Behavior | Lifetime |
 |---|---|---|
 | `unfade` | Start server for all registered repos: init cwd if needed, spawn daemon per repo, materializer per repo, HTTP, SSE, scheduler | Long-running (Ctrl+C to stop) |
-| `unfade init` | Register current repo + run setup wizard (scaffold, binary, hooks, LLM config). No server start | Interactive, then exit |
 | `unfade add <path>` | Register an additional repo in the registry | Instant |
 | `unfade status` | Read state files, print summary, exit | Instant |
 | `unfade distill` | Run one-shot distill for cwd repo, exit | Seconds |
@@ -257,7 +256,7 @@ Every restart of `unfade` picks up exactly where the last session left off. No r
 
 ### 4.6 Multi-Repo Management
 
-The server watches all registered repos, not just the repo where `unfade` was launched. On first run, the current repo is registered automatically. Additional repos are registered via `unfade init` or `unfade add <path>`.
+The server watches all registered repos, not just the repo where `unfade` was launched. On first run, the current repo is registered automatically. Additional repos are registered via `unfade add <path>`.
 
 **Hot-add:** When a new repo is registered while the server is running, the server detects the registry change within 60 seconds and adds a daemon child + materializer -- no restart required.
 
@@ -366,7 +365,7 @@ Implementation: `src/services/site/site-generator.ts`, `src/services/site/heatma
 
 **After (4 steps):** Scaffold `.unfade/`, ensure binary, install shell hooks, LLM config wizard. Then: "Run `unfade` to start capturing and analyzing."
 
-No daemon spawn. No autostart. No backfill IPC. The server handles all of that when it starts. LLM configuration preserved intact -- both interactive wizard during `unfade init` and web UI settings page at localhost:7654/settings. Each repo can have its own LLM configuration in multi-repo mode.
+No daemon spawn. No autostart. No backfill IPC. The server handles all of that when it starts. LLM configuration preserved intact -- web UI settings page at localhost:7654/settings. Each repo can have its own LLM configuration in multi-repo mode.
 
 ### 4.13 Enterprise Boundary
 
@@ -394,7 +393,7 @@ The open-source limitation is not a missing feature -- it is operator convenienc
 
 ## 5. Design Principles
 
-1. **A stranger gets value in 5 minutes.** `npx unfade init`, then `unfade`. First insight appears from historical data already on their machine.
+1. **A stranger gets value in 5 minutes.** `npx unfade`. First insight appears from historical data already on their machine.
 
 2. **One command, everything works.** `unfade` starts the server, daemons, materializers, scheduler, dashboard, and MCP. Ctrl+C stops cleanly.
 

@@ -1,8 +1,8 @@
 // FILE: src/utils/logger.ts
-// Structured logger that writes EXCLUSIVELY to stderr.
+// Structured logger backed by Pino that writes EXCLUSIVELY to stderr.
 // stdout is sacred — reserved for MCP JSON-RPC only.
 
-import chalk from "chalk";
+import pino from "pino";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -11,67 +11,73 @@ interface LoggerConfig {
   quiet: boolean;
 }
 
-const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
-  debug: 0,
-  info: 1,
-  warn: 2,
-  error: 3,
-};
+function resolveLevel(config: LoggerConfig): string {
+  if (config.verbose) return "debug";
+  if (config.quiet) return "warn";
+  return "info";
+}
 
-const LOG_LEVEL_LABELS: Record<LogLevel, string> = {
-  debug: chalk.gray("DBG"),
-  info: chalk.cyan("INF"),
-  warn: chalk.yellow("WRN"),
-  error: chalk.red("ERR"),
-};
+function createPinoInstance(level: string): pino.Logger {
+  // Always write to stderr (fd 2) synchronously for predictable output.
+  // pino-pretty is used via transport only if PINO_PRETTY=1 env is set.
+  return pino(
+    { level },
+    pino.destination({ dest: 2, sync: true }),
+  );
+}
 
 class Logger {
   private config: LoggerConfig = { verbose: false, quiet: false };
+  private pino: pino.Logger;
+
+  constructor() {
+    this.pino = createPinoInstance(resolveLevel(this.config));
+  }
 
   configure(config: Partial<LoggerConfig>): void {
     this.config = { ...this.config, ...config };
+    this.pino = createPinoInstance(resolveLevel(this.config));
   }
 
-  private get minLevel(): LogLevel {
-    if (this.config.verbose) return "debug";
-    if (this.config.quiet) return "warn";
-    return "info";
-  }
-
-  private shouldLog(level: LogLevel): boolean {
-    return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[this.minLevel];
-  }
-
-  private write(level: LogLevel, message: string, data?: Record<string, unknown>): void {
-    if (!this.shouldLog(level)) return;
-
-    const timestamp = new Date().toISOString().slice(11, 23);
-    const label = LOG_LEVEL_LABELS[level];
-    const prefix = chalk.dim(timestamp);
-
-    let line = `${prefix} ${label} ${message}`;
-    if (data) {
-      line += ` ${chalk.dim(JSON.stringify(data))}`;
-    }
-
-    // CRITICAL: Always stderr. Never stdout. Never console.log.
-    process.stderr.write(`${line}\n`);
+  /**
+   * Create a child logger with bound context fields.
+   */
+  child(bindings: Record<string, unknown>): Logger {
+    const childLogger = Object.create(this) as Logger;
+    childLogger.pino = this.pino.child(bindings);
+    return childLogger;
   }
 
   debug(message: string, data?: Record<string, unknown>): void {
-    this.write("debug", message, data);
+    if (data) {
+      this.pino.debug(data, message);
+    } else {
+      this.pino.debug(message);
+    }
   }
 
   info(message: string, data?: Record<string, unknown>): void {
-    this.write("info", message, data);
+    if (data) {
+      this.pino.info(data, message);
+    } else {
+      this.pino.info(message);
+    }
   }
 
   warn(message: string, data?: Record<string, unknown>): void {
-    this.write("warn", message, data);
+    if (data) {
+      this.pino.warn(data, message);
+    } else {
+      this.pino.warn(message);
+    }
   }
 
   error(message: string, data?: Record<string, unknown>): void {
-    this.write("error", message, data);
+    if (data) {
+      this.pino.error(data, message);
+    } else {
+      this.pino.error(message);
+    }
   }
 }
 

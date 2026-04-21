@@ -1,6 +1,9 @@
 package capture
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -17,14 +20,15 @@ const (
 // emits CaptureEvents through the shared event channel. Rate-limited to
 // prevent I/O spikes. Progress is tracked via IngestStateManager.
 type HistoricalIngestor struct {
-	parsers []parsers.AIToolParser
-	eventCh chan<- CaptureEvent
-	state   *IngestStateManager
-	logger  CaptureSourceLogger
-	done    chan struct{}
-	wg      sync.WaitGroup
-	mu      sync.Mutex
-	running bool
+	parsers   []parsers.AIToolParser
+	eventCh   chan<- CaptureEvent
+	state     *IngestStateManager
+	logger    CaptureSourceLogger
+	eventsDir string // For ingest lock file management
+	done      chan struct{}
+	wg        sync.WaitGroup
+	mu        sync.Mutex
+	running   bool
 }
 
 // NewHistoricalIngestor creates an ingestor wired to the given event channel
@@ -34,13 +38,15 @@ func NewHistoricalIngestor(
 	eventCh chan<- CaptureEvent,
 	stateManager *IngestStateManager,
 	logger CaptureSourceLogger,
+	eventsDir string,
 ) *HistoricalIngestor {
 	return &HistoricalIngestor{
-		parsers: ps,
-		eventCh: eventCh,
-		state:   stateManager,
-		logger:  logger,
-		done:    make(chan struct{}),
+		parsers:   ps,
+		eventCh:   eventCh,
+		state:     stateManager,
+		logger:    logger,
+		eventsDir: eventsDir,
+		done:      make(chan struct{}),
 	}
 }
 
@@ -79,6 +85,10 @@ func (h *HistoricalIngestor) ingest(since time.Time) {
 		h.running = false
 		h.mu.Unlock()
 	}()
+
+	// Write ingest lock — tells the materializer to defer processing
+	lockPath := h.writeIngestLock()
+	defer h.removeIngestLock(lockPath)
 
 	until := time.Now().UTC()
 	h.state.MarkRunning(since, until)
@@ -178,5 +188,33 @@ func (h *HistoricalIngestor) cancelled() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// writeIngestLock creates .ingest.lock in the events directory.
+// The materializer checks for this file and defers processing while it exists.
+func (h *HistoricalIngestor) writeIngestLock() string {
+	if h.eventsDir == "" {
+		return ""
+	}
+	lockPath := filepath.Join(h.eventsDir, ".ingest.lock")
+	content := fmt.Sprintf("%d\n", os.Getpid())
+	if err := os.WriteFile(lockPath, []byte(content), 0644); err != nil {
+		h.logger.Warn("failed to write ingest lock", map[string]any{"error": err.Error()})
+		return ""
+	}
+	h.logger.Debug("ingest lock acquired", map[string]any{"path": lockPath})
+	return lockPath
+}
+
+// removeIngestLock removes the .ingest.lock file after ingest completes.
+func (h *HistoricalIngestor) removeIngestLock(lockPath string) {
+	if lockPath == "" {
+		return
+	}
+	if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+		h.logger.Warn("failed to remove ingest lock", map[string]any{"error": err.Error()})
+	} else {
+		h.logger.Debug("ingest lock released", map[string]any{"path": lockPath})
 	}
 }

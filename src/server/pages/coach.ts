@@ -33,6 +33,13 @@ coachPage.get("/coach", (c) => {
         <div id="anti-list" class="space-y-3"></div>
       </div>
 
+      <!-- 11E.9: Narrative Insights -->
+      <div class="mb-8 hidden" id="narrative-section">
+        <h2 class="font-heading text-lg font-semibold mb-4 text-cyan">Contextual Insights</h2>
+        <p class="text-xs text-muted mb-3">Cross-analyzer intelligence — causal patterns detected across your workflow.</p>
+        <div id="narrative-list" class="space-y-3"></div>
+      </div>
+
       <p class="text-xs text-muted text-center" id="coach-total"></p>
     </div>
 
@@ -87,6 +94,22 @@ coachPage.get("/coach", (c) => {
             '<p class="text-xs text-muted mt-2 italic">'+p.suggestion+'</p>'+
           '</div>';
         }).join('')||'<p class="text-muted text-sm">No anti-patterns detected.</p>';
+
+        // 11E.9: Render narrative insights
+        if(data.narrativeInsights&&data.narrativeInsights.length>0){
+          document.getElementById('narrative-section').classList.remove('hidden');
+          var narEl=document.getElementById('narrative-list');
+          narEl.innerHTML=data.narrativeInsights.map(function(n){
+            var borderColor=n.severity==='critical'?'border-error':n.severity==='warning'?'border-warning':'border-accent';
+            var badge=n.severity==='critical'?'bg-error/15 text-error':n.severity==='warning'?'bg-warning/15 text-warning':'bg-accent/15 text-accent';
+            return'<div class="bg-surface border-l-4 '+borderColor+' rounded-lg p-4">'+
+              '<span class="inline-block px-2 py-0.5 rounded text-[10px] font-medium '+badge+' mr-2">'+n.severity+'</span>'+
+              '<span class="inline-block px-2 py-0.5 rounded text-[10px] font-medium bg-raised text-muted">'+n.sources.join(' × ')+'</span>'+
+              '<p class="text-sm text-foreground mt-2">'+n.claim+'</p>'+
+              '<p class="text-xs text-muted mt-1">Confidence: '+Math.round(n.confidence*100)+'%</p>'+
+            '</div>';
+          }).join('');
+        }
 
         document.getElementById('coach-total').textContent='Based on '+(data.totalPromptsAnalyzed||0)+' analyzed prompts';
       }).catch(function(){loading.classList.add('hidden');empty.classList.remove('hidden');});

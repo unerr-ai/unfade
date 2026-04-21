@@ -31,6 +31,7 @@ func TestHistoricalIngestorProcessesTurns(t *testing.T) {
 		ch,
 		stateMgr,
 		&testLogger{},
+		t.TempDir(),
 	)
 
 	since := time.Now().Add(-7 * 24 * time.Hour)
@@ -111,6 +112,7 @@ func TestHistoricalIngestorTracksProgress(t *testing.T) {
 		ch,
 		stateMgr,
 		&testLogger{},
+		t.TempDir(),
 	)
 
 	ingestor.Run(time.Now().Add(-24 * time.Hour))
@@ -173,6 +175,7 @@ func TestHistoricalIngestorSkipsAlreadyProcessed(t *testing.T) {
 		ch,
 		stateMgr,
 		&testLogger{},
+		t.TempDir(),
 	)
 
 	ingestor.Run(time.Now().Add(-24 * time.Hour))
@@ -237,6 +240,7 @@ func TestHistoricalIngestorCancellation(t *testing.T) {
 		ch,
 		stateMgr,
 		&testLogger{},
+		t.TempDir(),
 	)
 
 	ingestor.Run(time.Now().Add(-24 * time.Hour))
@@ -262,6 +266,7 @@ func TestHistoricalIngestorDoubleRun(t *testing.T) {
 		ch,
 		stateMgr,
 		&testLogger{},
+		t.TempDir(),
 	)
 
 	ingestor.Run(time.Now().Add(-24 * time.Hour))

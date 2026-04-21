@@ -3,7 +3,7 @@
 // Reads registry, delegates to RepoManager for daemon + materializer per repo,
 // starts HTTP server, polls registry for hot-adds.
 
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   printInitStep,
@@ -78,6 +78,12 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
 
   // Expose repo manager on global for health endpoint
   (globalThis as Record<string, unknown>).__unfade_repo_manager = repoManager;
+
+  // Expose primary repo's materializer for SSE health ticks (Fix 2)
+  const primaryManaged = repoManager.get(registry.repos[0]?.id ?? "");
+  if (primaryManaged) {
+    (globalThis as Record<string, unknown>).__unfade_materializer = primaryManaged.materializer;
+  }
 
   printServerReady(server.info.port, repoManager.size);
 
@@ -155,6 +161,30 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
 
 async function triggerIngestWhenReady(repoRoot: string): Promise<void> {
   try {
+    // Fix 5: Check ingest state — skip if already completed or running
+    const ingestPath = join(repoRoot, ".unfade", "state", "ingest.json");
+    if (existsSync(ingestPath)) {
+      const ingest = JSON.parse(readFileSync(ingestPath, "utf-8"));
+      if (ingest.status === "completed") {
+        logger.debug("Ingest already completed, skipping", { repoRoot });
+        return;
+      }
+      if (ingest.status === "running") {
+        // Crash recovery: if running for > 1 hour, mark as failed
+        const startedAt = Date.parse(ingest.startedAt ?? "");
+        if (startedAt > 0 && Date.now() - startedAt > 3600_000) {
+          logger.warn("Stale ingest detected (>1h), marking as failed for re-trigger", { repoRoot });
+          const recovered = { ...ingest, status: "failed", failedAt: new Date().toISOString(), reason: "Timeout — process likely crashed" };
+          const tmpPath = `${ingestPath}.tmp.${process.pid}`;
+          writeFileSync(tmpPath, JSON.stringify(recovered, null, 2), "utf-8");
+          renameSync(tmpPath, ingestPath);
+        } else {
+          logger.debug("Ingest still running, skipping re-trigger", { repoRoot });
+          return;
+        }
+      }
+    }
+
     const ready = await waitForDaemonIPCReady(repoRoot, 10_000);
     if (ready) {
       await sendIPCCommand({ cmd: "ingest", args: { days: 7 } }, repoRoot, 5000);

@@ -4,6 +4,13 @@
 
 import { z } from "zod";
 
+export const ProvenanceSchema = z.object({
+  sourceEventIds: z.array(z.string()).default([]),
+  lineageUrl: z.string().optional(),
+});
+
+export type Provenance = z.infer<typeof ProvenanceSchema>;
+
 export const ToolResponseSchema = z.object({
   data: z.unknown(),
   _meta: z.object({
@@ -12,6 +19,7 @@ export const ToolResponseSchema = z.object({
     degraded: z.boolean().default(false),
     degradedReason: z.string().optional(),
     personalizationLevel: z.enum(["none", "seed", "basic", "deep"]).default("none"),
+    provenance: ProvenanceSchema.optional(),
   }),
 });
 

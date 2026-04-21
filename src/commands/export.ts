@@ -73,7 +73,7 @@ async function standardExport(opts: { output?: string; json?: boolean }): Promis
 
   if (!existsSync(dataDir)) {
     process.stderr.write(
-      `${theme.error("Error:")} No ${theme.bold(".unfade/")} directory found. Run ${theme.bold("unfade init")} first.\n`,
+      `${theme.error("Error:")} No ${theme.bold(".unfade/")} directory found. Run ${theme.bold("unfade")} first.\n`,
     );
     process.exitCode = 1;
     return;

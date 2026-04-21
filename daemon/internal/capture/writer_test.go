@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -194,34 +195,92 @@ func TestFormatFilesChanged(t *testing.T) {
 	}
 }
 
-func TestTruncateIfNeeded(t *testing.T) {
-	// Small event should pass through.
-	small := CaptureEvent{
-		ID:        "test",
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Source:    "git",
-		Type:      "commit",
-		Content:   EventContent{Summary: "small"},
-	}
-	result := truncateIfNeeded(small)
-	if result.Content.Summary != "small" {
-		t.Error("small event should not be modified")
+// T-320: Large events (>4KB) are written intact without truncation.
+func TestLargeEventWrittenIntact(t *testing.T) {
+	dir := t.TempDir()
+	ch := make(chan CaptureEvent, 1)
+	w := NewEventWriter(dir, ch, &testLogger{})
+
+	if err := w.Start(); err != nil {
+		t.Fatalf("start: %v", err)
 	}
 
-	// Large event should be truncated.
-	large := CaptureEvent{
-		ID:        "test",
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	now := time.Now().UTC()
+	largeDetail := strings.Repeat("x", 10000) // 10KB detail
+	event := CaptureEvent{
+		ID:        "large-evt-1",
+		Timestamp: now.Format(time.RFC3339),
+		Source:    "ai-session",
+		Type:      "ai-conversation",
+		Content: EventContent{
+			Summary: "large event test",
+			Detail:  largeDetail,
+		},
+	}
+
+	ch <- event
+	time.Sleep(100 * time.Millisecond)
+	w.Stop()
+
+	date := now.Format("2006-01-02")
+	data, err := os.ReadFile(filepath.Join(dir, date+".jsonl"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	var parsed CaptureEvent
+	if err := json.Unmarshal(bytes.TrimSpace(data), &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if parsed.Content.Detail != largeDetail {
+		t.Errorf("detail was modified: got len %d, want %d", len(parsed.Content.Detail), len(largeDetail))
+	}
+}
+
+// T-321: Events with many files are written without file list truncation.
+func TestManyFilesWrittenIntact(t *testing.T) {
+	dir := t.TempDir()
+	ch := make(chan CaptureEvent, 1)
+	w := NewEventWriter(dir, ch, &testLogger{})
+
+	if err := w.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	now := time.Now().UTC()
+	files := make([]string, 100)
+	for i := range files {
+		files[i] = "src/pkg/module/file_" + strings.Repeat("a", 50) + ".go"
+	}
+
+	event := CaptureEvent{
+		ID:        "many-files-evt",
+		Timestamp: now.Format(time.RFC3339),
 		Source:    "git",
 		Type:      "commit",
 		Content: EventContent{
-			Summary: "large",
-			Detail:  strings.Repeat("x", 5000),
+			Summary: "commit with many files",
+			Files:   files,
 		},
 	}
-	result = truncateIfNeeded(large)
-	data, _ := json.Marshal(result)
-	if len(data) > maxLineBytes {
-		t.Errorf("truncated event size %d > %d", len(data), maxLineBytes)
+
+	ch <- event
+	time.Sleep(100 * time.Millisecond)
+	w.Stop()
+
+	date := now.Format("2006-01-02")
+	data, err := os.ReadFile(filepath.Join(dir, date+".jsonl"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	var parsed CaptureEvent
+	if err := json.Unmarshal(bytes.TrimSpace(data), &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if len(parsed.Content.Files) != 100 {
+		t.Errorf("files list truncated: got %d, want 100", len(parsed.Content.Files))
 	}
 }

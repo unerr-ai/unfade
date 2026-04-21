@@ -4,10 +4,10 @@
 // Steps: scaffold → binary → shell hooks → config existence check.
 // Returns { firstRun: true } if this was the first initialization.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
-import { getBinDir, getDaemonProjectRoot, getProjectDataDir } from "../../utils/paths.js";
+import { getBinDir, getDaemonProjectRoot, getProjectDataDir, getStateDir } from "../../utils/paths.js";
 import { registerRepo } from "../registry/registry.js";
 
 export interface EnsureInitResult {
@@ -19,7 +19,7 @@ export interface EnsureInitResult {
 /**
  * Ensure the current repo is initialized and registered.
  * Non-interactive — scaffold + binary + hooks only. No LLM wizard.
- * LLM config is deferred to the web settings page or `unfade init`.
+ * LLM config is deferred to the web dashboard setup page.
  * Idempotent — safe to call every startup.
  */
 export function ensureInit(cwd: string): EnsureInitResult {
@@ -31,6 +31,7 @@ export function ensureInit(cwd: string): EnsureInitResult {
     scaffoldMinimal(dataDir);
     ensureBinaryQuiet(cwd);
     installHooksQuiet(cwd);
+    writeInitialSetupStatus(cwd);
   }
 
   registerRepo(repoRoot);
@@ -81,5 +82,32 @@ function installHooksQuiet(cwd: string): void {
     installShellHooks(sendBin);
   } catch {
     logger.debug("Shell hook install failed (non-fatal)");
+  }
+}
+
+/**
+ * Write initial setup-status.json for the web UI to detect onboarding state.
+ * This file is the single source of truth for "has this repo been configured?"
+ */
+function writeInitialSetupStatus(cwd: string): void {
+  try {
+    const stateDir = getStateDir(cwd);
+    mkdirSync(stateDir, { recursive: true });
+    const statusPath = join(stateDir, "setup-status.json");
+    const status = {
+      initializedAt: new Date().toISOString(),
+      configuredAt: null,
+      llmProvider: null,
+      llmValidated: false,
+      ingestTriggered: false,
+    };
+    const tmpPath = join(stateDir, `setup-status.json.tmp.${process.pid}`);
+    writeFileSync(tmpPath, JSON.stringify(status, null, 2), "utf-8");
+    renameSync(tmpPath, statusPath);
+    logger.debug("Wrote initial setup-status.json");
+  } catch (err) {
+    logger.debug("Failed to write setup-status.json (non-fatal)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }

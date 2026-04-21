@@ -1,10 +1,12 @@
 // FILE: src/services/intelligence/analyzers/blind-spots.ts
-// UF-111: Blind Spot Detector — monitors acceptance rate, comprehension, direction trends.
+// UF-111 + 11E.7: Blind Spot Detector — monitors acceptance rate, comprehension, direction trends.
+// Uses phase-normalized HDS baselines (11E.6) to avoid false alerts during debugging sprints.
 // Generates alerts when thresholds exceeded for 2+ weeks. Max 2 alerts per week.
 // §7c: never surface based on <5 data points or <2 weeks sustained.
 
 import { createHash } from "node:crypto";
 import type { AlertsFile, BlindSpotAlert } from "../../../schemas/intelligence/alerts.js";
+import { computePhaseBaselines, isHdsConcerning } from "../phase-baselines.js";
 import { detectTrend } from "../utils/trend.js";
 import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./index.js";
 
@@ -24,10 +26,13 @@ export const blindSpotDetectorAnalyzer: Analyzer = {
     const existing = loadExistingAlerts(ctx.repoRoot);
     const activeCount = countAlertsThisWeek(existing);
 
+    // 11E.7: Compute phase baselines for phase-aware detection
+    const { baselines } = computePhaseBaselines(db);
+
     const newAlerts: BlindSpotAlert[] = [];
 
     if (activeCount < MAX_ALERTS_PER_WEEK) {
-      const highAcceptance = detectHighAcceptance(db, existing);
+      const highAcceptance = detectHighAcceptance(db, existing, baselines);
       if (highAcceptance && activeCount + newAlerts.length < MAX_ALERTS_PER_WEEK) {
         newAlerts.push(highAcceptance);
       }
@@ -52,35 +57,70 @@ export const blindSpotDetectorAnalyzer: Analyzer = {
       updatedAt: now,
     };
 
+    const sourceEventIds = collectSourceEventIds(db);
+
     return {
       analyzer: "blind-spot-detector",
       updatedAt: now,
       data: alertsFile as unknown as Record<string, unknown>,
       insightCount: newAlerts.length,
+      sourceEventIds,
     };
   },
 };
 
+function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
+  try {
+    const result = db.exec(`
+      SELECT id FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND json_extract(metadata, '$.direction_signals.human_direction_score') IS NOT NULL
+      ORDER BY ts DESC
+      LIMIT 20
+    `);
+    if (!result[0]?.values.length) return [];
+    return result[0].values.map((row) => row[0] as string);
+  } catch {
+    return [];
+  }
+}
+
 function detectHighAcceptance(
   db: AnalyzerContext["db"],
   existing: AlertsFile,
+  baselines: Record<string, import("../phase-baselines.js").PhaseBaseline>,
 ): BlindSpotAlert | null {
   try {
     const twoWeeksAgo = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
+    // 11E.7: Include execution_phase so we can filter out phase-expected low HDS
     const result = db.exec(`
       SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) < 0.2 THEN 1 ELSE 0 END) as low_dir
+        CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) as hds,
+        json_extract(metadata, '$.execution_phase') as phase
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
         AND ts >= '${twoWeeksAgo}'
         AND json_extract(metadata, '$.direction_signals.human_direction_score') IS NOT NULL
     `);
 
-    const total = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const lowDir = (result[0]?.values[0]?.[1] as number) ?? 0;
-
+    if (!result[0]?.values?.length) return null;
+    const total = result[0].values.length;
     if (total < MIN_DATA_POINTS) return null;
+
+    // 11E.7: Only count as "low direction" if the HDS is concerning FOR its phase.
+    // A debugging session with HDS 0.15 is NORMAL — don't count it.
+    let lowDir = 0;
+    for (const row of result[0].values) {
+      const hds = row[0] as number;
+      const phase = row[1] as string | null;
+      if (hds < 0.2) {
+        if (phase && !isHdsConcerning(hds, phase, baselines)) {
+          // Low HDS is expected for this phase — skip
+          continue;
+        }
+        lowDir++;
+      }
+    }
 
     const acceptRate = lowDir / total;
     if (acceptRate < 0.9) return null;

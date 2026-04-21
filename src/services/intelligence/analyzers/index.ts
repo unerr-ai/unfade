@@ -5,7 +5,7 @@ export interface AnalyzerContext {
   repoRoot: string;
   db: {
     run(sql: string, params?: unknown[]): void;
-    exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
+    exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }>;
   };
   config: Record<string, unknown>;
 }
@@ -15,6 +15,8 @@ export interface AnalyzerResult {
   updatedAt: string;
   data: Record<string, unknown>;
   insightCount: number;
+  /** IDs of source events that contributed to this result (max 20). */
+  sourceEventIds: string[];
 }
 
 export interface Analyzer {

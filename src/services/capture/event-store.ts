@@ -94,6 +94,29 @@ export function countEvents(date: string, cwd?: string): number {
 }
 
 /**
+ * Count total events across all JSONL files in the events directory.
+ * Fast line-counting without full parsing.
+ */
+export function countAllEvents(cwd?: string): number {
+  const eventsDir = getEventsDir(cwd);
+  if (!existsSync(eventsDir)) return 0;
+
+  let total = 0;
+  const files = readdirSync(eventsDir).filter((f) => f.endsWith(".jsonl"));
+  for (const file of files) {
+    try {
+      const content = readFileSync(join(eventsDir, file), "utf-8");
+      for (const line of content.split("\n")) {
+        if (line.trim()) total++;
+      }
+    } catch {
+      // skip unreadable files
+    }
+  }
+  return total;
+}
+
+/**
  * Read events across a date range (inclusive).
  * @param from - Start date YYYY-MM-DD
  * @param to - End date YYYY-MM-DD

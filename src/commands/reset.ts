@@ -1,10 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { theme, writeBlank, writeLine } from "../cli/ui.js";
-import {
-  removeAutostartEntirely,
-  removeAutostartIfOwnedByProject,
-} from "../services/init/autostart.js";
 import { unregisterRepo } from "../services/registry/registry.js";
 import { removeShellHooks } from "../services/shell/installer.js";
 import { stopDaemon } from "../utils/ipc.js";
@@ -12,7 +8,7 @@ import { logger } from "../utils/logger.js";
 import { getDaemonProjectRoot, getProjectDataDir, getUserConfigDir } from "../utils/paths.js";
 
 /**
- * Full teardown for the current repo so you can run `unfade` / `unfade init` from a clean slate.
+ * Full teardown for the current repo so you can run `unfade` from a clean slate.
  * With `--global`, also removes `~/.unfade/` and unfade auto-start agents for your user account.
  * Requires `--yes` to avoid accidental data loss.
  */
@@ -34,11 +30,6 @@ export async function resetCommand(opts: {
   const userDir = getUserConfigDir();
 
   await stopDaemon(cwd);
-  if (opts.global) {
-    removeAutostartEntirely();
-  } else {
-    removeAutostartIfOwnedByProject(cwd);
-  }
   if (!opts.global) {
     unregisterRepo(getDaemonProjectRoot(cwd));
   }
@@ -67,7 +58,7 @@ export async function resetCommand(opts: {
   }
 
   writeLine(
-    `  ${theme.muted("Run")} ${theme.cyan("unfade")} ${theme.muted("or")} ${theme.cyan("unfade init")} ${theme.muted("to set up again.")}`,
+    `  ${theme.muted("Run")} ${theme.cyan("unfade")} ${theme.muted("to set up again.")}`,
   );
   writeBlank();
 }

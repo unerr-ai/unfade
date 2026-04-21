@@ -1,20 +1,18 @@
 // FILE: src/tools/unfade-profile.ts
 // UF-055: Profile reader — retrieve full reasoning profile from
-// profile/reasoning_model.json. Handles both v1 (ReasoningProfile) and
-// v2 (ReasoningModelV2) formats. Missing file returns empty profile
+// profile/reasoning_model.json. Missing file returns empty profile
 // with degraded: true.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { McpMeta, ProfileOutput } from "../schemas/mcp.js";
 import type { ReasoningModelV2 } from "../schemas/profile.js";
-import type { ReasoningProfile } from "../services/personalization/profile-builder.js";
 import { getProfileDir } from "../utils/paths.js";
 
 /**
- * Convert a v2 profile to ProfileOutput data shape.
+ * Convert a profile to ProfileOutput data shape.
  */
-function v2ToProfileData(profile: ReasoningModelV2): ProfileOutput["data"] {
+function toProfileData(profile: ReasoningModelV2): ProfileOutput["data"] {
   const domains = profile.domainDistribution ?? [];
   const patternRows = profile.patterns ?? [];
   const style = profile.decisionStyle;
@@ -27,7 +25,7 @@ function v2ToProfileData(profile: ReasoningModelV2): ProfileOutput["data"] {
     aiAcceptanceRate: Number(style?.aiAcceptanceRate ?? 0),
     aiModificationRate: Number(style?.aiModificationRate ?? 0),
     avgDecisionsPerDay: Number(temporal?.avgDecisionsPerDay ?? 0),
-    avgDeadEndsPerDay: 0, // Not tracked in v2 separately
+    avgDeadEndsPerDay: 0,
     domainDistribution: domains.map((d) => ({
       domain: d.domain,
       frequency: d.frequency,
@@ -37,21 +35,18 @@ function v2ToProfileData(profile: ReasoningModelV2): ProfileOutput["data"] {
   };
 }
 
-/**
- * Convert a v1 profile to ProfileOutput data shape.
- */
-function v1ToProfileData(profile: ReasoningProfile): ProfileOutput["data"] {
+function emptyProfileData(): ProfileOutput["data"] {
   return {
-    version: profile.version,
-    updatedAt: profile.updatedAt,
-    distillCount: Number(profile.distillCount ?? 0),
-    avgAlternativesEvaluated: Number(profile.avgAlternativesEvaluated ?? 0),
-    aiAcceptanceRate: Number(profile.aiAcceptanceRate ?? 0),
-    aiModificationRate: Number(profile.aiModificationRate ?? 0),
-    avgDecisionsPerDay: Number(profile.avgDecisionsPerDay ?? 0),
-    avgDeadEndsPerDay: Number(profile.avgDeadEndsPerDay ?? 0),
-    domainDistribution: profile.domainDistribution ?? [],
-    patterns: profile.patterns ?? [],
+    version: 2,
+    updatedAt: new Date().toISOString(),
+    distillCount: 0,
+    avgAlternativesEvaluated: 0,
+    aiAcceptanceRate: 0,
+    aiModificationRate: 0,
+    avgDecisionsPerDay: 0,
+    avgDeadEndsPerDay: 0,
+    domainDistribution: [],
+    patterns: [],
   };
 }
 
@@ -75,18 +70,7 @@ export function getProfile(cwd?: string): ProfileOutput {
   if (!existsSync(profilePath)) {
     degraded = true;
     degradedReason = "Profile not found — no distills have been processed yet";
-    data = {
-      version: 1,
-      updatedAt: new Date().toISOString(),
-      distillCount: 0,
-      avgAlternativesEvaluated: 0,
-      aiAcceptanceRate: 0,
-      aiModificationRate: 0,
-      avgDecisionsPerDay: 0,
-      avgDeadEndsPerDay: 0,
-      domainDistribution: [],
-      patterns: [],
-    };
+    data = emptyProfileData();
   } else {
     try {
       const raw = readFileSync(profilePath, "utf-8");
@@ -94,25 +78,16 @@ export function getProfile(cwd?: string): ProfileOutput {
       lastUpdated = statSync(profilePath).mtime.toISOString();
 
       if (parsed.version === 2) {
-        data = v2ToProfileData(parsed as ReasoningModelV2);
+        data = toProfileData(parsed as ReasoningModelV2);
       } else {
-        data = v1ToProfileData(parsed as ReasoningProfile);
+        degraded = true;
+        degradedReason = "Profile is in unrecognized format — returning empty profile";
+        data = emptyProfileData();
       }
     } catch {
       degraded = true;
       degradedReason = "Failed to read profile — returning empty profile";
-      data = {
-        version: 1,
-        updatedAt: new Date().toISOString(),
-        distillCount: 0,
-        avgAlternativesEvaluated: 0,
-        aiAcceptanceRate: 0,
-        aiModificationRate: 0,
-        avgDecisionsPerDay: 0,
-        avgDeadEndsPerDay: 0,
-        domainDistribution: [],
-        patterns: [],
-      };
+      data = emptyProfileData();
     }
   }
 

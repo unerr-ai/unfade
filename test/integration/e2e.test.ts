@@ -147,7 +147,7 @@ describe("E2E: init → capture → distill → query → card → publish", () 
     expect(existsSync(configPath)).toBe(true);
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     expect(config.version).toBe(2);
-    expect(config.distill.provider).toBe("ollama");
+    expect(config.distill.provider).toBe("none");
 
     // ---------------------------------------------------------------
     // Stage 2: Capture — write event fixtures to JSONL

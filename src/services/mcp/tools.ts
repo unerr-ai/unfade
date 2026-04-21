@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadConfig } from "../../config/manager.js";
+import { applyFeatureTag } from "../../commands/tag.js";
 import { getAmplification } from "../../tools/unfade-amplify.js";
 import { getCoachInsights } from "../../tools/unfade-coach.js";
 import { getComprehension } from "../../tools/unfade-comprehension.js";
@@ -19,6 +20,7 @@ import { logReasoningEvent, UnfadeLogInputSchema } from "../../tools/unfade-log.
 import { getProfile } from "../../tools/unfade-profile.js";
 import { queryEvents } from "../../tools/unfade-query.js";
 import { getSimilar } from "../../tools/unfade-similar.js";
+import { CacheManager } from "../cache/manager.js";
 import { logger } from "../../utils/logger.js";
 import { getProjectDataDir } from "../../utils/paths.js";
 import { distill } from "../distill/distiller.js";
@@ -636,6 +638,77 @@ export function registerTools(server: McpServer): void {
                   degradedReason: String(err),
                   lastUpdated: null,
                 },
+              }),
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // unfade_tag — Explicitly bind a feature tag to recent events
+  server.tool(
+    "unfade_tag",
+    "Tag recent AI conversation events with a feature name — use when automatic feature detection fails",
+    {
+      featureName: z.string().describe("The feature name to tag events with"),
+      last: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .default(5)
+        .describe("Number of recent events to tag (default 5)"),
+    },
+    async (args) => {
+      if (!isInitialized()) return notInitializedResponse();
+
+      try {
+        const cache = new CacheManager();
+        const db = await cache.getDb();
+        if (!db) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  data: null,
+                  _meta: { tool: "unfade-tag", durationMs: 0, degraded: true, degradedReason: "Cache not available" },
+                }),
+              },
+            ],
+          };
+        }
+
+        const rows = db.exec(
+          "SELECT id FROM events WHERE type = 'ai-conversation' ORDER BY ts DESC LIMIT ?",
+          [args.last ?? 5],
+        );
+        const eventIds = rows[0]?.values.map((r) => r[0] as string) ?? [];
+
+        const tagged = applyFeatureTag(db, args.featureName, eventIds);
+        await cache.save();
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: { featureName: args.featureName, eventsTagged: tagged },
+                _meta: { tool: "unfade-tag", durationMs: 0, degraded: false },
+              }),
+            },
+          ],
+        };
+      } catch (err) {
+        logger.error("MCP unfade_tag error", { error: String(err) });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                data: null,
+                _meta: { tool: "unfade-tag", durationMs: 0, degraded: true, degradedReason: String(err) },
               }),
             },
           ],

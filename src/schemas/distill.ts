@@ -134,6 +134,14 @@ export const ExtractedSignalsSchema = z.object({
     reverts: z.number().int().min(0),
     filesChanged: z.array(z.string()),
     domains: z.array(z.string()),
+    executionPhaseBreakdown: z
+      .record(z.string(), z.number().int().min(0))
+      .optional()
+      .describe("Count of events per execution phase (exploring, implementing, debugging, etc.)"),
+    outcomeBreakdown: z
+      .record(z.string(), z.number().int().min(0))
+      .optional()
+      .describe("Count of events per outcome (success, partial, failed, abandoned)"),
   }),
 });
 

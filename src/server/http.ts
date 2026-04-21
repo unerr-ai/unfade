@@ -23,14 +23,18 @@ import { costsPage } from "./pages/costs.js";
 import { distillPage } from "./pages/distill.js";
 import { efficiencyPage } from "./pages/efficiency.js";
 import { homePage } from "./pages/home.js";
+import { integrationsPage } from "./pages/integrations.js";
 import { intelligencePage } from "./pages/intelligence.js";
 import { livePage } from "./pages/live.js";
+import { logsPage } from "./pages/logs.js";
 import { portfolioPage } from "./pages/portfolio.js";
 import { profilePage } from "./pages/profile.js";
 import { repoDetailPage } from "./pages/repo-detail.js";
 import { searchPage } from "./pages/search.js";
 import { settingsPage } from "./pages/settings.js";
+import { setupPage } from "./pages/setup.js";
 import { velocityPage } from "./pages/velocity-page.js";
+import { actionsRoutes } from "./routes/actions.js";
 import { amplifyRoutes } from "./routes/amplify.js";
 import { cardsRoutes } from "./routes/cards.js";
 import { contextRoutes } from "./routes/context.js";
@@ -40,14 +44,20 @@ import { distillRoutes } from "./routes/distill.js";
 import { feedbackRoutes } from "./routes/feedback.js";
 import { heatmapRoutes } from "./routes/heatmap.js";
 import { insightsRoutes } from "./routes/insights.js";
+import { integrationsRoutes } from "./routes/integrations.js";
 import { intelligenceRoutes } from "./routes/intelligence.js";
 import { onboardingRoutes } from "./routes/intelligence-onboarding.js";
+import { lineageRoutes } from "./routes/lineage.js";
+import { logsRoutes } from "./routes/logs.js";
 import { profileRoutes } from "./routes/profile.js";
 import { queryRoutes } from "./routes/query.js";
 import { reposRoutes } from "./routes/repos.js";
 import { settingsRoutes } from "./routes/settings.js";
+import { setupRoutes } from "./routes/setup.js";
 import { streamRoutes } from "./routes/stream.js";
 import { summaryRoutes } from "./routes/summary.js";
+import { systemHealthRoutes } from "./routes/system-health.js";
+import { isSetupComplete } from "./setup-state.js";
 
 export interface ServerInfo {
   port: number;
@@ -88,6 +98,43 @@ export function createApp(): Hono {
   // Static assets (brand icons, fonts, manifest)
   app.use("/public/*", serveStatic({ root: "./" }));
 
+  // Request logging middleware — correlation ID + timing for every request
+  app.use("*", async (c, next) => {
+    const reqId = crypto.randomUUID().slice(0, 8);
+    (c as unknown as { reqId: string }).reqId = reqId;
+    const start = performance.now();
+    await next();
+    const ms = Math.round(performance.now() - start);
+    logger.info("request", {
+      reqId,
+      method: c.req.method,
+      path: c.req.path,
+      status: c.res.status,
+      ms,
+    });
+  });
+
+  // Setup enforcement middleware — server-side redirect to /setup when incomplete
+  app.use("*", async (c, next) => {
+    const path = c.req.path;
+    // Allow: setup page, API endpoints, static assets, settings (needed by setup), MCP
+    if (
+      path === "/setup" ||
+      path.startsWith("/api/") ||
+      path.startsWith("/unfade/") ||
+      path.startsWith("/public/") ||
+      path.startsWith("/assets/") ||
+      path === "/favicon.ico" ||
+      path === "/mcp"
+    ) {
+      return next();
+    }
+    if (!isSetupComplete()) {
+      return c.redirect("/setup", 302);
+    }
+    return next();
+  });
+
   // Error handler — return JSON errors, never crash
   app.onError((err, c) => {
     logger.error("HTTP error", {
@@ -110,21 +157,8 @@ export function createApp(): Hono {
     );
   });
 
-  // Health check — includes per-repo daemon + materializer status
-  app.get("/unfade/health", (c) => {
-    const repoManager = (globalThis as Record<string, unknown>).__unfade_repo_manager as
-      | { getHealthStatus(): Array<Record<string, unknown>>; size: number }
-      | undefined;
-
-    return c.json({
-      status: "ok",
-      version: "0.1.0",
-      pid: process.pid,
-      uptime: process.uptime(),
-      repoCount: repoManager?.size ?? 0,
-      repos: repoManager?.getHealthStatus() ?? [],
-    });
-  });
+  // Health check — redirect to unified system health endpoint
+  app.get("/unfade/health", (c) => c.redirect("/api/system/health"));
 
   // Mount route groups
   app.route("/unfade", contextRoutes);
@@ -145,7 +179,13 @@ export function createApp(): Hono {
   app.route("", heatmapRoutes);
   app.route("", decisionDetailRoutes);
   app.route("", intelligenceRoutes);
+  app.route("", lineageRoutes);
+  app.route("", integrationsRoutes);
+  app.route("", setupRoutes);
   app.route("", onboardingRoutes);
+  app.route("", systemHealthRoutes);
+  app.route("", actionsRoutes);
+  app.route("", logsRoutes);
 
   // Phase 5.6: Multi-repo pages
   app.route("", portfolioPage);
@@ -162,6 +202,7 @@ export function createApp(): Hono {
   app.route("", comprehensionPage);
 
   // Mount Web UI pages (server-rendered HTML + htmx)
+  app.route("", setupPage);
   app.route("", homePage);
   app.route("", livePage);
   app.route("", distillPage);
@@ -169,6 +210,8 @@ export function createApp(): Hono {
   app.route("", settingsPage);
   app.route("", cardsPage);
   app.route("", searchPage);
+  app.route("", integrationsPage);
+  app.route("", logsPage);
 
   // Mount MCP Streamable HTTP transport at /mcp
   mountMcpHttp(app);

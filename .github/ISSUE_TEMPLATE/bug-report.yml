@@ -52,7 +52,7 @@ body:
       label: Steps to reproduce
       description: Minimal steps to reproduce the behavior
       placeholder: |
-        1. Run `unfade init`
+        1. Run `unfade`
         2. Run `unfade distill`
         3. See error...
     validations:

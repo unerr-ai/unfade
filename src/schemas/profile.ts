@@ -1,7 +1,6 @@
 // FILE: src/schemas/profile.ts
-// ReasoningModel v2 — the developer's reasoning identity profile.
+// ReasoningModel — the developer's reasoning identity profile.
 // Built up over time from captured decisions, trade-offs, and patterns.
-// v1 interface lives in profile-builder.ts for backward compatibility.
 
 import { z } from "zod";
 

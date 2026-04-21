@@ -45,7 +45,7 @@ export async function ingestCommand(opts: { since?: string; status?: boolean }):
     const daemonResp = await queryDaemonStatus();
     if (!daemonResp.ok) {
       writeLine(
-        `${theme.error("✗")} Capture engine is not running. Run ${theme.bold("unfade init")} first.`,
+        `${theme.error("✗")} Capture engine is not running. Run ${theme.bold("unfade")} first.`,
       );
       process.exitCode = 1;
       return;

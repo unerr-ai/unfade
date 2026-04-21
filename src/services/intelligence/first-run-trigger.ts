@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getStateDir } from "../../utils/paths.js";
 import { writeFirstRunCard } from "../cards/identity.js";
+import { countAllEvents } from "../capture/event-store.js";
 import { analyzeFirstRun, type FirstRunReport } from "./first-run-analyzer.js";
 
 const REPORT_FILENAME = "first-run-report.json";
@@ -26,17 +27,24 @@ export function loadFirstRunReport(cwd?: string): FirstRunReport | null {
 }
 
 /**
- * Check if ingest is completed by reading ingest.json from state dir.
+ * Check if enough data exists to generate first-run report.
+ * Triggers if ingest is marked "completed" OR if there are >= 10 events total.
+ * This prevents permanently blocking on daemon/ingest state.
  */
-function isIngestCompleted(cwd?: string): boolean {
+function hasEnoughData(cwd?: string): boolean {
+  // Check ingest.json status
   const path = join(getStateDir(cwd), "ingest.json");
-  if (!existsSync(path)) return false;
-  try {
-    const data = JSON.parse(readFileSync(path, "utf-8")) as { status?: string };
-    return data.status === "completed";
-  } catch {
-    return false;
+  if (existsSync(path)) {
+    try {
+      const data = JSON.parse(readFileSync(path, "utf-8")) as { status?: string };
+      if (data.status === "completed") return true;
+    } catch {
+      // fall through to event count check
+    }
   }
+
+  // Relaxed gate: allow if we have enough events regardless of ingest status
+  return countAllEvents(cwd) >= 10;
 }
 
 /**
@@ -48,7 +56,7 @@ export function tryGenerateFirstRunReport(cwd?: string): FirstRunReport | null {
   const existing = loadFirstRunReport(cwd);
   if (existing) return existing;
 
-  if (!isIngestCompleted(cwd)) return null;
+  if (!hasEnoughData(cwd)) return null;
 
   try {
     const report = analyzeFirstRun(cwd);

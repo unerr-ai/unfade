@@ -19,7 +19,7 @@ const CaptureSchema = z.object({
 
 const DistillSchema = z.object({
   schedule: z.string().default("0 18 * * *"),
-  provider: z.enum(["ollama", "openai", "anthropic", "custom", "none"]).default("ollama"),
+  provider: z.enum(["ollama", "openai", "anthropic", "custom", "none"]).default("none"),
   model: z.string().default("llama3.2"),
   apiKey: z.string().optional(),
   apiBase: z.string().optional(),
@@ -40,12 +40,18 @@ const SiteSchema = z.object({
   outputDir: z.string().default(".unfade/site"),
 });
 
-const OtelSchema = z.object({
-  endpoint: z.string().optional(),
-  headers: z.record(z.string(), z.string()).optional(),
-});
-
 const PricingSchema = z.record(z.string(), z.number()).default({});
+
+const ActionsSchema = z.object({
+  enabled: z.boolean().default(false),
+  autoRules: z.boolean().default(false),
+  ruleTarget: z.string().nullable().default(null),
+  sessionContext: z.boolean().default(false),
+  weeklyDigest: z.boolean().default(false),
+  digestDay: z
+    .enum(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"])
+    .default("monday"),
+});
 
 const ExportSchema = z.object({
   requireConsent: z.boolean().default(true),
@@ -55,14 +61,14 @@ const ExportSchema = z.object({
 });
 
 export const UnfadeConfigSchema = z.object({
-  version: z.union([z.literal(1), z.literal(2)]).default(2),
+  version: z.literal(2).default(2),
   capture: CaptureSchema.default(() => CaptureSchema.parse({})),
   distill: DistillSchema.default(() => DistillSchema.parse({})),
   mcp: McpSchema.default(() => McpSchema.parse({})),
   notification: NotificationSchema.default(() => NotificationSchema.parse({})),
   site: SiteSchema.default(() => SiteSchema.parse({})),
-  otel: OtelSchema.optional(),
   pricing: PricingSchema.describe("Model pricing table: model name → cost per 1K tokens"),
+  actions: ActionsSchema.default(() => ActionsSchema.parse({})),
   export: ExportSchema.default(() => ExportSchema.parse({})),
 });
 

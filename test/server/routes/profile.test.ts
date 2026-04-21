@@ -44,16 +44,25 @@ describe("GET /unfade/profile", () => {
     writeFileSync(
       join(profileDir, "reasoning_model.json"),
       JSON.stringify({
-        version: 1,
-        updatedAt: "2026-04-15T10:00:00Z",
-        distillCount: 5,
-        avgAlternativesEvaluated: 2.5,
-        aiAcceptanceRate: 0.8,
-        aiModificationRate: 0.1,
-        avgDecisionsPerDay: 3,
-        avgDeadEndsPerDay: 0.5,
-        domainDistribution: [{ domain: "TypeScript", frequency: 10, lastSeen: "2026-04-15" }],
-        patterns: ["Polyglot"],
+        version: 2,
+        lastUpdated: "2026-04-15T10:00:00Z",
+        dataPoints: 5,
+        decisionStyle: {
+          avgAlternativesEvaluated: 2.5,
+          medianAlternativesEvaluated: 2,
+          explorationDepthMinutes: { overall: 0, byDomain: {} },
+          aiAcceptanceRate: 0.8,
+          aiModificationRate: 0.1,
+          aiModificationByDomain: {},
+        },
+        tradeOffPreferences: [],
+        domainDistribution: [
+          { domain: "TypeScript", frequency: 10, percentageOfTotal: 1, lastSeen: "2026-04-15", depth: "moderate", depthTrend: "stable", avgAlternativesInDomain: 2 },
+        ],
+        patterns: [
+          { pattern: "Polyglot", confidence: 0.9, observedSince: "2026-04-01", lastObserved: "2026-04-15", examples: 5, category: "exploration" },
+        ],
+        temporalPatterns: { mostProductiveHours: [], avgDecisionsPerDay: 3, peakDecisionDays: [] },
       }),
       "utf-8",
     );

@@ -5,7 +5,7 @@ import { UnfadeConfigSchema } from "../../src/schemas/config.js";
 describe("UnfadeConfigSchema", () => {
   it("T-009: valid config with explicit values passes and fills all fields", () => {
     const config = {
-      version: 1 as const,
+      version: 2 as const,
       capture: {
         sources: { git: true, aiSession: true, terminal: false, browser: false },
         aiSessionPaths: ["~/.cursor/logs/"],
@@ -30,7 +30,7 @@ describe("UnfadeConfigSchema", () => {
     const result = UnfadeConfigSchema.safeParse(config);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.version).toBe(1);
+      expect(result.data.version).toBe(2);
       expect(result.data.capture.sources.git).toBe(true);
       expect(result.data.distill.provider).toBe("ollama");
       expect(result.data.mcp.enabled).toBe(true);
@@ -47,7 +47,7 @@ describe("UnfadeConfigSchema", () => {
       expect(result.data.capture.sources.aiSession).toBe(true);
       expect(result.data.capture.sources.terminal).toBe(false);
       expect(result.data.capture.ignore).toContain("node_modules");
-      expect(result.data.distill.provider).toBe("ollama");
+      expect(result.data.distill.provider).toBe("none");
       expect(result.data.distill.model).toBe("llama3.2");
       expect(result.data.distill.schedule).toBe("0 18 * * *");
       expect(result.data.mcp.enabled).toBe(true);
@@ -56,5 +56,10 @@ describe("UnfadeConfigSchema", () => {
       expect(result.data.notification.enabled).toBe(true);
       expect(result.data.notification.sound).toBe(false);
     }
+  });
+
+  it("rejects version other than 2", () => {
+    const result = UnfadeConfigSchema.safeParse({ version: 1 });
+    expect(result.success).toBe(false);
   });
 });

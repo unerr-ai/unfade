@@ -15,6 +15,12 @@ export const McpMetaSchema = z.object({
   degradedReason: z.string().optional(),
   lastUpdated: z.string().nullable(),
   personalizationLevel: z.string().optional(),
+  provenance: z
+    .object({
+      sourceEventIds: z.array(z.string()).default([]),
+      lineageUrl: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type McpMeta = z.infer<typeof McpMetaSchema>;

@@ -65,14 +65,33 @@ export const velocityTrackerAnalyzer: Analyzer = {
       updatedAt: now,
     };
 
+    const sourceEventIds = collectSourceEventIds(db);
+
     return {
       analyzer: "velocity-tracker",
       updatedAt: now,
       data: velocity as unknown as Record<string, unknown>,
       insightCount: Object.values(byDomain).filter((v) => v.trend !== "stable").length,
+      sourceEventIds,
     };
   },
 };
+
+function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
+  try {
+    const result = db.exec(`
+      SELECT id FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND json_extract(metadata, '$.turn_count') IS NOT NULL
+      ORDER BY ts DESC
+      LIMIT 20
+    `);
+    if (!result[0]?.values.length) return [];
+    return result[0].values.map((row) => row[0] as string);
+  } catch {
+    return [];
+  }
+}
 
 function computeDomainTurns(db: AnalyzerContext["db"]): Map<string, number[]> {
   const domainWeeks = new Map<string, Map<string, number[]>>();

@@ -21,7 +21,7 @@ portfolioPage.get("/portfolio", (c) => {
 
     <div id="portfolio-empty" class="hidden text-center py-12 text-muted">
       <p class="text-lg mb-2">No repos registered</p>
-      <p class="text-sm">Run <code class="bg-raised px-1.5 py-0.5 rounded text-sm font-mono">unfade init</code> in a project to register it.</p>
+      <p class="text-sm">Run <code class="bg-raised px-1.5 py-0.5 rounded text-sm font-mono">unfade</code> in a project to register it.</p>
     </div>
 
     <div id="portfolio-grid" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>

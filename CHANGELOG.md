@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- CLI entry point with Commander.js (`unfade`, `unfade init`, `unfade open`, `unfade query`, `unfade distill`, `unfade export`, `unfade publish`, `unfade daemon`)
+- CLI entry point with Commander.js (`unfade`, `unfade open`, `unfade query`, `unfade distill`, `unfade export`, `unfade publish`, `unfade daemon`)
 - Passive capture engine (Go binary) for git commits, AI sessions, and terminal commands
 - Daily distillation pipeline with fallback structured summaries (no LLM required)
 - MCP server with 7 tools (`unfade_query`, `unfade_context`, `unfade_decisions`, `unfade_profile`, `unfade_distill`, `unfade_similar`, `unfade_amplify`), 5 resources, 3 prompts

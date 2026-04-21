@@ -12,38 +12,6 @@ import { escapeHtml, layout } from "./layout.js";
 
 export const settingsPage = new Hono();
 
-const CLAUDE_CODE_CONFIG = `{
-  "mcpServers": {
-    "unfade": {
-      "command": "npx",
-      "args": ["unfade", "mcp"]
-    }
-  }
-}`;
-
-const CURSOR_CONFIG = `{
-  "mcpServers": {
-    "unfade": {
-      "command": "npx",
-      "args": ["unfade", "mcp"]
-    }
-  }
-}`;
-
-const WINDSURF_CONFIG = `{
-  "mcpServers": {
-    "unfade": {
-      "command": "npx",
-      "args": ["unfade", "mcp"]
-    }
-  }
-}`;
-
-const GENERIC_CONFIG = `{
-  "command": "npx",
-  "args": ["unfade", "mcp"],
-  "transport": "stdio"
-}`;
 
 /**
  * Read current distill config from config.json for form defaults.
@@ -59,13 +27,13 @@ function readCurrentLlmConfig(): {
     const raw = JSON.parse(readFileSync(configPath, "utf-8"));
     const distill = raw?.distill ?? {};
     return {
-      provider: distill.provider ?? "ollama",
+      provider: distill.provider ?? "none",
       model: distill.model ?? "llama3.2",
       apiKey: distill.apiKey ?? "",
       apiBase: distill.apiBase ?? "",
     };
   } catch {
-    return { provider: "ollama", model: "llama3.2", apiKey: "", apiBase: "" };
+    return { provider: "none", model: "llama3.2", apiKey: "", apiBase: "" };
   }
 }
 
@@ -206,30 +174,12 @@ settingsPage.get("/settings", (c) => {
     <!-- Connect AI Tools -->
     <div class="mb-8">
       <h2 class="text-lg font-heading font-semibold mb-2">Connect AI Tools</h2>
-      <p class="text-muted text-sm mb-4">Add Unfade as an MCP server to give your AI tools access to your reasoning history. Copy the config below into your tool's settings file.</p>
-
-      <div class="bg-surface border border-border rounded p-5 mb-3">
-        <h3 class="text-base font-heading font-semibold mb-1">Claude Code</h3>
-        <p class="text-muted text-xs mb-2">Add to <code class="bg-raised px-1.5 py-0.5 rounded text-sm font-mono">~/.claude/settings.json</code></p>
-        <pre class="bg-raised border border-border rounded p-4 overflow-x-auto font-mono text-sm leading-relaxed"><code>${escapeHtml(CLAUDE_CODE_CONFIG)}</code></pre>
-      </div>
-
-      <div class="bg-surface border border-border rounded p-5 mb-3">
-        <h3 class="text-base font-heading font-semibold mb-1">Cursor</h3>
-        <p class="text-muted text-xs mb-2">Add to <code class="bg-raised px-1.5 py-0.5 rounded text-sm font-mono">.cursor/mcp.json</code></p>
-        <pre class="bg-raised border border-border rounded p-4 overflow-x-auto font-mono text-sm leading-relaxed"><code>${escapeHtml(CURSOR_CONFIG)}</code></pre>
-      </div>
-
-      <div class="bg-surface border border-border rounded p-5 mb-3">
-        <h3 class="text-base font-heading font-semibold mb-1">Windsurf</h3>
-        <p class="text-muted text-xs mb-2">Add to your Windsurf MCP configuration</p>
-        <pre class="bg-raised border border-border rounded p-4 overflow-x-auto font-mono text-sm leading-relaxed"><code>${escapeHtml(WINDSURF_CONFIG)}</code></pre>
-      </div>
-
-      <div class="bg-surface border border-border rounded p-5">
-        <h3 class="text-base font-heading font-semibold mb-1">Generic MCP Client</h3>
-        <p class="text-muted text-xs mb-2">Use this config for any MCP-compatible tool</p>
-        <pre class="bg-raised border border-border rounded p-4 overflow-x-auto font-mono text-sm leading-relaxed"><code>${escapeHtml(GENERIC_CONFIG)}</code></pre>
+      <div class="bg-surface border border-border rounded p-5 flex items-center justify-between">
+        <div>
+          <p class="text-foreground text-sm font-medium">MCP Integrations</p>
+          <p class="text-muted text-xs mt-1">One-click install for Claude Code, Cursor, and Windsurf.</p>
+        </div>
+        <a href="/integrations" class="px-4 py-2 text-xs rounded bg-accent text-white font-medium no-underline hover:bg-accent-dim">Manage Integrations</a>
       </div>
     </div>
   `;

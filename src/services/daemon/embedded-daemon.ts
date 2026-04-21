@@ -7,12 +7,17 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
+import { logBuffer } from "../logs/ring-buffer.js";
 import { logger } from "../../utils/logger.js";
 import { getBinDir } from "../../utils/paths.js";
 
 const DAEMON_BINARY = process.platform === "win32" ? "unfaded.exe" : "unfaded";
 const MAX_BACKOFF_MS = 30_000;
 const STABLE_THRESHOLD_MS = 60_000;
+
+export interface EmbeddedDaemonOptions {
+  onRestart?: (attempt: number, repoRoot: string) => void;
+}
 
 export class EmbeddedDaemon {
   private child: ChildProcess | null = null;
@@ -22,10 +27,12 @@ export class EmbeddedDaemon {
   private shuttingDown = false;
   private startedAt = 0;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
+  private onRestart?: (attempt: number, repoRoot: string) => void;
 
-  constructor(repoRoot: string) {
+  constructor(repoRoot: string, options?: EmbeddedDaemonOptions) {
     this.repoRoot = repoRoot;
     this.label = basename(repoRoot);
+    this.onRestart = options?.onRestart;
   }
 
   /**
@@ -119,7 +126,11 @@ export class EmbeddedDaemon {
 
     child.stderr?.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString().trim().split("\n")) {
-        if (line) logger.debug(`[capture:${this.label}] ${line}`);
+        if (line) {
+          logger.debug(`[capture:${this.label}] ${line}`);
+          const level = line.includes("ERR") ? "error" : line.includes("WARN") ? "warn" : "debug";
+          logBuffer.append("daemon", level, line, { repoId: this.label });
+        }
       }
     });
 
@@ -129,9 +140,12 @@ export class EmbeddedDaemon {
       this.restartCount++;
       const backoffMs = Math.min(1000 * 2 ** (this.restartCount - 1), MAX_BACKOFF_MS);
 
-      logger.warn(
-        `[capture:${this.label}] exited (code=${code}, signal=${signal}), restart in ${backoffMs}ms (attempt ${this.restartCount})`,
-      );
+      const msg = `Exited (code=${code}, signal=${signal}), restart in ${backoffMs}ms (attempt ${this.restartCount})`;
+      logger.warn(`[capture:${this.label}] ${msg}`);
+      logBuffer.append("daemon", "warn", msg, { repoId: this.label });
+
+      // Notify listener for crash recovery visibility
+      this.onRestart?.(this.restartCount, this.repoRoot);
 
       this.restartTimer = setTimeout(() => {
         if (this.shuttingDown) return;

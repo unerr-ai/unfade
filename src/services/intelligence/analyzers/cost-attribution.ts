@@ -23,10 +23,16 @@ export const costAttributionAnalyzer: Analyzer = {
     const byDomain = computeByDomain(db, pricing);
     const byBranch = computeByBranch(db, pricing);
 
+    // 12C.14: Per-feature cost attribution via event_features join
+    const byFeature = computeByFeature(db, pricing);
+
     const totalCost = byModel.reduce((s, m) => s + m.estimatedCost, 0);
     const wasteRatio = computeWasteRatio(db);
     const contextOverhead = computeContextOverhead(db);
     const costPerDirected = computeCostPerDirected(db, totalCost);
+
+    // 12C.14: Waste detection — cost attributed to outcome=abandoned sessions
+    const abandonedWaste = computeAbandonedWaste(db, pricing);
 
     const daysInPeriod = computeDaysInPeriod(db);
     const projectedMonthlyCost =
@@ -39,6 +45,8 @@ export const costAttributionAnalyzer: Analyzer = {
       byModel,
       byDomain,
       byBranch,
+      byFeature,
+      abandonedWaste,
       wasteRatio,
       contextOverhead,
       projectedMonthlyCost,
@@ -47,14 +55,32 @@ export const costAttributionAnalyzer: Analyzer = {
       disclaimer: DISCLAIMER,
     };
 
+    const sourceEventIds = collectSourceEventIds(db);
+
     return {
       analyzer: "cost-attribution",
       updatedAt: now,
       data: costs as unknown as Record<string, unknown>,
       insightCount: 0,
+      sourceEventIds,
     };
   },
 };
+
+function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
+  try {
+    const result = db.exec(`
+      SELECT id FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+      ORDER BY ts DESC
+      LIMIT 20
+    `);
+    if (!result[0]?.values.length) return [];
+    return result[0].values.map((row) => row[0] as string);
+  } catch {
+    return [];
+  }
+}
 
 function computeByModel(
   db: AnalyzerContext["db"],
@@ -197,6 +223,71 @@ function computeDaysInPeriod(db: AnalyzerContext["db"]): number {
     );
   } catch {
     return 0;
+  }
+}
+
+/**
+ * 12C.14: Per-feature cost attribution via event_features join.
+ */
+function computeByFeature(
+  db: AnalyzerContext["db"],
+  pricing: Record<string, number>,
+): CostDimension[] {
+  try {
+    const result = db.exec(`
+      SELECT f.name as feature_name, COUNT(DISTINCT e.id) as cnt
+      FROM events e
+      JOIN event_features ef ON ef.event_id = e.id
+      JOIN features f ON f.id = ef.feature_id
+      WHERE e.source IN ('ai-session', 'mcp-active')
+      GROUP BY f.name
+      ORDER BY cnt DESC
+      LIMIT 10
+    `);
+    if (!result[0]?.values.length) return [];
+
+    const total = result[0].values.reduce((s, r) => s + (r[1] as number), 0);
+    return result[0].values.map((row) => ({
+      key: (row[0] as string) ?? "unknown",
+      eventCount: row[1] as number,
+      estimatedCost: 0,
+      percentage: total > 0 ? Math.round(((row[1] as number) / total) * 100) : 0,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 12C.14: Waste detection — cost attributed to outcome=abandoned sessions.
+ */
+function computeAbandonedWaste(
+  db: AnalyzerContext["db"],
+  pricing: Record<string, number>,
+): { eventCount: number; estimatedCost: number } {
+  try {
+    const result = db.exec(`
+      SELECT
+        COALESCE(json_extract(metadata, '$.model'), json_extract(metadata, '$.ai_tool'), 'unknown') as model,
+        COUNT(*) as cnt
+      FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND json_extract(metadata, '$.outcome') = 'abandoned'
+      GROUP BY model
+    `);
+    if (!result[0]?.values.length) return { eventCount: 0, estimatedCost: 0 };
+
+    let totalEvents = 0;
+    let totalCost = 0;
+    for (const row of result[0].values) {
+      const model = (row[0] as string) ?? "unknown";
+      const count = row[1] as number;
+      totalEvents += count;
+      totalCost += count * findPrice(model, pricing);
+    }
+    return { eventCount: totalEvents, estimatedCost: Math.round(totalCost * 100) / 100 };
+  } catch {
+    return { eventCount: 0, estimatedCost: 0 };
   }
 }
 

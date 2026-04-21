@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./analyzers/index.js";
+import { writeInsightMappings } from "./lineage.js";
 
 const INTELLIGENCE_DIR = "intelligence";
 
@@ -46,6 +47,12 @@ export class IntelligenceEngine {
         const result = await analyzer.run(ctx);
         writeResultAtomically(intelligenceDir, analyzer.outputFile, result.data);
         results.push(result);
+
+        // Write lineage mapping for bidirectional event↔insight lookup
+        if (result.sourceEventIds.length > 0) {
+          const insightId = `${analyzer.name}:${result.updatedAt}`;
+          writeInsightMappings(ctx.db, insightId, analyzer.name, result.sourceEventIds);
+        }
       } catch (err) {
         logger.debug(`Intelligence analyzer ${analyzer.name} failed (non-fatal)`, {
           error: err instanceof Error ? err.message : String(err),

@@ -233,7 +233,6 @@ Running `unfade` with no arguments starts the long-running server. This is the p
 
 | Command | Purpose |
 |---|---|
-| `unfade init` | Interactive setup: scaffold `.unfade/`, configure LLM provider, install shell hooks |
 | `unfade status` | Show today's reasoning metrics and identity (no server needed) |
 | `unfade query "..."` | Semantic search across reasoning history |
 | `unfade distill` | Trigger manual distillation (`--date`, `--backfill`, `--provider` flags) |

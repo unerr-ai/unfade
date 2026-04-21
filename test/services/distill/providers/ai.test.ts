@@ -15,13 +15,21 @@ describe("createLLMProvider", () => {
     expect(result).toBeNull();
   });
 
-  it("T-043b: creates ollama provider from default config", async () => {
-    const config = UnfadeConfigSchema.parse({});
+  it("T-043b: creates ollama provider from explicit ollama config", async () => {
+    const config = UnfadeConfigSchema.parse({
+      distill: { provider: "ollama", model: "llama3.2" },
+    });
     const result = await createLLMProvider(config);
     expect(result).not.toBeNull();
     expect(result?.provider).toBe("ollama");
     expect(result?.modelName).toBe("llama3.2");
     expect(result?.model).toBeDefined();
+  });
+
+  it("T-043b2: default config returns null (provider none)", async () => {
+    const config = UnfadeConfigSchema.parse({});
+    const result = await createLLMProvider(config);
+    expect(result).toBeNull();
   });
 
   it("T-043c: creates openai provider", async () => {

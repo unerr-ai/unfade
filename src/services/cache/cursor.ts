@@ -13,6 +13,8 @@ export interface StreamCursor {
   file: string;
   byteOffset: number;
   lastLineHash: string;
+  epoch?: string;      // SHA-256 of first 64 bytes — must match .epoch file
+  fileSize?: number;   // Total file size at cursor save time
 }
 
 export interface MaterializerCursor {
@@ -54,13 +56,34 @@ export function hashLine(line: string): string {
 }
 
 /**
+ * Read the `.epoch` companion file for a given JSONL file.
+ * Returns the epoch string (SHA-256 of first 64 bytes) or null if not present.
+ */
+export function readEpochFile(filePath: string): string | null {
+  const epochPath = `${filePath}.epoch`;
+  if (!existsSync(epochPath)) return null;
+  try {
+    return readFileSync(epochPath, "utf-8").trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Validate a cursor entry against the actual file content.
- * Returns false if the file was truncated or rewritten (hash mismatch).
+ * Returns false if the file was truncated or rewritten (hash mismatch),
+ * or if the epoch has changed (file was replaced).
  */
 export function isCursorValid(cursor: StreamCursor, filePath: string): boolean {
   if (!existsSync(filePath)) return false;
 
   try {
+    // Epoch check: if cursor has an epoch AND the .epoch file exists, they must match
+    if (cursor.epoch) {
+      const currentEpoch = readEpochFile(filePath);
+      if (currentEpoch !== null && currentEpoch !== cursor.epoch) return false;
+    }
+
     const content = readFileSync(filePath, "utf-8");
     if (content.length < cursor.byteOffset) return false;
 

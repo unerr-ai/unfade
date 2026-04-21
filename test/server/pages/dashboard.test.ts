@@ -1,7 +1,13 @@
 // T-146: Web UI — GET / returns Home page with new shell (Phase 7 rewrite)
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../../src/server/setup-state.js", () => ({
+  isSetupComplete: () => true,
+  invalidateSetupCache: () => {},
+}));
+
 import { createApp } from "../../../src/server/http.js";
 
 let tmpDir: string;

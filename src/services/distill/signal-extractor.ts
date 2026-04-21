@@ -282,6 +282,20 @@ function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
   // --- Debugging sessions ---
   const debuggingSessions = detectDebuggingSessions(commits);
 
+  // --- Execution phase breakdown from AI conversation metadata ---
+  const executionPhaseBreakdown: Record<string, number> = {};
+  for (const event of aiConversations) {
+    const phase = (event.metadata?.execution_phase as string) ?? "unknown";
+    executionPhaseBreakdown[phase] = (executionPhaseBreakdown[phase] ?? 0) + 1;
+  }
+
+  // --- Outcome breakdown from AI conversation metadata ---
+  const outcomeBreakdown: Record<string, number> = {};
+  for (const event of aiConversations) {
+    const outcome = (event.metadata?.outcome as string) ?? "unclassified";
+    outcomeBreakdown[outcome] = (outcomeBreakdown[outcome] ?? 0) + 1;
+  }
+
   return {
     date,
     decisions,
@@ -298,6 +312,9 @@ function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
       reverts: reverts.length,
       filesChanged: allFiles,
       domains,
+      executionPhaseBreakdown:
+        Object.keys(executionPhaseBreakdown).length > 0 ? executionPhaseBreakdown : undefined,
+      outcomeBreakdown: Object.keys(outcomeBreakdown).length > 0 ? outcomeBreakdown : undefined,
     },
   };
 }

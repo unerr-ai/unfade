@@ -23,6 +23,8 @@ type claudeEntry struct {
 	CWD        string        `json:"cwd"`
 	GitBranch  string        `json:"gitBranch"`
 	Sidechain  bool          `json:"isSidechain"`
+	Model      string        `json:"model"`
+	// Claude Code sometimes nests model in message
 }
 
 // claudeMessage holds the role and polymorphic content field.
@@ -236,6 +238,7 @@ func buildConversationTurns(entries []claudeEntry, project string) []Conversatio
 				ProjectPath:    firstNonEmpty(e.CWD, project),
 				ParentID:       e.ParentUUID,
 				ToolUse:        toolCalls,
+				Metadata:       buildClaudeTurnMetadata(e),
 			}
 			allTurns = append(allTurns, turn)
 		}
@@ -266,9 +269,23 @@ func tailConversationTurns(entries []claudeEntry, project string) []Conversation
 			ProjectPath:    firstNonEmpty(e.CWD, project),
 			ParentID:       e.ParentUUID,
 			ToolUse:        toolCalls,
+			Metadata:       buildClaudeTurnMetadata(&e),
 		})
 	}
 	return turns
+}
+
+// buildClaudeTurnMetadata extracts model_id and environment from a Claude entry.
+func buildClaudeTurnMetadata(e *claudeEntry) map[string]any {
+	meta := make(map[string]any)
+	if e.Model != "" {
+		meta["model_id"] = e.Model
+	}
+	// Derive environment from CWD and tool type
+	if e.CWD != "" {
+		meta["environment"] = "claude-code"
+	}
+	return meta
 }
 
 // walkChain follows the main (non-sidechain preferred) conversation path

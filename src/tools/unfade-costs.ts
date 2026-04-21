@@ -40,6 +40,10 @@ export function getCosts(
         durationMs: Date.now() - start,
         degraded: false,
         lastUpdated: data.updatedAt ?? null,
+        provenance: {
+          sourceEventIds: Array.isArray(data.sourceEventIds) ? data.sourceEventIds : [],
+          lineageUrl: "/api/lineage/",
+        },
       },
     };
   } catch {

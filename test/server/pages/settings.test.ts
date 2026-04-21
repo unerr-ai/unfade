@@ -1,7 +1,13 @@
-// T-149: Web UI — GET /settings returns settings page with "Connect AI Tools" MCP snippets
+// T-149: Web UI — GET /settings returns settings page with LLM config and integrations link
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../../src/server/setup-state.js", () => ({
+  isSetupComplete: () => true,
+  invalidateSetupCache: () => {},
+}));
+
 import { createApp } from "../../../src/server/http.js";
 
 let tmpDir: string;
@@ -38,44 +44,22 @@ describe("Settings page (GET /settings)", () => {
     expect(html).toContain("Settings");
   });
 
-  it("includes Connect AI Tools section with mcpServers config", async () => {
+  it("includes Connect AI Tools section with integrations link", async () => {
     const app = createApp();
     const res = await app.request("/settings");
     const html = await res.text();
     expect(html).toContain("Connect AI Tools");
-    expect(html).toContain("mcpServers");
+    expect(html).toContain("/integrations");
+    expect(html).toContain("Manage Integrations");
   });
 
-  it("includes Claude Code config snippet", async () => {
+  it("includes LLM provider form", async () => {
     const app = createApp();
     const res = await app.request("/settings");
     const html = await res.text();
-    expect(html).toContain("Claude Code");
-    expect(html).toContain("~/.claude/settings.json");
-    expect(html).toContain("unfade");
-  });
-
-  it("includes Cursor config snippet", async () => {
-    const app = createApp();
-    const res = await app.request("/settings");
-    const html = await res.text();
-    expect(html).toContain("Cursor");
-    expect(html).toContain(".cursor/mcp.json");
-  });
-
-  it("includes Windsurf config snippet", async () => {
-    const app = createApp();
-    const res = await app.request("/settings");
-    const html = await res.text();
-    expect(html).toContain("Windsurf");
-  });
-
-  it("includes generic MCP client config", async () => {
-    const app = createApp();
-    const res = await app.request("/settings");
-    const html = await res.text();
-    expect(html).toContain("Generic MCP Client");
-    expect(html).toContain("stdio");
+    expect(html).toContain("LLM Provider");
+    expect(html).toContain("provider");
+    expect(html).toContain("ollama");
   });
 
   it("shows capture engine status", async () => {
@@ -86,15 +70,12 @@ describe("Settings page (GET /settings)", () => {
     expect(html).toContain("Status");
   });
 
-  it("uses npx unfade mcp in all config snippets", async () => {
+  it("shows capture sources section", async () => {
     const app = createApp();
     const res = await app.request("/settings");
     const html = await res.text();
-    // The config shows "npx" and "unfade", "mcp" as command/args
-    expect(html).toContain("npx");
-    // At least 4 config blocks (Claude, Cursor, Windsurf, Generic)
-    const matches = html.match(/unfade.*mcp/g);
-    expect(matches).not.toBeNull();
-    expect(matches?.length).toBeGreaterThanOrEqual(4);
+    expect(html).toContain("Capture Sources");
+    expect(html).toContain("Git commits");
+    expect(html).toContain("AI sessions");
   });
 });

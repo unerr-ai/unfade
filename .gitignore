@@ -32,7 +32,7 @@ daemon/unfade-send.exe
 daemon/vendor/
 
 # --- Unfade runtime data ---
-# Created by `unfade init` — user-specific, never committed
+# Created by `unfade` — user-specific, never committed
 .unfade/
 
 # --- IDE ---

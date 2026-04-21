@@ -91,7 +91,7 @@ export async function daemonUpdateCommand(): Promise<void> {
     await daemonRestartCommand();
   } else {
     process.stderr.write(
-      theme.muted("Capture engine is not running — start it with `unfade init`\n"),
+      theme.muted("Capture engine is not running — start it with `unfade`\n"),
     );
   }
 }

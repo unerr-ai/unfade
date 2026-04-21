@@ -60,7 +60,7 @@ Distills exist and are queryable via MCP/HTTP -- but they're text files visible 
 |---|---|
 | **Unfade Card** | Web UI `/cards` page provides preview, generation for any date, and PNG download. API endpoint `POST /cards/generate` powers the interface. Rendering pipeline: satori (JSX to SVG) then resvg-js (SVG to PNG) -- dark theme, top decisions, domain tags, reasoning depth indicator. OG-compatible 1200x630 |
 | **Card sharing** | Card image generated locally via web UI. Developer shares manually (attach to tweet, paste in Slack). Hosting (unfade.dev/username) is a later-phase concern |
-| **Terminal capture** | Shell hooks installed during `unfade init` (reinstallable from web UI `/settings`). `unfade-send` Go binary sends IPC envelope to capture engine via Unix socket. Terminal events are P1 in signal hierarchy |
+| **Terminal capture** | Shell hooks installed during setup (reinstallable from web UI `/settings`). `unfade-send` Go binary sends IPC envelope to capture engine via Unix socket. Terminal events are P1 in signal hierarchy |
 | **Debugging detection** | Go daemon detects patterns: same command run 3x with different args -> "exploration pattern." Error then retry then success -> "debugging session" |
 | **Reasoning Profile** | Full `reasoning_model.json` v2 with decision style, trade-off preferences, domain depth, exploration patterns -- learned from accumulated data |
 | **Pattern Detection** | Identifies recurring patterns: "favors simplicity over flexibility," "evaluates 3+ alternatives for infrastructure," "tends to accept frontend defaults" |
@@ -159,7 +159,7 @@ The card data includes identity metrics from the personalization engine: Reasoni
 
 ### 4.2 Terminal Capture -- Shell Hook
 
-Shell hooks are installed during `unfade init` into the user's shell config (`.zshrc`, `.bashrc`). The hooks capture:
+Shell hooks are installed during setup into the user's shell config (`.zshrc`, `.bashrc`). The hooks capture:
 
 - **preexec**: command string and start timestamp
 - **precmd**: exit code and duration
@@ -274,7 +274,7 @@ src/
     cards/
       identity.ts            # Load identity data for card rendering
     shell/
-      installer.ts           # Shell hook installer (called from unfade init)
+      installer.ts           # Shell hook installer (called during setup)
     distill/
       amplifier.ts           # Cross-temporal and cross-domain connection detection
     personalization/
@@ -336,7 +336,7 @@ Go daemon writes to `events/`. TypeScript reads events and writes everything els
 
 3. **Debugging sessions are gold.** When terminal capture detects a debugging session (retries, errors, eventual success), this is the highest-value signal for distillation. The distill should highlight these as "exploration narratives."
 
-4. **Shell hooks are opt-in.** Installed during `unfade init` with explicit opt-in. Hook status is visible and reinstallable from the web UI `/settings` page. Idempotent installation.
+4. **Shell hooks are opt-in.** Installed during setup with explicit opt-in. Hook status is visible and reinstallable from the web UI `/settings` page. Idempotent installation.
 
 5. **Personalization is always transparent.** The developer can inspect their reasoning profile via web UI `/profile` page or `unfade_profile` MCP tool and see exactly why each pattern was detected, with confidence levels and example counts. No black boxes.
 

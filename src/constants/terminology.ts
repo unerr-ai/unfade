@@ -15,7 +15,7 @@ export const USER_TERMS = {
   distilling: "Distilling",
   profile: "Reasoning Fingerprint",
   unfadeDir: ".unfade",
-  initCommand: "unfade init",
+  initCommand: "unfade",
 } as const;
 
 export type UserTerm = keyof typeof USER_TERMS;

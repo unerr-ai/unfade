@@ -3,7 +3,13 @@
 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../../src/server/setup-state.js", () => ({
+  isSetupComplete: () => true,
+  invalidateSetupCache: () => {},
+}));
+
 import { createApp } from "../../../src/server/http.js";
 
 let tmpDir: string;

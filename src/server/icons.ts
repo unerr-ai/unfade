@@ -135,3 +135,8 @@ export const iconCards = (o?: IconOpts) =>
   svg('<rect width="18" height="12" x="3" y="6" rx="2"/><path d="m2 10 20-4"/>', o);
 export const iconTrendingUp = (o?: IconOpts) =>
   svg('<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>', o);
+export const iconPlug = (o?: IconOpts) =>
+  svg(
+    '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a6 6 0 0 1-6 6v0a6 6 0 0 1-6-6V8Z"/>',
+    o,
+  );

@@ -20,6 +20,84 @@ const (
 	aiDebounceDelay = 1 * time.Second
 )
 
+// sessionSeqCounters tracks monotonic sequence IDs per session across the process.
+var sessionSeqCounters = struct {
+	mu       sync.Mutex
+	counters map[string]int64
+}{counters: make(map[string]int64)}
+
+// nextSequenceID returns the next monotonic sequence number for the given session.
+func nextSequenceID(sessionID string) int64 {
+	if sessionID == "" {
+		return 0
+	}
+	sessionSeqCounters.mu.Lock()
+	defer sessionSeqCounters.mu.Unlock()
+	n := sessionSeqCounters.counters[sessionID]
+	sessionSeqCounters.counters[sessionID] = n + 1
+	return n
+}
+
+// sequencesFile is the path format for persistent sequence state.
+// Format: {"sessions": {"session-uuid": lastId}, "updated": "ISO"}
+type sequencesState struct {
+	Sessions map[string]int64 `json:"sessions"`
+	Updated  string           `json:"updated"`
+}
+
+// LoadSequenceCounters restores sequence counters from .unfade/state/sequences.json.
+// Called once at daemon startup.
+func LoadSequenceCounters(stateDir string) {
+	filePath := filepath.Join(stateDir, "sequences.json")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return // File doesn't exist yet — fresh start.
+	}
+
+	var state sequencesState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return // Corrupted — start fresh.
+	}
+
+	sessionSeqCounters.mu.Lock()
+	defer sessionSeqCounters.mu.Unlock()
+	for k, v := range state.Sessions {
+		sessionSeqCounters.counters[k] = v + 1 // +1 so next ID is monotonically after persisted max
+	}
+}
+
+// SaveSequenceCounters persists sequence counters to .unfade/state/sequences.json.
+// Called on daemon shutdown for crash recovery.
+func SaveSequenceCounters(stateDir string) error {
+	sessionSeqCounters.mu.Lock()
+	state := sequencesState{
+		Sessions: make(map[string]int64, len(sessionSeqCounters.counters)),
+		Updated:  time.Now().UTC().Format(time.RFC3339),
+	}
+	for k, v := range sessionSeqCounters.counters {
+		state.Sessions[k] = v
+	}
+	sessionSeqCounters.mu.Unlock()
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("marshal sequences: %w", err)
+	}
+
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+
+	return os.WriteFile(filepath.Join(stateDir, "sequences.json"), data, 0o644)
+}
+
+// ResetSequenceCounters clears in-memory counters (for testing).
+func ResetSequenceCounters() {
+	sessionSeqCounters.mu.Lock()
+	defer sessionSeqCounters.mu.Unlock()
+	sessionSeqCounters.counters = make(map[string]int64)
+}
+
 // AISessionWatcher implements CaptureSource — discovers AI tool data on disk
 // via pluggable parsers, tails new data, classifies conversations with the
 // heuristic Human Direction Score, and emits enriched CaptureEvents.
@@ -307,6 +385,80 @@ func conversationToEvent(convID string, turns []parsers.ConversationTurn, signal
 
 	detail := buildConversationDetail(turns)
 
+	// Extract enriched metadata for project-aware capture
+	filesReferenced, filesModified := extractFileInfo(turns)
+	toolCallsSummary := summarizeToolCalls(turns)
+	fullPrompt := extractFullPrompt(turns)
+	promptTimestamps := extractPromptTimestamps(turns)
+	iterationCount := countIterations(turns)
+	allPrompts := extractAllPrompts(turns)
+	executionPhase := classifyExecutionPhase(turns)
+	intentSummary := extractIntentSummary(turns)
+	sessionStart := extractSessionStart(turns)
+	conversationComplete := isConversationComplete(turns)
+	triggerContext := detectTriggerContext(turns)
+
+	// Derive repo name from project path
+	repoName := ""
+	if project != "" {
+		repoName = filepath.Base(project)
+	}
+
+	// Extract model and environment from turn metadata
+	modelID := ""
+	environment := ""
+	for _, t := range turns {
+		if m, ok := t.Metadata["model_id"].(string); ok && m != "" && modelID == "" {
+			modelID = m
+		}
+		if e, ok := t.Metadata["environment"].(string); ok && e != "" && environment == "" {
+			environment = e
+		}
+	}
+
+	metadata := map[string]any{
+		"ai_tool":           toolName,
+		"session_id":        sessionID,
+		"conversation_id":   convID,
+		"turn_count":        len(turns),
+		"direction_signals": signals,
+		// Project context
+		"repo_root": project,
+		"repo_name": repoName,
+		// Monotonic sequence (11B.4)
+		"sequence_id": nextSequenceID(sessionID),
+		// Interaction depth
+		"prompt_full":        fullPrompt,
+		"prompts_all":        allPrompts,
+		"prompt_count":       len(allPrompts),
+		"files_referenced":   filesReferenced,
+		"files_modified":     filesModified,
+		"tool_calls_summary": toolCallsSummary,
+		"iteration_count":    iterationCount,
+		// Intelligence (11D)
+		"execution_phase": executionPhase,
+		"intent_summary":  intentSummary,
+		"trigger_context": triggerContext,
+		// Session lifecycle (11D.4)
+		"session_start":         sessionStart,
+		"conversation_complete": conversationComplete,
+		// Model/environment (11D.6)
+		"model_id":    modelID,
+		"environment": environment,
+		// Temporal
+		"prompt_timestamps": promptTimestamps,
+		// Feature signals
+		"feature_signals": map[string]any{
+			"branch":        branch,
+			"file_cluster":  uniqueFromSlices(filesReferenced, filesModified),
+			"dominant_path": dominantFilePath(filesReferenced, filesModified),
+		},
+	}
+
+	// Collect files for the Content.Files field
+	allFiles := make([]string, 0, len(filesModified))
+	allFiles = append(allFiles, filesModified...)
+
 	return CaptureEvent{
 		ID:        uuid.New().String(),
 		Timestamp: ts.UTC().Format(time.RFC3339),
@@ -317,15 +469,333 @@ func conversationToEvent(convID string, turns []parsers.ConversationTurn, signal
 			Detail:  detail,
 			Branch:  branch,
 			Project: project,
+			Files:   allFiles,
 		},
-		Metadata: map[string]any{
-			"ai_tool":           toolName,
-			"session_id":        sessionID,
-			"conversation_id":   convID,
-			"turn_count":        len(turns),
-			"direction_signals": signals,
-		},
+		Metadata: metadata,
 	}
+}
+
+// extractFullPrompt returns the full text of the first user prompt (up to 10KB).
+func extractFullPrompt(turns []parsers.ConversationTurn) string {
+	for _, t := range turns {
+		if t.Role == "user" && len(strings.TrimSpace(t.Content)) > 5 {
+			content := strings.TrimSpace(t.Content)
+			if len(content) > 10240 {
+				content = content[:10240] + "... [truncated]"
+			}
+			return content
+		}
+	}
+	return ""
+}
+
+// extractAllPrompts returns all user prompts (max 20 entries, 5KB quality cap each).
+func extractAllPrompts(turns []parsers.ConversationTurn) []string {
+	const maxEntries = 20
+	const maxBytes = 5120
+
+	var prompts []string
+	for _, t := range turns {
+		if t.Role == "user" && len(strings.TrimSpace(t.Content)) > 5 {
+			content := strings.TrimSpace(t.Content)
+			if len(content) > maxBytes {
+				content = content[:maxBytes] + "... [truncated]"
+			}
+			prompts = append(prompts, content)
+			if len(prompts) >= maxEntries {
+				break
+			}
+		}
+	}
+	return prompts
+}
+
+// classifyExecutionPhase derives the execution phase from prompt keywords and tool patterns.
+// Priority order: debugging > testing > refactoring > reviewing > configuring > exploring > implementing.
+func classifyExecutionPhase(turns []parsers.ConversationTurn) string {
+	// Collect all user prompt text (lowercased) for keyword matching.
+	var promptText strings.Builder
+	for _, t := range turns {
+		if t.Role == "user" {
+			promptText.WriteString(strings.ToLower(t.Content))
+			promptText.WriteString(" ")
+		}
+	}
+	text := promptText.String()
+
+	// Priority 1: debugging
+	debugKeywords := []string{"debug", "fix", "error", "broken", "not working", "fails", "crash"}
+	for _, kw := range debugKeywords {
+		if strings.Contains(text, kw) {
+			return "debugging"
+		}
+	}
+
+	// Priority 2: testing
+	testKeywords := []string{"test", "spec", "coverage", "assert"}
+	for _, kw := range testKeywords {
+		if strings.Contains(text, kw) {
+			return "testing"
+		}
+	}
+
+	// Priority 3: refactoring
+	refactorKeywords := []string{"refactor", "rename", "extract", "move", "clean up", "simplify"}
+	for _, kw := range refactorKeywords {
+		if strings.Contains(text, kw) {
+			return "refactoring"
+		}
+	}
+
+	// Priority 4: reviewing (keyword + no files modified)
+	reviewKeywords := []string{"review", "check", "audit"}
+	_, filesModified := extractFileInfo(turns)
+	for _, kw := range reviewKeywords {
+		if strings.Contains(text, kw) && len(filesModified) == 0 {
+			return "reviewing"
+		}
+	}
+
+	// Priority 5: configuring
+	configKeywords := []string{"configure", "setup", "install", ".env", "package.json"}
+	for _, kw := range configKeywords {
+		if strings.Contains(text, kw) {
+			return "configuring"
+		}
+	}
+
+	// Priority 6: exploring (only Read/Grep/Glob, no Edit/Write)
+	hasReadTools := false
+	hasWriteTools := false
+	for _, t := range turns {
+		for _, tc := range t.ToolUse {
+			switch tc.Name {
+			case "Read", "Grep", "Glob":
+				hasReadTools = true
+			case "Edit", "Write":
+				hasWriteTools = true
+			}
+		}
+	}
+	if hasReadTools && !hasWriteTools {
+		return "exploring"
+	}
+
+	// Default: implementing
+	return "implementing"
+}
+
+// extractIntentSummary extracts the first sentence of the first user prompt, max 200 chars.
+func extractIntentSummary(turns []parsers.ConversationTurn) string {
+	for _, t := range turns {
+		if t.Role == "user" && len(strings.TrimSpace(t.Content)) > 5 {
+			content := strings.TrimSpace(t.Content)
+			// Find first sentence boundary (., !, ?, or newline).
+			end := len(content)
+			for i, c := range content {
+				if c == '.' || c == '!' || c == '?' || c == '\n' {
+					end = i + 1
+					break
+				}
+			}
+			sentence := strings.TrimSpace(content[:end])
+			if len(sentence) > 200 {
+				sentence = sentence[:200]
+			}
+			return sentence
+		}
+	}
+	return ""
+}
+
+// detectTriggerContext determines what triggered this conversation.
+// Returns "continuation" if same branch + same files within 2h of previous event,
+// "mcp_invoked" if the prompt references MCP, otherwise "user_initiated".
+func detectTriggerContext(turns []parsers.ConversationTurn) string {
+	// Check for MCP invocation signals
+	for _, t := range turns {
+		if t.Role == "user" {
+			lower := strings.ToLower(t.Content)
+			if strings.Contains(lower, "mcp") || strings.Contains(lower, "unfade-context") || strings.Contains(lower, "unfade-query") {
+				return "mcp_invoked"
+			}
+		}
+		// Check tool calls for MCP-related inputs
+		for _, tc := range t.ToolUse {
+			if strings.HasPrefix(tc.Name, "mcp__") {
+				return "mcp_invoked"
+			}
+		}
+	}
+
+	// Check for continuation signals in metadata
+	for _, t := range turns {
+		if meta, ok := t.Metadata["trigger"]; ok {
+			if trigger, ok := meta.(string); ok && trigger == "continuation" {
+				return "continuation"
+			}
+		}
+	}
+
+	return "user_initiated"
+}
+
+// extractSessionStart returns the earliest timestamp from all turns.
+func extractSessionStart(turns []parsers.ConversationTurn) string {
+	var earliest time.Time
+	for _, t := range turns {
+		if !t.Timestamp.IsZero() {
+			if earliest.IsZero() || t.Timestamp.Before(earliest) {
+				earliest = t.Timestamp
+			}
+		}
+	}
+	if earliest.IsZero() {
+		return ""
+	}
+	return earliest.UTC().Format(time.RFC3339)
+}
+
+// isConversationComplete returns true when the last turn is an assistant response
+// without any pending user follow-up (natural end).
+func isConversationComplete(turns []parsers.ConversationTurn) bool {
+	if len(turns) == 0 {
+		return false
+	}
+	last := turns[len(turns)-1]
+	return last.Role == "assistant"
+}
+
+// extractFileInfo extracts referenced and modified files from tool calls.
+func extractFileInfo(turns []parsers.ConversationTurn) (referenced, modified []string) {
+	refSet := make(map[string]bool)
+	modSet := make(map[string]bool)
+
+	for _, t := range turns {
+		for _, tc := range t.ToolUse {
+			fp := extractFilePath(tc.Input)
+			if fp == "" {
+				continue
+			}
+			switch tc.Name {
+			case "Read", "Glob", "Grep":
+				refSet[fp] = true
+			case "Edit", "Write":
+				modSet[fp] = true
+				refSet[fp] = true
+			default:
+				// Other tools with file paths are references
+				if fp != "" {
+					refSet[fp] = true
+				}
+			}
+		}
+	}
+
+	referenced = mapKeys(refSet)
+	modified = mapKeys(modSet)
+	return
+}
+
+// extractFilePath attempts to extract a file_path or path from a tool input JSON string.
+func extractFilePath(input string) string {
+	if input == "" {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(input), &parsed); err != nil {
+		return ""
+	}
+	if fp, ok := parsed["file_path"].(string); ok && fp != "" {
+		return fp
+	}
+	if p, ok := parsed["path"].(string); ok && p != "" {
+		return p
+	}
+	return ""
+}
+
+// summarizeToolCalls returns a compact summary of tool usage in the conversation.
+func summarizeToolCalls(turns []parsers.ConversationTurn) []map[string]any {
+	var summary []map[string]any
+	for _, t := range turns {
+		if t.Role != "assistant" {
+			continue
+		}
+		for _, tc := range t.ToolUse {
+			entry := map[string]any{"name": tc.Name}
+			fp := extractFilePath(tc.Input)
+			if fp != "" {
+				entry["target"] = fp
+			}
+			summary = append(summary, entry)
+			if len(summary) >= 50 {
+				return summary // Cap at 50 tool calls
+			}
+		}
+	}
+	return summary
+}
+
+// extractPromptTimestamps returns ISO timestamps of all user prompts.
+func extractPromptTimestamps(turns []parsers.ConversationTurn) []string {
+	var timestamps []string
+	for _, t := range turns {
+		if t.Role == "user" && !t.Timestamp.IsZero() {
+			timestamps = append(timestamps, t.Timestamp.UTC().Format(time.RFC3339))
+		}
+	}
+	return timestamps
+}
+
+// countIterations counts back-and-forth exchanges (user→assistant pairs).
+func countIterations(turns []parsers.ConversationTurn) int {
+	count := 0
+	for _, t := range turns {
+		if t.Role == "user" {
+			count++
+		}
+	}
+	return count
+}
+
+// uniqueFromSlices combines two string slices and deduplicates.
+func uniqueFromSlices(a, b []string) []string {
+	seen := make(map[string]bool)
+	for _, s := range a {
+		seen[s] = true
+	}
+	for _, s := range b {
+		seen[s] = true
+	}
+	return mapKeys(seen)
+}
+
+// dominantFilePath returns the most common directory prefix among the file paths.
+func dominantFilePath(referenced, modified []string) string {
+	dirs := make(map[string]int)
+	for _, f := range append(referenced, modified...) {
+		dir := filepath.Dir(f)
+		dirs[dir]++
+	}
+	best := ""
+	bestCount := 0
+	for dir, count := range dirs {
+		if count > bestCount {
+			best = dir
+			bestCount = count
+		}
+	}
+	return best
+}
+
+// mapKeys returns the keys of a map[string]bool as a sorted slice.
+func mapKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func buildConversationDetail(turns []parsers.ConversationTurn) string {
@@ -383,15 +853,4 @@ func truncateSummary(s string) string {
 		return s[:197] + "..."
 	}
 	return s
-}
-
-// marshalSignals converts DirectionSignals to a JSON-safe map.
-func marshalSignals(s parsers.DirectionSignals) map[string]any {
-	data, err := json.Marshal(s)
-	if err != nil {
-		return nil
-	}
-	var m map[string]any
-	_ = json.Unmarshal(data, &m)
-	return m
 }

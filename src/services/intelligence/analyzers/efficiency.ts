@@ -28,13 +28,20 @@ export const efficiencyAnalyzer: Analyzer = {
     const context = computeContextLeverage(db);
     const modification = computeModificationDepth(db);
 
-    const aes = Math.round(
+    // 12C.14: Execution phase normalization — planning sessions weighted 1.5×, debug 0.7×
+    const phaseMultiplier = computePhaseMultiplier(db);
+
+    // 12C.14: Outcome-adjusted scoring — penalize sessions with outcome=failure
+    const outcomeAdjustment = computeOutcomeAdjustment(db);
+
+    const rawAes =
       direction.value * WEIGHTS.directionDensity +
-        tokenEff.value * WEIGHTS.tokenEfficiency +
-        iteration.value * WEIGHTS.iterationRatio +
-        context.value * WEIGHTS.contextLeverage +
-        modification.value * WEIGHTS.modificationDepth,
-    );
+      tokenEff.value * WEIGHTS.tokenEfficiency +
+      iteration.value * WEIGHTS.iterationRatio +
+      context.value * WEIGHTS.contextLeverage +
+      modification.value * WEIGHTS.modificationDepth;
+
+    const aes = Math.round(Math.min(100, Math.max(0, rawAes * phaseMultiplier * outcomeAdjustment)));
 
     const minConfidence = [direction, tokenEff, iteration, context, modification].reduce(
       (min, m) => {
@@ -64,14 +71,33 @@ export const efficiencyAnalyzer: Analyzer = {
       period: "24h",
     };
 
+    const sourceEventIds = collectSourceEventIds(db);
+
     return {
       analyzer: "efficiency",
       updatedAt: now,
       data: efficiency as unknown as Record<string, unknown>,
       insightCount: topInsight ? 1 : 0,
+      sourceEventIds,
     };
   },
 };
+
+function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
+  try {
+    const result = db.exec(`
+      SELECT id FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND ts >= datetime('now', '-24 hours')
+      ORDER BY ts DESC
+      LIMIT 20
+    `);
+    if (!result[0]?.values.length) return [];
+    return result[0].values.map((row) => row[0] as string);
+  } catch {
+    return [];
+  }
+}
 
 function computeDirectionDensity(db: AnalyzerContext["db"]): EfficiencySubMetric {
   try {
@@ -252,4 +278,59 @@ function generateInsight(
   }
 
   return null;
+}
+
+/**
+ * 12C.14: Compute phase-weighted multiplier.
+ * Planning sessions = 1.5× weight (high-value), debugging = 0.7× (lower signal).
+ */
+function computePhaseMultiplier(db: AnalyzerContext["db"]): number {
+  try {
+    const result = db.exec(`
+      SELECT
+        SUM(CASE WHEN json_extract(metadata, '$.execution_phase') IN ('planning', 'designing') THEN 1 ELSE 0 END) as planning,
+        SUM(CASE WHEN json_extract(metadata, '$.execution_phase') IN ('debugging', 'investigating') THEN 1 ELSE 0 END) as debugging,
+        COUNT(*) as total
+      FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND ts >= datetime('now', '-24 hours')
+    `);
+    const planning = (result[0]?.values[0]?.[0] as number) ?? 0;
+    const debugging = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const total = (result[0]?.values[0]?.[2] as number) ?? 0;
+    if (total === 0) return 1.0;
+
+    const planningRatio = planning / total;
+    const debuggingRatio = debugging / total;
+    // Weighted: planning boosts score, debugging dampens it
+    return 1.0 + (planningRatio * 0.5) - (debuggingRatio * 0.3);
+  } catch {
+    return 1.0;
+  }
+}
+
+/**
+ * 12C.14: Outcome-adjusted scoring — sessions with outcome=failure reduce AES.
+ */
+function computeOutcomeAdjustment(db: AnalyzerContext["db"]): number {
+  try {
+    const result = db.exec(`
+      SELECT
+        SUM(CASE WHEN json_extract(metadata, '$.outcome') = 'failure' THEN 1 ELSE 0 END) as failures,
+        COUNT(*) as total
+      FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND ts >= datetime('now', '-24 hours')
+        AND json_extract(metadata, '$.outcome') IS NOT NULL
+    `);
+    const failures = (result[0]?.values[0]?.[0] as number) ?? 0;
+    const total = (result[0]?.values[0]?.[1] as number) ?? 0;
+    if (total === 0) return 1.0;
+
+    const failureRatio = failures / total;
+    // Up to 20% penalty for high failure rate
+    return 1.0 - (failureRatio * 0.2);
+  } catch {
+    return 1.0;
+  }
 }

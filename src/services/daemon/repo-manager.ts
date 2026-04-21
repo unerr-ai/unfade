@@ -2,16 +2,20 @@
 // UF-307: Manages N EmbeddedDaemon + N MaterializerDaemon pairs, one per registered repo.
 // Used by unfade-server.ts for startup, hot-add from registry watcher, and graceful shutdown.
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { loadConfig } from "../../config/manager.js";
 import { logger } from "../../utils/logger.js";
-import { getProjectDataDir } from "../../utils/paths.js";
+import { getEventsDir, getProjectDataDir } from "../../utils/paths.js";
 import { MaterializerDaemon } from "../cache/materializer-daemon.js";
 import {
   aggregateComprehensionByModule,
   computeComprehensionBatch,
   upsertComprehensionScores,
 } from "../intelligence/comprehension.js";
+import { assignEventsToFeatures, linkRelatedEvents } from "../intelligence/feature-boundary.js";
 import { computeDirectionByFile } from "../intelligence/file-direction.js";
+import { classifyAllUnclassified } from "../intelligence/outcome-classifier.js";
 import { appendRecentInsight } from "../intelligence/recent-insights.js";
 import { writePartialSnapshot } from "../intelligence/snapshot.js";
 import { writeSummary } from "../intelligence/summary-writer.js";
@@ -46,8 +50,20 @@ export class RepoManager {
       return null;
     }
 
-    const daemon = new EmbeddedDaemon(entry.root);
+    const daemon = new EmbeddedDaemon(entry.root, {
+      onRestart: (attempt, repoRoot) => {
+        appendRecentInsight(repoRoot, {
+          claim: `Capture engine restarted (attempt ${attempt})`,
+          insightType: "system",
+          severity: "warning",
+          metrics: { restartAttempt: attempt },
+        });
+      },
+    });
     daemon.start();
+
+    // 11A.4: Wait for ingest lock to clear before materializer processes
+    await waitForIngestClear(entry.root);
 
     const repoConfig = loadConfig({ projectDataDir: getProjectDataDir(entry.root) });
     const materializer = createMaterializerForRepo(entry.root, repoConfig);
@@ -164,11 +180,31 @@ export class RepoManager {
   }
 }
 
+/**
+ * 11A.4: Wait for the Go daemon's ingest lock to clear before starting materialization.
+ * Polls every 500ms, gives up after 30s (materializer tick-based deferral will handle it).
+ */
+async function waitForIngestClear(repoRoot: string, timeoutMs = 30_000): Promise<void> {
+  const lockPath = join(getEventsDir(repoRoot), ".ingest.lock");
+  if (!existsSync(lockPath)) return;
+
+  logger.debug("Waiting for ingest lock to clear", { repoRoot });
+  const deadline = Date.now() + timeoutMs;
+  while (existsSync(lockPath) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  if (existsSync(lockPath)) {
+    logger.debug("Ingest lock still present after timeout — materializer will defer per-tick");
+  }
+}
+
 function createMaterializerForRepo(
   repoRoot: string,
   config: ReturnType<typeof loadConfig>,
 ): MaterializerDaemon {
   let lastPartialMs = 0;
+  let engine: import("../intelligence/engine.js").IntelligenceEngine | null = null;
 
   return new MaterializerDaemon({
     intervalMs: 2000,
@@ -185,9 +221,10 @@ function createMaterializerForRepo(
         const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
         const recentResult = db.exec(
           `SELECT id, source, metadata FROM events
-           WHERE ts >= '${cutoff}' AND source IN ('ai-session', 'mcp-active')
+           WHERE ts >= ? AND source IN ('ai-session', 'mcp-active')
              AND id NOT IN (SELECT event_id FROM comprehension_proxy)
            LIMIT 100`,
+          [cutoff],
         );
 
         if (recentResult[0]?.values.length) {
@@ -204,6 +241,29 @@ function createMaterializerForRepo(
         computeDirectionByFile(db);
       } catch {
         // non-fatal
+      }
+
+      // Feature boundary detection and event linking
+      try {
+        const recentIds = db.exec(
+          `SELECT id FROM events WHERE id NOT IN (SELECT event_id FROM event_features) ORDER BY ts DESC LIMIT ?`,
+          [newRows + 10],
+        );
+        const unlinkedIds = (recentIds[0]?.values ?? []).map((r) => r[0] as string);
+        if (unlinkedIds.length > 0) {
+          assignEventsToFeatures(db, unlinkedIds);
+          linkRelatedEvents(db, unlinkedIds);
+        }
+      } catch {
+        // non-fatal — feature detection is additive
+      }
+
+      // 12C.13: Materialize session metrics
+      try {
+        const { materializeSessionMetrics } = await import("../intelligence/session-materializer.js");
+        materializeSessionMetrics(db);
+      } catch {
+        // non-fatal — session materialization is additive
       }
 
       try {
@@ -236,6 +296,58 @@ function createMaterializerForRepo(
             costPerDirectedDecision: summary.costPerDirectedDecision,
           },
         });
+      } catch {
+        // non-fatal
+      }
+
+      // 12A.5: Outcome classification (before intelligence engine)
+      try {
+        classifyAllUnclassified(db);
+      } catch {
+        // non-fatal — classification is additive
+      }
+
+      // 12A.2: Intelligence Engine — runs all registered analyzers (10s throttle)
+      try {
+        if (!engine) {
+          const { IntelligenceEngine } = await import("../intelligence/engine.js");
+          const { allAnalyzers } = await import("../intelligence/analyzers/all.js");
+          engine = new IntelligenceEngine({ minIntervalMs: 10_000 });
+          for (const analyzer of allAnalyzers) {
+            engine.register(analyzer);
+          }
+        }
+        const results = await engine.run({
+          repoRoot,
+          db,
+          config: config as unknown as Record<string, unknown>,
+        });
+
+        // 12B.9: Fire proactive actions on intelligence update
+        if (results.length > 0) {
+          const { getActionRunner } = await import("../actions/index.js");
+          const runner = getActionRunner();
+          const actionCtx = {
+            repoRoot,
+            config: config as unknown as import("../../schemas/config.js").UnfadeConfig,
+            trigger: "intelligence_update" as const,
+          };
+          await runner.fire("intelligence_update", actionCtx);
+        }
+      } catch {
+        // non-fatal — intelligence is additive
+      }
+
+      // 12B.9: Check weekly digest schedule
+      try {
+        const { getActionRunner } = await import("../actions/index.js");
+        const runner = getActionRunner();
+        const actionCtx = {
+          repoRoot,
+          config: config as unknown as import("../../schemas/config.js").UnfadeConfig,
+          trigger: "schedule_weekly" as const,
+        };
+        await runner.fire("schedule_weekly", actionCtx);
       } catch {
         // non-fatal
       }

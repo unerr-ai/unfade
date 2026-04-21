@@ -29,6 +29,30 @@ velocityPage.get("/velocity", (c) => {
         <div class="text-xs text-muted mt-1" id="vel-points"></div>
       </div>
 
+      <!-- Decision Durability (12C.7) -->
+      <div id="dur-section" class="hidden mb-6">
+        <h2 class="font-heading text-lg font-semibold mb-4">Decision Durability</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <div class="bg-surface border border-border rounded-lg p-4 text-center">
+            <div class="text-xs text-muted uppercase tracking-wider mb-1">Held Rate</div>
+            <div class="font-mono text-2xl font-bold text-success" id="dur-held-rate">—</div>
+          </div>
+          <div class="bg-surface border border-border rounded-lg p-4 text-center">
+            <div class="text-xs text-muted uppercase tracking-wider mb-1">Total Tracked</div>
+            <div class="font-mono text-2xl font-bold" id="dur-total">—</div>
+          </div>
+          <div class="bg-surface border border-border rounded-lg p-4 text-center">
+            <div class="text-xs text-muted uppercase tracking-wider mb-1">Deep Deliberation</div>
+            <div class="font-mono text-2xl font-bold" id="dur-deep">—</div>
+          </div>
+          <div class="bg-surface border border-border rounded-lg p-4 text-center">
+            <div class="text-xs text-muted uppercase tracking-wider mb-1">Quick Decisions</div>
+            <div class="font-mono text-2xl font-bold" id="dur-quick">—</div>
+          </div>
+        </div>
+        <p class="text-xs text-muted">Decisions that "hold" (files not significantly changed within 4 weeks) vs "revised."</p>
+      </div>
+
       <!-- Per-domain sparkline grid -->
       <h2 class="font-heading text-lg font-semibold mb-4">By Domain</h2>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="vel-domains"></div>
@@ -97,6 +121,19 @@ velocityPage.get("/velocity", (c) => {
           '</div>';
         }).join('');
       }).catch(function(){loading.classList.add('hidden');empty.classList.remove('hidden');});
+
+      // 12C.7: Decision durability section
+      fetch('/api/intelligence/decision-durability').then(function(r){
+        if(r.status===204||!r.ok)return null;
+        return r.json();
+      }).then(function(data){
+        if(!data||!data.stats||data.stats.totalTracked===0)return;
+        document.getElementById('dur-section').classList.remove('hidden');
+        document.getElementById('dur-held-rate').textContent=data.stats.heldRate+'%';
+        document.getElementById('dur-total').textContent=String(data.stats.totalTracked);
+        document.getElementById('dur-deep').textContent=data.stats.deepDeliberationHeldRate!==null?data.stats.deepDeliberationHeldRate+'%':'—';
+        document.getElementById('dur-quick').textContent=data.stats.quickDecisionHeldRate!==null?data.stats.quickDecisionHeldRate+'%':'—';
+      }).catch(function(){});
     })();
     </script>
   `;

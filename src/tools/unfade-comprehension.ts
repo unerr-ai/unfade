@@ -65,6 +65,10 @@ export async function getComprehension(cwd?: string): Promise<ComprehensionResul
       durationMs: Date.now() - start,
       degraded: false,
       lastUpdated: new Date().toISOString(),
+      provenance: {
+        sourceEventIds: [],
+        lineageUrl: "/api/lineage/",
+      },
     },
   };
 }

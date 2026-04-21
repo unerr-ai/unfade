@@ -16,10 +16,12 @@ import {
   iconHome,
   iconMenu,
   iconMoon,
+  iconPlug,
   iconSearch,
   iconSettings,
   iconSun,
   iconTarget,
+  iconTerminalSquare,
   iconTrendingUp,
   iconUser,
   iconX,
@@ -104,6 +106,8 @@ const NAV_SECONDARY: NavItem[] = [
   { path: "/portfolio", label: "Portfolio", icon: iconFolder() },
   { path: "/search", label: "Search", icon: iconSearch() },
   { path: "/velocity", label: "Velocity", icon: iconTrendingUp() },
+  { path: "/integrations", label: "Integrations", icon: iconPlug() },
+  { path: "/logs", label: "Logs", icon: iconTerminalSquare() },
 ];
 
 function renderNavItem(item: NavItem): string {
@@ -116,9 +120,37 @@ function renderNavItem(item: NavItem): string {
 
 export interface LayoutOptions {
   alertCount?: number;
+  /** Render minimal shell (no sidebar, no live strip) — used for setup/onboarding */
+  minimal?: boolean;
 }
 
 export function layout(title: string, content: string, options?: LayoutOptions): string {
+  if (options?.minimal) {
+    return `<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)} — Unfade</title>
+  <style>${THEME_VARS}${BASE_CSS}</style>
+  <script>(function(){var s=localStorage.getItem('unfade-theme');if(s==='light')document.documentElement.classList.add('light');})();</script>
+  <link rel="icon" type="image/svg+xml" href="/public/icon.svg">
+  <link rel="icon" type="image/png" href="/public/icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>${TAILWIND_CONFIG}</script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body class="bg-canvas text-foreground font-body antialiased m-0 p-0 flex items-center justify-center min-h-screen">
+  <main class="w-full max-w-[720px] mx-auto px-6 py-8">
+    ${content}
+  </main>
+</body>
+</html>`;
+  }
+
   const alertCount = options?.alertCount ?? 0;
   const alertBadge = alertCount > 0 ? `<span class="badge nav-label">${alertCount}</span>` : "";
 

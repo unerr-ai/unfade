@@ -1,7 +1,13 @@
 // Tests for UF-050: HTTP server setup
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../../src/server/setup-state.js", () => ({
+  isSetupComplete: () => true,
+  invalidateSetupCache: () => {},
+}));
+
 import { createApp } from "../../src/server/http.js";
 
 describe("createApp", () => {
@@ -11,14 +17,14 @@ describe("createApp", () => {
     expect(typeof app.fetch).toBe("function");
   });
 
-  it("health check returns 200 with status ok", async () => {
+  it("health check returns 200 with status", async () => {
     const app = createApp();
-    const res = await app.request("/unfade/health");
+    const res = await app.request("/api/system/health");
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.status).toBe("ok");
-    expect(body.version).toBe("0.1.0");
-    expect(body.pid).toBe(process.pid);
+    expect(["ok", "degraded"]).toContain(body.data.status);
+    expect(body.data.version).toBe("0.1.0");
+    expect(body.data.pid).toBe(process.pid);
   });
 
   it("returns JSON error for unknown routes", async () => {
@@ -29,7 +35,7 @@ describe("createApp", () => {
 
   it("includes CORS headers for localhost origins", async () => {
     const app = createApp();
-    const res = await app.request("/unfade/health", {
+    const res = await app.request("/api/system/health", {
       headers: { Origin: "http://localhost:7654" },
     });
     expect(res.status).toBe(200);
@@ -39,7 +45,7 @@ describe("createApp", () => {
 
   it("blocks CORS from non-localhost origins", async () => {
     const app = createApp();
-    const res = await app.request("/unfade/health", {
+    const res = await app.request("/api/system/health", {
       headers: { Origin: "http://example.com" },
     });
     // Response still succeeds but CORS header should not match

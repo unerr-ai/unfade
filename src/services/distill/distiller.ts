@@ -21,7 +21,7 @@ import { notify } from "../notification/notifier.js";
 import { detectCrossSessionPatterns } from "../personalization/cross-session-detector.js";
 import { detectBlindSpots } from "../personalization/feedback.js";
 import { surfaceablePatterns } from "../personalization/pattern-detector.js";
-import { updateProfile, updateProfileV2 } from "../personalization/profile-builder.js";
+import { updateProfileV2 } from "../personalization/profile-builder.js";
 import { amplifyV2 } from "./amplifier.js";
 import { linkContext } from "./context-linker.js";
 import { generateDecisionRecords } from "./decision-records.js";
@@ -123,8 +123,7 @@ export async function distill(
     }
   }
 
-  // Update personalization profiles (v1 + v2)
-  updateProfile(result, signals, cwd);
+  // Update personalization profile
   const v2Profile = updateProfileV2(result, signals, cwd);
 
   // Write daily metric snapshot (RDI + identity labels)
@@ -150,7 +149,27 @@ export async function distill(
   const crossPatterns = detectCrossSessionPatterns(cwd);
   const amplifiedSection = formatAmplifiedSection(crossPatterns);
 
-  // Write distill markdown (with personalization + connections + insight + direction + amplified)
+  // 12C.2/12C.4: Compute value receipt and debugging arcs sections
+  let valueReceiptSection = "";
+  let debuggingArcsSection = "";
+  try {
+    const { CacheManager } = await import("../cache/manager.js");
+    const cache = new CacheManager(cwd);
+    const db = await cache.getDb();
+    if (db) {
+      const { computeValueReceipt, formatValueReceiptSection } = await import("../intelligence/value-receipt.js");
+      const receipt = computeValueReceipt(db, config.pricing as Record<string, number> | undefined);
+      valueReceiptSection = formatValueReceiptSection(receipt);
+
+      const { detectDebuggingArcs, formatDebuggingArcsSection } = await import("../intelligence/debugging-arcs.js");
+      const arcs = detectDebuggingArcs(db);
+      debuggingArcsSection = formatDebuggingArcsSection(arcs);
+    }
+  } catch {
+    // non-fatal — value receipt and debugging arcs are additive
+  }
+
+  // Write distill markdown (with personalization + connections + insight + direction + amplified + value receipt + arcs)
   const distillPath = writeDistill(
     date,
     result,
@@ -160,6 +179,8 @@ export async function distill(
     insightSection,
     directionSection,
     amplifiedSection,
+    valueReceiptSection,
+    debuggingArcsSection,
   );
 
   // Generate decision records for significant human-directed decisions
@@ -405,6 +426,8 @@ function writeDistill(
   insightSection?: string,
   directionSection?: string,
   amplifiedSection?: string,
+  valueReceiptSection?: string,
+  debuggingArcsSection?: string,
 ): string {
   const distillsDir = getDistillsDir(cwd);
   mkdirSync(distillsDir, { recursive: true });
@@ -426,6 +449,12 @@ function writeDistill(
   }
   if (insightSection) {
     markdown = insertBeforeFooter(markdown, insightSection);
+  }
+  if (valueReceiptSection) {
+    markdown = insertBeforeFooter(markdown, valueReceiptSection);
+  }
+  if (debuggingArcsSection) {
+    markdown = insertBeforeFooter(markdown, debuggingArcsSection);
   }
 
   writeFileSync(filePath, markdown, "utf-8");

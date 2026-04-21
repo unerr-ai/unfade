@@ -50,10 +50,15 @@ function findRelatedAiConversations(files: string[], aiConversations: CaptureEve
 /**
  * Build temporal chains — groups of sequential commits touching the same module.
  * A "module" is a top-level directory (e.g., "src/auth" from "src/auth/login.ts").
+ * Uses intent_summary from AI conversations to build narrative arcs when available.
  */
 function buildTemporalChains(events: CaptureEvent[]): LinkedSignals["temporalChains"] {
   const commits = events
     .filter((e) => e.type === "commit")
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  const aiConversations = events
+    .filter((e) => e.type === "ai-conversation")
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   // Group commits by module (first two path segments)
@@ -71,14 +76,39 @@ function buildTemporalChains(events: CaptureEvent[]): LinkedSignals["temporalCha
     }
   }
 
+  // Build module → intent summaries from AI conversations that touched same files
+  const moduleIntents = new Map<string, string[]>();
+  for (const conv of aiConversations) {
+    const intentSummary = conv.metadata?.intent_summary as string | undefined;
+    if (!intentSummary) continue;
+    const modules = new Set<string>();
+    for (const file of conv.content.files ?? []) {
+      const parts = file.split("/");
+      const mod = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : parts[0];
+      modules.add(mod);
+    }
+    for (const mod of modules) {
+      if (!moduleIntents.has(mod)) moduleIntents.set(mod, []);
+      moduleIntents.get(mod)?.push(intentSummary);
+    }
+  }
+
   // Only emit chains with 2+ commits
   const chains: LinkedSignals["temporalChains"] = [];
   for (const [mod, modCommits] of moduleCommits) {
     if (modCommits.length < 2) continue;
+
+    // Use intent summaries for narrative arc if available, fall back to commit summaries
+    const intents = moduleIntents.get(mod);
+    const narrative =
+      intents && intents.length > 0
+        ? intents.join(" → ")
+        : modCommits.map((c) => c.content.summary).join(" → ");
+
     chains.push({
       module: mod,
       eventIds: modCommits.map((c) => c.id),
-      summary: `${modCommits.length} commits on ${mod}: ${modCommits.map((c) => c.content.summary).join(" → ")}`,
+      summary: `${modCommits.length} commits on ${mod}: ${narrative}`,
     });
   }
 

@@ -1,6 +1,6 @@
 // FILE: daemon/internal/capture/writer.go
 // EventWriter is the single goroutine that writes CaptureEvents to daily JSONL files.
-// Uses O_APPEND for concurrent-safe writes. Each JSON line is < 4KB.
+// Uses O_APPEND for concurrent-safe writes. Events are written at full fidelity — no size caps.
 // File naming: .unfade/events/YYYY-MM-DD.jsonl
 
 package capture
@@ -16,30 +16,26 @@ import (
 	"time"
 )
 
-const (
-	// maxLineBytes is the maximum size of a single JSON line.
-	// Large diffs are truncated in content.detail to stay under this.
-	maxLineBytes = 4096
-)
-
 // EventWriter consumes CaptureEvents from a channel and writes them
 // as JSON lines to daily .unfade/events/YYYY-MM-DD.jsonl files.
 type EventWriter struct {
-	eventsDir string
-	logger    CaptureSourceLogger
-	eventCh   <-chan CaptureEvent
-	done      chan struct{}
-	wg        sync.WaitGroup
-	count     atomic.Int64
+	eventsDir    string
+	logger       CaptureSourceLogger
+	eventCh      <-chan CaptureEvent
+	done         chan struct{}
+	wg           sync.WaitGroup
+	count        atomic.Int64
+	epochWritten map[string]bool
 }
 
 // NewEventWriter creates a writer that reads from eventCh and appends to daily JSONL files.
 func NewEventWriter(eventsDir string, eventCh <-chan CaptureEvent, logger CaptureSourceLogger) *EventWriter {
 	return &EventWriter{
-		eventsDir: eventsDir,
-		logger:    logger,
-		eventCh:   eventCh,
-		done:      make(chan struct{}),
+		eventsDir:    eventsDir,
+		logger:       logger,
+		eventCh:      eventCh,
+		done:         make(chan struct{}),
+		epochWritten: make(map[string]bool),
 	}
 }
 
@@ -105,9 +101,6 @@ func (w *EventWriter) writeEvent(event CaptureEvent) {
 	date := extractDate(event.Timestamp)
 	filePath := filepath.Join(w.eventsDir, date+".jsonl")
 
-	// Truncate detail if the event would exceed maxLineBytes.
-	event = truncateIfNeeded(event)
-
 	data, err := json.Marshal(event)
 	if err != nil {
 		w.logger.Error("failed to marshal event", map[string]any{
@@ -119,7 +112,7 @@ func (w *EventWriter) writeEvent(event CaptureEvent) {
 	}
 	data = append(data, '\n')
 
-	// O_APPEND is atomic for writes < PIPE_BUF (4096 on most systems).
+	// O_APPEND ensures atomic appends with a single writer.
 	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		w.logger.Error("failed to open events file", map[string]any{
@@ -144,6 +137,13 @@ func (w *EventWriter) writeEvent(event CaptureEvent) {
 	}
 
 	_ = f.Close()
+
+	if !w.epochWritten[filePath] {
+		if err := WriteEpoch(filePath); err != nil {
+			w.logger.Warn("failed to write epoch", map[string]any{"error": err.Error(), "path": filePath})
+		}
+		w.epochWritten[filePath] = true
+	}
 }
 
 // extractDate returns the YYYY-MM-DD portion of an RFC3339 timestamp.
@@ -158,35 +158,6 @@ func extractDate(timestamp string) string {
 		}
 	}
 	return t.Format("2006-01-02")
-}
-
-// truncateIfNeeded ensures the event JSON stays under maxLineBytes.
-// Truncates content.Detail first, then content.Summary if needed.
-func truncateIfNeeded(event CaptureEvent) CaptureEvent {
-	data, err := json.Marshal(event)
-	if err != nil || len(data) <= maxLineBytes {
-		return event
-	}
-
-	// Truncate detail field.
-	if event.Content.Detail != "" {
-		overflow := len(data) - maxLineBytes
-		if len(event.Content.Detail) > overflow+50 {
-			event.Content.Detail = event.Content.Detail[:len(event.Content.Detail)-overflow-50] + "... [truncated]"
-		} else {
-			event.Content.Detail = "[truncated — too large]"
-		}
-	}
-
-	// Final check — if still too large, truncate files list.
-	data, _ = json.Marshal(event)
-	if len(data) > maxLineBytes && len(event.Content.Files) > 5 {
-		remaining := event.Content.Files[:5]
-		remaining = append(remaining, fmt.Sprintf("... and %d more files", len(event.Content.Files)-5))
-		event.Content.Files = remaining
-	}
-
-	return event
 }
 
 // TruncateDetail is exported for use by backfill and other producers

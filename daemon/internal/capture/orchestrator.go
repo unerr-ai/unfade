@@ -257,7 +257,7 @@ func (o *WatcherOrchestrator) StartIngest(since time.Time) error {
 }
 
 func (o *WatcherOrchestrator) startIngestLocked(since time.Time) {
-	o.historical = NewHistoricalIngestor(o.aiParsers, o.ingestCh, o.ingestState, o.cfg.Logger)
+	o.historical = NewHistoricalIngestor(o.aiParsers, o.ingestCh, o.ingestState, o.cfg.Logger, o.cfg.EventsDir)
 	o.historical.Run(since)
 }
 

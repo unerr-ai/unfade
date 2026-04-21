@@ -6,7 +6,6 @@
 import { Command } from "@commander-js/extra-typings";
 import { distillCommand } from "../commands/distill.js";
 import { exportCommand } from "../commands/export.js";
-import { initCommand } from "../commands/init.js";
 import { mcpCommand } from "../commands/mcp.js";
 import { publishCommand } from "../commands/publish.js";
 import { queryCommand } from "../commands/query.js";
@@ -30,15 +29,6 @@ const program = new Command()
   });
 
 // --- Setup Commands ---
-
-program
-  .command("init")
-  .description(
-    "Initialize .unfade/ in the current repo: scaffold, download capture engine, install shell hooks, configure LLM",
-  )
-  .action(async () => {
-    await initCommand();
-  });
 
 program
   .command("add")
@@ -157,6 +147,32 @@ program
     await ingestCommand({ since: opts.since, status: opts.status ?? false });
   });
 
+program
+  .command("history")
+  .description("Query event history by domain, feature, or time range")
+  .option("--domain <domain>", "Filter by domain")
+  .option("--feature <name>", "Filter by feature name")
+  .option("--last <duration>", "Time range (e.g., 7d, 2w, 30d)")
+  .option("--format <fmt>", "Output format: text (default), md, json")
+  .action(async (opts) => {
+    const { historyCommand } = await import("../commands/history.js");
+    await historyCommand({
+      domain: opts.domain,
+      feature: opts.feature,
+      last: opts.last,
+      format: opts.format,
+      json: program.opts().json ?? false,
+    });
+  });
+
+program
+  .command("savings")
+  .description("Show estimated time/cost savings from MCP context injections")
+  .action(async () => {
+    const { savingsCommand } = await import("../commands/savings.js");
+    await savingsCommand({ json: program.opts().json ?? false });
+  });
+
 // --- MCP (hidden — IDE integration only) ---
 
 program
@@ -177,14 +193,18 @@ program.action(async () => {
 
   if (firstRun) {
     const { printInitStep } = await import("../cli/server-banner.js");
-    printInitStep(
-      "First run — .unfade/ initialized. Configure LLM at Settings page or run `unfade init`.",
-    );
+    printInitStep("First run — .unfade/ initialized. Opening dashboard for setup…");
   }
 
   // Start the unified server
   const { startUnfadeServer } = await import("../server/unfade-server.js");
   const handle = await startUnfadeServer(cwd);
+
+  // Auto-open browser on first run
+  if (firstRun) {
+    const { openBrowser } = await import("../utils/open.js");
+    openBrowser(`http://localhost:${handle.server.info.port}`);
+  }
 
   // Keep process alive until SIGINT/SIGTERM
   const shutdown = async () => {

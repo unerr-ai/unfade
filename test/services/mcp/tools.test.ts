@@ -52,9 +52,10 @@ describe("registerTools", () => {
     }) as typeof server.tool;
 
     registerTools(server);
-    expect(registered).toHaveLength(12);
+    expect(registered).toHaveLength(13);
     expect(registered).toContain("unfade_query");
     expect(registered).toContain("unfade_context");
+    expect(registered).toContain("unfade_tag");
     expect(registered).toContain("unfade_decisions");
     expect(registered).toContain("unfade_profile");
     expect(registered).toContain("unfade_distill");

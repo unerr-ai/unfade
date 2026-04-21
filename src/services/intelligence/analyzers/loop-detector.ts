@@ -24,7 +24,11 @@ export const loopDetectorAnalyzer: Analyzer = {
     const now = new Date().toISOString();
 
     const entries = indexLowDirectionSessions(db);
-    const stuckLoops = detectStuckLoops(entries);
+
+    // 12C.14: Also detect intent_summary recurrence + outcome=failure chains
+    const intentLoops = detectIntentRecurrence(db);
+
+    const stuckLoops = [...detectStuckLoops(entries), ...intentLoops];
 
     const index: RejectionIndex = {
       entries: entries.slice(-200),
@@ -32,11 +36,14 @@ export const loopDetectorAnalyzer: Analyzer = {
       updatedAt: now,
     };
 
+    const sourceEventIds = entries.slice(0, 20).map((e) => e.eventId).filter(Boolean);
+
     return {
       analyzer: "loop-detector",
       updatedAt: now,
       data: index as unknown as Record<string, unknown>,
       insightCount: stuckLoops.length,
+      sourceEventIds,
     };
   },
 };
@@ -164,6 +171,48 @@ function extractApproach(text: string): string {
   if (/rest|graphql/.test(lower)) return "api-design";
   if (/auth|session|jwt/.test(lower)) return "authentication";
   return "general-approach";
+}
+
+/**
+ * 12C.14: Detect loops via intent_summary recurrence + outcome=failure chains.
+ * When the same intent_summary appears 3+ times with failure outcomes, flag as stuck.
+ */
+function detectIntentRecurrence(db: AnalyzerContext["db"]): StuckLoop[] {
+  try {
+    const result = db.exec(`
+      SELECT
+        json_extract(metadata, '$.intent_summary') as intent,
+        COUNT(*) as cnt,
+        MIN(ts) as first_seen,
+        MAX(ts) as last_seen,
+        SUM(CASE WHEN json_extract(metadata, '$.outcome') = 'failure' THEN 1 ELSE 0 END) as failures
+      FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND json_extract(metadata, '$.intent_summary') IS NOT NULL
+        AND ts >= datetime('now', '-7 days')
+      GROUP BY json_extract(metadata, '$.intent_summary')
+      HAVING cnt >= ${STUCK_LOOP_MIN} AND failures >= 2
+      ORDER BY cnt DESC
+      LIMIT 10
+    `);
+
+    if (!result[0]?.values.length) return [];
+
+    return result[0].values.map((row) => {
+      const intent = (row[0] as string) ?? "unknown";
+      const domain = classifyDomain(intent);
+      return {
+        domain,
+        approach: intent.slice(0, 100),
+        occurrences: (row[1] as number) ?? 0,
+        firstSeen: ((row[2] as string) ?? "").slice(0, 10),
+        lastSeen: ((row[3] as string) ?? "").slice(0, 10),
+        resolution: null,
+      };
+    });
+  } catch {
+    return [];
+  }
 }
 
 function classifyDomain(text: string): string {
