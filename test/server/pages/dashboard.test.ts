@@ -67,13 +67,16 @@ describe("Home page (GET /)", () => {
     expect(html).toContain('href="/intelligence"');
     expect(html).toContain('href="/coach"');
     expect(html).toContain('href="/settings"');
-    expect(html).toContain('href="/portfolio"');
+    expect(html).toContain('href="/intelligence"');
   });
 
-  it("shows loading state before summary is available", async () => {
+  it("includes home activation and dashboard structure", async () => {
     const app = createApp();
     const res = await app.request("/");
     const html = await res.text();
-    expect(html).toContain("intelligence layer");
+    expect(html).toContain('id="home-root"');
+    expect(html).toContain('data-session-id="');
+    expect(html).toContain("Event stream");
+    expect(html).toContain("System health");
   });
 });

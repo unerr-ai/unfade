@@ -44,39 +44,34 @@ afterEach(() => {
   } catch {}
 });
 
-describe("Search page (GET /search)", () => {
-  // T-185: renders search interface and displays results via htmx
-  it("T-185: renders search interface with htmx", async () => {
+describe("Decisions page (GET /decisions — replaces Search)", () => {
+  it("T-185: renders decisions interface", async () => {
     const app = createApp();
-    const res = await app.request("/search");
+    const res = await app.request("/decisions");
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain("<html");
-    expect(html).toContain("Search");
-    expect(html).toContain('hx-get="/unfade/similar"');
-    expect(html).toContain('hx-trigger="keyup changed delay:300ms"');
-    expect(html).toContain('hx-target="#results"');
-    expect(html).toContain('id="results"');
-  });
-
-  it("includes search input with problem parameter", async () => {
-    const app = createApp();
-    const res = await app.request("/search");
-    const html = await res.text();
-    expect(html).toContain('name="problem"');
+    expect(html).toContain("Decisions");
     expect(html).toContain("placeholder");
   });
 
-  it("nav bar includes Search link", async () => {
+  it("/search redirects to /decisions", async () => {
     const app = createApp();
-    const res = await app.request("/search");
+    const res = await app.request("/search", { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/decisions");
+  });
+
+  it("nav bar includes Decisions link", async () => {
+    const app = createApp();
+    const res = await app.request("/decisions");
     const html = await res.text();
-    expect(html).toContain('href="/search"');
+    expect(html).toContain('href="/decisions"');
   });
 
   it("includes htmx script", async () => {
     const app = createApp();
-    const res = await app.request("/search");
+    const res = await app.request("/decisions");
     const html = await res.text();
     expect(html).toContain("htmx.org");
   });

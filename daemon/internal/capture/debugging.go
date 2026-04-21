@@ -197,7 +197,7 @@ func (d *DebuggingDetector) emitSession(cwd, baseCmd string, events []bufferedEv
 
 	event := CaptureEvent{
 		ID:        uuid.New().String(),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().Format(time.RFC3339),
 		Source:    "terminal",
 		Type:      "debugging_session",
 		Content: EventContent{

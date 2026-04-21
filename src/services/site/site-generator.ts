@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ReasoningModelV2 } from "../../schemas/profile.js";
+import { localDateStr } from "../../utils/date.js";
 import { getDistillsDir, getProfileDir, getSiteDir } from "../../utils/paths.js";
 
 // ---------------------------------------------------------------------------
@@ -122,7 +123,7 @@ function computeHeatmapData(distillsDir: string, days: number): DayCount[] {
   const now = new Date();
   const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - days);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const cutoffStr = localDateStr(cutoff);
 
   const files = readdirSync(distillsDir)
     .filter((f) => f.endsWith(".md"))

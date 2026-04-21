@@ -3,6 +3,8 @@
 // During materialization, extracts model name from event metadata,
 // counts events per model per day, applies optional pricing table.
 
+import { localDateStr, localToday } from "../../utils/date.js";
+
 type DbLike = {
   run(sql: string, params?: unknown[]): void;
   exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
@@ -64,7 +66,7 @@ export function computeTokenSpend(db: DbLike, pricingTable: Record<string, numbe
  * Read today's spend summary.
  */
 export function readTodaySpend(db: DbLike): DailySpendSummary | null {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   return readSpendForDate(db, today);
 }
 
@@ -105,7 +107,7 @@ export function readTrailingSpend(db: DbLike, days: number): DailySpendSummary[]
   for (let i = 0; i < days; i++) {
     const d = new Date(now);
     d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().slice(0, 10);
+    const dateStr = localDateStr(d);
     const summary = readSpendForDate(db, dateStr);
     if (summary && summary.totalCount > 0) {
       summaries.push(summary);

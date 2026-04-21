@@ -30,7 +30,7 @@ describe("layout", () => {
     expect(html).toContain('href="/distill"');
     expect(html).toContain('href="/profile"');
     expect(html).toContain('href="/settings"');
-    expect(html).toContain('href="/portfolio"');
+    expect(html).toContain('href="/intelligence"');
   });
 
   it("includes title in <title> tag", () => {

@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { McpMeta } from "../schemas/mcp.js";
+import { localDateStr } from "../utils/date.js";
 import { getEventsDir } from "../utils/paths.js";
 
 export const UnfadeLogInputSchema = z.object({
@@ -47,7 +48,7 @@ export function logReasoningEvent(input: UnfadeLogInput, cwd?: string): UnfadeLo
   const start = performance.now();
   const now = new Date();
   const eventId = crypto.randomUUID();
-  const date = now.toISOString().slice(0, 10);
+  const date = localDateStr(now);
 
   const event = {
     id: eventId,

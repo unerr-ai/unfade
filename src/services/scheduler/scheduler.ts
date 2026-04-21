@@ -7,6 +7,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Cron } from "croner";
 import type { UnfadeConfig } from "../../schemas/config.js";
+import { localToday } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getDistillsDir, getEventsDir } from "../../utils/paths.js";
 import { countEvents } from "../capture/event-store.js";
@@ -81,7 +82,7 @@ export function startScheduler(config: UnfadeConfig, cwd?: string): SchedulerHan
         await new Promise((r) => setTimeout(r, jitter));
       }
 
-      const today = new Date().toISOString().slice(0, 10);
+      const today = localToday();
 
       // Skip zero-event days
       const eventCount = countEvents(today, cwd);

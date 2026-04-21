@@ -8,6 +8,7 @@ import { theme } from "../cli/ui.js";
 import { renderHeatmapSvg } from "../services/site/heatmap.js";
 import { generateSiteData } from "../services/site/site-generator.js";
 import { renderSiteCss, renderSiteHtml } from "../services/site/template.js";
+import { localToday } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
 import { getProjectDataDir, getSiteDir } from "../utils/paths.js";
 
@@ -49,7 +50,7 @@ export async function publishCommand(opts: { output?: string } = {}): Promise<vo
     const cardDate =
       siteData.distills.length > 0
         ? siteData.distills[0].date
-        : new Date().toISOString().slice(0, 10);
+        : localToday();
     const pngBuffer = await generateCard(cardDate);
     writeFileSync(resolve(assetsDir, "og-card.png"), pngBuffer);
     ogCardGenerated = true;

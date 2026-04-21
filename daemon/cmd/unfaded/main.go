@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -50,11 +51,11 @@ func main() {
 		return
 	}
 
-	// Determine state directory.
-	// If --project-dir is given, use <project>/.unfade/state/
-	// Otherwise, use ~/.unfade/state/
-	stateDir := resolveStateDir(projectDir)
-	logsDir := resolveLogsDir(projectDir)
+	// Each daemon gets its own state dir under ~/.unfade/state/daemons/<id>/
+	// to prevent PID file conflicts when multiple daemons run simultaneously.
+	daemonId := resolveDaemonId(projectDir, captureMode)
+	stateDir := resolveDaemonStateDir(daemonId)
+	logsDir := resolveDaemonLogsDir(daemonId)
 
 	// Initialize logger.
 	logLevel := platform.LevelInfo
@@ -341,7 +342,7 @@ func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, re
 		event := capture.CaptureEvent{
 			ID:        fmt.Sprintf("term-%d", time.Now().UnixNano()),
 			ProjectID: resolveProjectID(projectDir),
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Timestamp: time.Now().Format(time.RFC3339),
 			Source:    "terminal",
 			Type:      "command",
 			Content: capture.EventContent{
@@ -515,20 +516,35 @@ func resolveProjectID(projectDir string) string {
 	return "unregistered:" + projectDir
 }
 
-// Global-first: all paths resolve to ~/.unfade/ regardless of --project-dir.
-// --project-dir only determines which git repo to watch and what projectId to tag.
+// Global-first: events go to ~/.unfade/events/ (shared by all daemons).
+// Each daemon gets its own state/log dir under ~/.unfade/state/daemons/<id>/.
 
 func resolveEventsDir(_ string) string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".unfade", "events")
 }
 
-func resolveStateDir(_ string) string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".unfade", "state")
+func resolveDaemonId(projectDir, captureMode string) string {
+	if captureMode == "ai-global" {
+		return "ai-global"
+	}
+	id := resolveProjectID(projectDir)
+	if id == "" || strings.HasPrefix(id, "unregistered:") {
+		return filepath.Base(projectDir)
+	}
+	return id
 }
 
-func resolveLogsDir(_ string) string {
+func resolveDaemonStateDir(daemonId string) string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".unfade", "logs")
+	dir := filepath.Join(home, ".unfade", "state", "daemons", daemonId)
+	_ = os.MkdirAll(dir, 0o755)
+	return dir
+}
+
+func resolveDaemonLogsDir(daemonId string) string {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".unfade", "state", "daemons", daemonId)
+	_ = os.MkdirAll(dir, 0o755)
+	return dir
 }

@@ -4,6 +4,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { localToday } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getUserConfigDir } from "../../utils/paths.js";
 import { loadRegistry } from "../registry/registry.js";
@@ -87,7 +88,7 @@ export function rebuildGlobalIndex(): GlobalIndex {
 
     repos.push(rollup);
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     const entry = dailyMap.get(today) ?? {
       events: 0,
       direction: [],

@@ -161,7 +161,7 @@ func (t *TerminalReceiver) toEvent(te TerminalEvent) CaptureEvent {
 
 	return CaptureEvent{
 		ID:        uuid.New().String(),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().Format(time.RFC3339),
 		Source:    "terminal",
 		Type:      eventType,
 		Content: EventContent{

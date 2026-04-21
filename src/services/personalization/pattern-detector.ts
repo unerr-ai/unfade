@@ -5,6 +5,7 @@
 
 import type { Decision, TradeOff } from "../../schemas/distill.js";
 import type { PatternCategory, PatternV2 } from "../../schemas/profile.js";
+import { localToday } from "../../utils/date.js";
 
 /**
  * Input for pattern detection — accumulated decisions and optional trade-offs
@@ -206,7 +207,7 @@ function detectAiPatterns(aiStats: NonNullable<PatternDetectorInput["aiStats"]>)
     category: PatternCategory;
     date: string;
   }[] = [];
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
 
   // Overall AI modification pattern
   if (aiStats.modificationRate > 0.5) {

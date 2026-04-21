@@ -6,6 +6,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type CaptureEvent, CaptureEventSchema } from "../../schemas/event.js";
+import { localDateStr } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getEventsDir } from "../../utils/paths.js";
 
@@ -134,7 +135,7 @@ export function readEventRange(from: string, to: string, cwd?: string): CaptureE
   // Iterate through each day in range
   const current = new Date(fromDate);
   while (current <= toDate) {
-    const dateStr = current.toISOString().slice(0, 10);
+    const dateStr = localDateStr(current);
     const dayEvents = readEvents(dateStr, cwd);
     events.push(...dayEvents);
     current.setDate(current.getDate() + 1);

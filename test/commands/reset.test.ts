@@ -10,13 +10,6 @@ vi.mock("../../src/utils/ipc.js", () => ({
   stopDaemon: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
-const removeAutostartIfOwnedByProject = vi.fn().mockReturnValue(false);
-const removeAutostartEntirely = vi.fn().mockReturnValue(false);
-vi.mock("../../src/services/init/autostart.js", () => ({
-  removeAutostartIfOwnedByProject,
-  removeAutostartEntirely,
-}));
-
 vi.mock("../../src/services/shell/installer.js", () => ({
   removeShellHooks: vi.fn().mockReturnValue(true),
 }));
@@ -50,38 +43,26 @@ describe("resetCommand", () => {
     vi.clearAllMocks();
   });
 
-  it("refuses to run without --yes", async () => {
-    process.exitCode = undefined;
-    await resetCommand({ yes: false });
-    expect(process.exitCode).toBe(1);
-    expect(existsSync(join(tmp, ".unfade"))).toBe(true);
-  });
-
-  it("removes .unfade and prunes registry when --yes", async () => {
+  it("removes project .unfade, global ~/.unfade, and prunes registry data on disk", async () => {
     const resolvedRoot = resolve(tmp);
     registerRepo(resolvedRoot);
     const registry = loadRegistry();
     expect(registry.repos.length).toBe(1);
 
-    await resetCommand({ yes: true, keepHooks: true });
-
-    expect(existsSync(join(tmp, ".unfade"))).toBe(false);
-    const afterRegistry = loadRegistry();
-    expect(afterRegistry.repos.length).toBe(0);
-  });
-
-  it("with --global removes ~/.unfade and calls removeAutostartEntirely", async () => {
     const home = process.env.HOME;
     expect(home).toBeDefined();
     const globalRoot = join(home as string, ".unfade");
     mkdirSync(join(globalRoot, "state"), { recursive: true });
     writeFileSync(join(globalRoot, "state", "marker.txt"), "x", "utf-8");
 
-    await resetCommand({ yes: true, keepHooks: true, global: true });
+    await resetCommand();
 
+    expect(existsSync(join(tmp, ".unfade"))).toBe(false);
     expect(existsSync(globalRoot)).toBe(false);
-    const dataDir = getProjectDataDir();
-    expect(existsSync(dataDir)).toBe(false);
+    expect(existsSync(getProjectDataDir())).toBe(false);
     expect(existsSync(getUserConfigDir())).toBe(false);
+
+    const afterRegistry = loadRegistry();
+    expect(afterRegistry.repos.length).toBe(0);
   });
 });

@@ -10,6 +10,7 @@ import type { DailyDistill } from "../schemas/distill.js";
 import { backfill, distill } from "../services/distill/distiller.js";
 import { createLLMProvider } from "../services/distill/providers/ai.js";
 import { handleCliError } from "../utils/cli-error.js";
+import { localToday } from "../utils/date.js";
 import { logger } from "../utils/logger.js";
 
 interface DistillCommandOptions {
@@ -136,7 +137,7 @@ async function _distillCommand(options: DistillCommandOptions, startMs: number):
   }
 
   // Single date mode (default: today)
-  const date = options.date ?? new Date().toISOString().slice(0, 10);
+  const date = options.date ?? localToday();
 
   logger.info(`${USER_TERMS.distilling} ${date}...`);
 

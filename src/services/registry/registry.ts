@@ -25,6 +25,8 @@ export interface RepoEntry {
   root: string;
   label: string;
   lastSeenAt: string;
+  addedVia: "cli" | "ui" | "auto-discovery";
+  monitoring: "active" | "paused";
   capabilities: { daemon: boolean; git: boolean };
   paths: { data: string };
 }
@@ -52,6 +54,10 @@ export function loadRegistry(): RegistryV1 {
     try {
       const data = JSON.parse(readFileSync(regPath, "utf-8")) as RegistryV1;
       if (data.schemaVersion === 1 && Array.isArray(data.repos)) {
+        for (const repo of data.repos) {
+          if (!repo.addedVia) repo.addedVia = "cli";
+          if (!repo.monitoring) repo.monitoring = "active";
+        }
         return data;
       }
     } catch {
@@ -82,7 +88,10 @@ export function saveRegistry(registry: RegistryV1): void {
 /**
  * Register a repo by its root path. Deduplicates by root.
  */
-export function registerRepo(repoRoot: string): void {
+export function registerRepo(
+  repoRoot: string,
+  options?: { addedVia?: RepoEntry["addedVia"] },
+): void {
   const registry = loadRegistry();
 
   if (registry.repos.some((r) => r.root === repoRoot)) {
@@ -97,6 +106,8 @@ export function registerRepo(repoRoot: string): void {
     root: repoRoot,
     label: basename(repoRoot),
     lastSeenAt: new Date().toISOString(),
+    addedVia: options?.addedVia ?? "cli",
+    monitoring: "active",
     capabilities: { daemon: true, git: true },
     paths: { data: join(repoRoot, ".unfade") },
   };
@@ -104,6 +115,19 @@ export function registerRepo(repoRoot: string): void {
   registry.repos.push(entry);
   saveRegistry(registry);
   logger.debug("Registered repo in registry.v1", { root: repoRoot, id: entry.id });
+}
+
+/**
+ * Update monitoring state for a repo.
+ */
+export function setMonitoringState(id: string, state: "active" | "paused"): boolean {
+  const registry = loadRegistry();
+  const entry = registry.repos.find((r) => r.id === id);
+  if (!entry) return false;
+  entry.monitoring = state;
+  entry.lastSeenAt = new Date().toISOString();
+  saveRegistry(registry);
+  return true;
 }
 
 /**
@@ -174,6 +198,8 @@ function migrateFromLegacy(): RegistryV1 {
       root,
       label: basename(root),
       lastSeenAt: entry.addedAt ?? new Date().toISOString(),
+      addedVia: "cli" as const,
+      monitoring: "active" as const,
       capabilities: { daemon: true, git: true },
       paths: { data: join(root, ".unfade") },
     };

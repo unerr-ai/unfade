@@ -30,7 +30,7 @@ import { tryGenerateFirstRunReport } from "../services/intelligence/first-run-tr
 import { loadRegistry, type RepoEntry, registerRepo } from "../services/registry/registry.js";
 import { sendIPCCommand, waitForDaemonIPCReady } from "../utils/ipc.js";
 import { logger } from "../utils/logger.js";
-import { getDaemonProjectRoot, getStateDir } from "../utils/paths.js";
+import { getDaemonProjectRoot, getDistillsDir, getEventsDir, getStateDir } from "../utils/paths.js";
 import { type RunningServer, startServer } from "./http.js";
 
 const REGISTRY_POLL_INTERVAL_MS = 60_000;
@@ -82,9 +82,7 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
       // First-run analysis if needed
       tryGenerateFirstRunReport(entry.root);
 
-      // First-run incremental distill: populate distills/profile/graph immediately
-      // when events exist but no distills have been generated yet.
-      triggerFirstRunDistill(entry.root);
+      // Per-repo distill replaced by global backfill below
     } else {
       printInitStep(`${entry.label}: skipped (binary not available)`);
     }
@@ -98,6 +96,9 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
   if (primaryManaged) {
     (globalThis as Record<string, unknown>).__unfade_materializer = primaryManaged.materializer;
   }
+
+  // Backfill distills for all event dates that don't have one yet (global paths)
+  triggerBackfillDistill();
 
   printServerReady(server.info.port, repoManager.size);
 
@@ -145,7 +146,7 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
       await managed.materializer.close();
     }
 
-    // 4. Stop daemons
+    // 4. Stop ALL daemons (per-project + global AI capture)
     printShutdownStep("Stopping capture engines...");
     const stopPromises: Promise<void>[] = [];
     for (const [, managed] of repoManager.getAll()) {
@@ -156,6 +157,11 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
         }),
       );
     }
+    stopPromises.push(
+      repoManager.stopGlobalAICapture().then(() => {
+        printShutdownStep("Global AI capture stopped");
+      }),
+    );
     await Promise.all(stopPromises);
 
     // 5. Close server
@@ -216,22 +222,15 @@ async function triggerIngestWhenReady(repoRoot: string): Promise<void> {
 }
 
 /**
- * On first run, if events/ has data but distills/ is empty, run incremental
- * distill for each day with events. Non-blocking — runs in background.
+ * Backfill distills for all event dates that don't have a distill yet.
+ * Uses global paths (~/.unfade/) — not per-repo. Fire-and-forget.
  */
-function triggerFirstRunDistill(repoRoot: string): void {
-  const distillsDir = join(repoRoot, ".unfade", "distills");
-  const eventsDir = join(repoRoot, ".unfade", "events");
-
-  // Only trigger if distills/ is empty or missing, and events/ has files
-  if (existsSync(distillsDir)) {
-    const files = readdirSync(distillsDir).filter((f) => f.endsWith(".md"));
-    if (files.length > 0) return; // Already have distills
-  }
+function triggerBackfillDistill(): void {
+  const eventsDir = getEventsDir();
+  const distillsDir = getDistillsDir();
 
   if (!existsSync(eventsDir)) return;
 
-  // Fire and forget — run in background
   (async () => {
     try {
       const eventFiles = readdirSync(eventsDir).filter((f) => f.endsWith(".jsonl"));
@@ -239,21 +238,34 @@ function triggerFirstRunDistill(repoRoot: string): void {
 
       const { distillIncremental } = await import("../services/distill/distiller.js");
 
-      // Extract dates from filenames (YYYY-MM-DD.jsonl)
       const dates = eventFiles
         .map((f) => f.replace(".jsonl", ""))
         .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
         .sort();
 
-      logger.debug("First-run distill: processing event days", { count: dates.length, repoRoot });
+      const existingDistills = new Set(
+        existsSync(distillsDir)
+          ? readdirSync(distillsDir)
+              .filter((f) => f.endsWith(".md"))
+              .map((f) => f.replace(".md", ""))
+          : [],
+      );
 
-      for (const date of dates) {
-        await distillIncremental(date, { cwd: repoRoot });
+      const missing = dates.filter((d) => !existingDistills.has(d));
+      if (missing.length === 0) return;
+
+      logger.info("Backfill distill: processing undistilled days", {
+        total: dates.length,
+        missing: missing.length,
+      });
+
+      for (const date of missing) {
+        await distillIncremental(date);
       }
 
-      logger.debug("First-run distill complete", { days: dates.length });
+      logger.info("Backfill distill complete", { days: missing.length });
     } catch {
-      // non-fatal — first-run distill is best-effort
+      // non-fatal — backfill distill is best-effort
     }
   })();
 }

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { mean, standardDeviation, zScore } from "simple-statistics";
 import type { DailyMetricSnapshot } from "../../schemas/metrics.js";
 import type { ReasoningModelV2 } from "../../schemas/profile.js";
+import { localToday } from "../../utils/date.js";
 import { getStateDir } from "../../utils/paths.js";
 
 const HISTORY_FILE = "insight_history.json";
@@ -59,7 +60,7 @@ export function generateInsight(
 
   const selected = weightedPick(candidates);
 
-  history.lastShown.unshift({ type: selected.type, date: new Date().toISOString().slice(0, 10) });
+  history.lastShown.unshift({ type: selected.type, date: localToday() });
   if (history.lastShown.length > MAX_HISTORY) {
     history.lastShown = history.lastShown.slice(0, MAX_HISTORY);
   }

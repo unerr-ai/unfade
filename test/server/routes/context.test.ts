@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/server/http.js";
 import { invalidateSetupCache } from "../../../src/server/setup-state.js";
+import { localToday } from "../../../src/utils/date.js";
 
 let tmpDir: string;
 let originalCwd: string;
@@ -67,7 +68,7 @@ afterEach(() => {
 
 describe("GET /unfade/context", () => {
   it("returns context with default scope (today)", async () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     writeEvent(tmpDir, today, makeEvent());
 
     const app = createApp();

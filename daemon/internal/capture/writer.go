@@ -146,18 +146,17 @@ func (w *EventWriter) writeEvent(event CaptureEvent) {
 	}
 }
 
-// extractDate returns the YYYY-MM-DD portion of an RFC3339 timestamp.
-// Falls back to today's date if parsing fails.
+// extractDate returns the YYYY-MM-DD portion of an RFC3339 timestamp
+// in the local timezone. Falls back to today's local date if parsing fails.
 func extractDate(timestamp string) string {
 	t, err := time.Parse(time.RFC3339, timestamp)
 	if err != nil {
-		// Try RFC3339Nano
 		t, err = time.Parse(time.RFC3339Nano, timestamp)
 		if err != nil {
-			return time.Now().UTC().Format("2006-01-02")
+			return time.Now().Format("2006-01-02")
 		}
 	}
-	return t.Format("2006-01-02")
+	return t.In(time.Now().Location()).Format("2006-01-02")
 }
 
 // TruncateDetail is exported for use by backfill and other producers

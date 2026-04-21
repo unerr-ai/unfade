@@ -2,13 +2,12 @@
 // UF-100: Intelligence Engine orchestrator — runs all registered analyzers after materializer tick.
 // Writes outputs to .unfade/intelligence/ directory. Non-blocking, error-isolated per analyzer.
 
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
+import { getIntelligenceDir } from "../../utils/paths.js";
 import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./analyzers/index.js";
 import { writeInsightMappings } from "./lineage.js";
-
-const INTELLIGENCE_DIR = "intelligence";
 
 export class IntelligenceEngine {
   private analyzers: Analyzer[] = [];
@@ -36,7 +35,7 @@ export class IntelligenceEngine {
     this.lastRunMs = now;
     const results: AnalyzerResult[] = [];
 
-    const intelligenceDir = join(ctx.repoRoot, ".unfade", INTELLIGENCE_DIR);
+    const intelligenceDir = getIntelligenceDir();
     mkdirSync(intelligenceDir, { recursive: true });
 
     for (const analyzer of this.analyzers) {

@@ -1,4 +1,5 @@
 import type { IdentityLabel, ReasoningModelV2 } from "../../schemas/profile.js";
+import { localToday } from "../../utils/date.js";
 
 const MIN_DATA_DAYS = 14;
 
@@ -11,7 +12,7 @@ export function computeIdentityLabels(profile: ReasoningModelV2, rdi: number): I
   if (profile.dataPoints < MIN_DATA_DAYS) return [];
 
   const labels: IdentityLabel[] = [];
-  const now = new Date().toISOString().slice(0, 10);
+  const now = localToday();
 
   if (isThoroughExplorer(profile)) {
     labels.push({

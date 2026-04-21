@@ -64,11 +64,11 @@ function scaffoldMinimal(dataDir: string): void {
   logger.debug("Scaffolded .unfade/", { path: dataDir });
 }
 
-function ensureBinaryQuiet(cwd: string): void {
+function ensureBinaryQuiet(_cwd: string): void {
   try {
     const { ensureBinaries } =
       require("../daemon/binary.js") as typeof import("../daemon/binary.js");
-    ensureBinaries(cwd);
+    ensureBinaries();
   } catch (err) {
     logger.debug("Binary ensure failed (non-fatal, will retry)", {
       error: err instanceof Error ? err.message : String(err),
@@ -76,12 +76,12 @@ function ensureBinaryQuiet(cwd: string): void {
   }
 }
 
-function installHooksQuiet(cwd: string): void {
+function installHooksQuiet(_cwd: string): void {
   try {
     const { installShellHooks } =
       require("../shell/installer.js") as typeof import("../shell/installer.js");
     const sendBin = join(
-      getBinDir(cwd),
+      getBinDir(),
       process.platform === "win32" ? "unfade-send.exe" : "unfade-send",
     );
     installShellHooks(sendBin);
@@ -94,9 +94,9 @@ function installHooksQuiet(cwd: string): void {
  * Write initial setup-status.json for the web UI to detect onboarding state.
  * This file is the single source of truth for "has this repo been configured?"
  */
-function writeInitialSetupStatus(cwd: string): void {
+function writeInitialSetupStatus(_cwd: string): void {
   try {
-    const stateDir = getStateDir(cwd);
+    const stateDir = getStateDir();
     mkdirSync(stateDir, { recursive: true });
     const statusPath = join(stateDir, "setup-status.json");
     const status = {

@@ -5,6 +5,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../config/manager.js";
+import { localToday } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getEventsDir, getProjectDataDir } from "../../utils/paths.js";
 import { MaterializerDaemon } from "../cache/materializer-daemon.js";
@@ -76,9 +77,15 @@ export class RepoManager {
 
   /**
    * Add a repo: ensure binaries, start daemon, materializer, and scheduler.
+   * Skips repos with monitoring === "paused".
    */
   async addRepo(entry: RepoEntry): Promise<ManagedRepo | null> {
     if (this.repos.has(entry.id)) return this.repos.get(entry.id)!;
+
+    if (entry.monitoring === "paused") {
+      logger.debug(`Repo ${entry.label}: monitoring paused — skipping daemon`);
+      return null;
+    }
 
     try {
       ensureBinaries();
@@ -322,7 +329,7 @@ function createMaterializerForRepo(
 
         const now = Date.now();
         if (now - lastPartialMs >= PARTIAL_SNAPSHOT_INTERVAL_MS) {
-          const today = new Date().toISOString().slice(0, 10);
+          const today = localToday();
           writePartialSnapshot(today, {
             directionDensity: summary.directionDensity24h,
             comprehensionScore: summary.comprehensionScore,
@@ -447,7 +454,7 @@ function createMaterializerForRepo(
       if (Date.now() - lastIncrementalDistillMs > INCREMENTAL_DISTILL_INTERVAL_MS) {
         try {
           const { distillIncremental } = await import("../distill/distiller.js");
-          const today = new Date().toISOString().slice(0, 10);
+          const today = localToday();
           await distillIncremental(today);
           lastIncrementalDistillMs = Date.now();
         } catch {

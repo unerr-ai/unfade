@@ -10,6 +10,7 @@ import type { AnalyzerContext } from "../../src/services/intelligence/analyzers/
 import { IntelligenceEngine } from "../../src/services/intelligence/engine.js";
 
 let testDir: string;
+let prevUnfadeHome: string | undefined;
 
 function makeTestDir(): string {
   const dir = join(
@@ -70,9 +71,13 @@ function makeInMemoryDb(eventCount: number) {
 
 beforeEach(() => {
   testDir = makeTestDir();
+  prevUnfadeHome = process.env.UNFADE_HOME;
+  process.env.UNFADE_HOME = join(testDir, ".unfade");
 });
 
 afterEach(() => {
+  if (prevUnfadeHome === undefined) delete process.env.UNFADE_HOME;
+  else process.env.UNFADE_HOME = prevUnfadeHome;
   try {
     rmSync(testDir, { recursive: true, force: true });
   } catch {}

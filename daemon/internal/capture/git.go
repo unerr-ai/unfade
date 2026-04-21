@@ -273,7 +273,7 @@ func (g *GitWatcher) emitBranchSwitch(from, to string) {
 	repoName := filepath.Base(g.projectDir)
 	event := CaptureEvent{
 		ID:        uuid.New().String(),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().Format(time.RFC3339),
 		Source:    "git",
 		Type:      "branch-switch",
 		Content: EventContent{
@@ -294,7 +294,7 @@ func (g *GitWatcher) emitMergeConflict() {
 	branch := g.currentBranch()
 	event := CaptureEvent{
 		ID:        uuid.New().String(),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().Format(time.RFC3339),
 		Source:    "git",
 		Type:      "merge-conflict",
 		Content: EventContent{
@@ -315,7 +315,7 @@ func (g *GitWatcher) emitStash() {
 	branch := g.currentBranch()
 	event := CaptureEvent{
 		ID:        uuid.New().String(),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().Format(time.RFC3339),
 		Source:    "git",
 		Type:      "stash",
 		Content: EventContent{
@@ -479,7 +479,7 @@ func normalizeTimestamp(ts string) string {
 		// Try common git date format.
 		t, err = time.Parse("2006-01-02T15:04:05-07:00", ts)
 		if err != nil {
-			return time.Now().UTC().Format(time.RFC3339)
+			return time.Now().Format(time.RFC3339)
 		}
 	}
 	return t.Format(time.RFC3339)

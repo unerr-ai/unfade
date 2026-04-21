@@ -9,6 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { applyFeatureTag } from "../../commands/tag.js";
 import { loadConfig } from "../../config/manager.js";
+import { localToday } from "../../utils/date.js";
 import { getAmplification } from "../../tools/unfade-amplify.js";
 import { getCoachInsights } from "../../tools/unfade-coach.js";
 import { getComprehension } from "../../tools/unfade-comprehension.js";
@@ -276,7 +277,7 @@ export function registerTools(server: McpServer): void {
       if (!isInitialized()) return notInitializedResponse();
 
       try {
-        const targetDate = args.date ?? new Date().toISOString().slice(0, 10);
+        const targetDate = args.date ?? localToday();
         const config = loadConfig();
         const result = await distill(targetDate, config);
 

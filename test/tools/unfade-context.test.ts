@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getRecentContext } from "../../src/tools/unfade-context.js";
+import { localDateStr, localToday } from "../../src/utils/date.js";
 
 let tmpDir: string;
 
@@ -62,7 +63,7 @@ describe("getRecentContext", () => {
   });
 
   it("reads today's events with 'today' scope", () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     writeEvent(tmpDir, today, makeEvent());
     writeEvent(tmpDir, today, makeEvent({ id: crypto.randomUUID() }));
 
@@ -73,7 +74,7 @@ describe("getRecentContext", () => {
   });
 
   it("maps event fields to ContextEvent shape", () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     const testId = crypto.randomUUID();
     writeEvent(
       tmpDir,
@@ -93,7 +94,7 @@ describe("getRecentContext", () => {
   });
 
   it("filters by project when specified", () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     writeEvent(
       tmpDir,
       today,
@@ -111,7 +112,7 @@ describe("getRecentContext", () => {
   });
 
   it("includes distill summary when available", () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     writeDistillMd(
       tmpDir,
       today,
@@ -129,10 +130,10 @@ describe("getRecentContext", () => {
 
   it("reads multiple days with 'this_week' scope", () => {
     const now = new Date();
-    const today = now.toISOString().slice(0, 10);
+    const today = localDateStr(now);
     const threeDaysAgo = new Date(now);
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    const threeDaysAgoStr = threeDaysAgo.toISOString().slice(0, 10);
+    const threeDaysAgoStr = localDateStr(threeDaysAgo);
 
     writeEvent(tmpDir, today, makeEvent({ id: crypto.randomUUID(), timestamp: now.toISOString() }));
     writeEvent(
@@ -149,7 +150,7 @@ describe("getRecentContext", () => {
   });
 
   it("filters recent events with 'last_2h' scope", () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     const now = new Date();
     const recentTs = new Date(now.getTime() - 30 * 60 * 1000).toISOString(); // 30 min ago
     const oldTs = new Date(now.getTime() - 5 * 60 * 60 * 1000).toISOString(); // 5 hours ago
@@ -162,7 +163,7 @@ describe("getRecentContext", () => {
   });
 
   it("includes durationMs and lastUpdated in _meta", () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     writeEvent(tmpDir, today, makeEvent());
 
     const result = getRecentContext({ scope: "today" }, tmpDir);

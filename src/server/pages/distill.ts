@@ -5,6 +5,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { USER_TERMS } from "../../constants/terminology.js";
+import { localToday } from "../../utils/date.js";
 import { getDistillsDir } from "../../utils/paths.js";
 import { escapeHtml, layout, markdownToHtml } from "./layout.js";
 
@@ -42,7 +43,7 @@ function getAvailableDates(): string[] {
 }
 
 distillPage.get("/distill", (c) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const requestedDate = c.req.query("date") ?? today;
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {

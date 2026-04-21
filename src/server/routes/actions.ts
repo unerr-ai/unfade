@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { loadConfig } from "../../config/manager.js";
 import { detectRuleTarget } from "../../services/actions/auto-rules.js";
 import { atomicWriteFile, replaceMarkerSection } from "../../services/actions/runner.js";
+import { localToday } from "../../utils/date.js";
 import { getDaemonProjectRoot } from "../../utils/paths.js";
 
 export const actionsRoutes = new Hono();
@@ -27,7 +28,7 @@ actionsRoutes.post("/api/actions/apply-rule", async (c) => {
   }
 
   const { target, path } = detected;
-  const date = new Date().toISOString().slice(0, 10);
+  const date = localToday();
   const ruleContent = `- ${body.rule} (applied via Coach on ${date})`;
 
   if (target === "cursor") {

@@ -8,8 +8,35 @@ import { layout } from "./layout.js";
 export const intelligencePage = new Hono();
 
 intelligencePage.get("/intelligence", (c) => {
+  const activeTab = (c.req.query("tab") ?? "overview") as string;
+  const tabs = [
+    { id: "overview", label: "Overview" },
+    { id: "comprehension", label: "Comprehension" },
+    { id: "velocity", label: "Velocity" },
+    { id: "cost", label: "Cost" },
+    { id: "patterns", label: "Patterns & Coach" },
+  ];
+
+  const tabBarHtml = tabs
+    .map((t) => {
+      const active =
+        t.id === activeTab
+          ? "border-accent text-foreground"
+          : "border-transparent text-muted hover:text-foreground hover:border-border";
+      return `<button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors ${active}"
+      hx-get="/intelligence/tab/${t.id}" hx-target="#tab-content" hx-push-url="/intelligence?tab=${t.id}">${t.label}</button>`;
+    })
+    .join("\n");
+
   const content = `
-    <h1 class="font-heading text-2xl font-semibold mb-6">Intelligence</h1>
+    <h1 class="font-heading text-2xl font-semibold mb-4">Intelligence Hub</h1>
+
+    <div class="flex items-center gap-1 border-b border-border mb-6">
+      ${tabBarHtml}
+    </div>
+
+    <div id="tab-content">
+    <!-- Default Overview tab content (pre-rendered server-side) -->
 
     <div id="intel-loading" class="text-center py-16 text-muted">Loading…</div>
     <div id="intel-empty" class="hidden text-center py-16 text-muted">
@@ -127,7 +154,8 @@ intelligencePage.get("/intelligence", (c) => {
       }).catch(function(){loading.classList.add('hidden');empty.classList.remove('hidden');});
     })();
     </script>
+    </div><!-- end tab-content -->
   `;
 
-  return c.html(layout("Intelligence", content));
+  return c.html(layout("Intelligence Hub", content));
 });

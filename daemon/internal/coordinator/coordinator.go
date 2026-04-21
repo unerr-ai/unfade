@@ -334,7 +334,7 @@ func (c *Coordinator) routeToWorker(req platform.IPCRequest, worker *RepoWorker)
 
 		event := capture.CaptureEvent{
 			ID:        fmt.Sprintf("term-%d", time.Now().UnixNano()),
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Timestamp: time.Now().Format(time.RFC3339),
 			Source:    "terminal",
 			Type:      "command",
 			Content:   capture.EventContent{Summary: command},

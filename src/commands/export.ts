@@ -10,6 +10,7 @@ import { createInterface } from "node:readline";
 import { theme } from "../cli/ui.js";
 import { loadConfig } from "../config/manager.js";
 import { handleCliError } from "../utils/cli-error.js";
+import { localToday } from "../utils/date.js";
 import { getProjectDataDir } from "../utils/paths.js";
 
 const INCLUDE_DIRS = ["events", "distills", "graph", "profile", "amplification", "cards"];
@@ -44,7 +45,7 @@ function buildManifest(dataDir: string): ExportManifest {
   const allFroms = [events.from, distills.from].filter(Boolean) as string[];
   const allTos = [events.to, distills.to].filter(Boolean) as string[];
   return {
-    exportDate: new Date().toISOString().slice(0, 10),
+    exportDate: localToday(),
     dateRange: {
       from: allFroms.length > 0 ? allFroms.sort()[0] : null,
       to: allTos.length > 0 ? allTos.sort().reverse()[0] : null,
@@ -79,7 +80,7 @@ async function standardExport(opts: { output?: string; json?: boolean }): Promis
     return;
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const outputPath = resolve(opts.output ?? `unfade-export-${today}.tar.gz`);
   const stagingDir = join(dataDir, ".export-staging");
   const stagingUnfade = join(stagingDir, ".unfade");
@@ -171,7 +172,7 @@ async function leadershipExport(opts: {
   const csvs = globalIndexToCSV(index);
   const methodology = generateMethodology();
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const outputPath = resolve(opts.output ?? `unfade-leadership-${today}.tar.gz`);
 
   const stagingDir = join(getProjectDataDir(), ".leadership-staging");

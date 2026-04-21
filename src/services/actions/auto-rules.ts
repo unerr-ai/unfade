@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UnfadeConfig } from "../../schemas/config.js";
+import { localToday } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getProjectDataDir } from "../../utils/paths.js";
 import { extractHighConfidencePatterns, formatRules, type RuleTarget } from "./rule-formatter.js";
@@ -45,7 +46,7 @@ export function detectRuleTarget(
 }
 
 async function executeAutoRules(ctx: ActionContext): Promise<ActionOutcome> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
 
   // Rate limit: max 1 write per day
   if (lastWriteDate === today) {

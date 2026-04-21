@@ -7,6 +7,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ContextEvent, ContextInput, ContextOutput, McpMeta } from "../schemas/mcp.js";
 import { readEventRange, readEvents } from "../services/capture/event-store.js";
+import { localDateStr } from "../utils/date.js";
 import { getDistillsDir, getEventsDir } from "../utils/paths.js";
 
 /**
@@ -36,7 +37,7 @@ function getEventsLastUpdated(eventsDir: string, from: string, to: string): stri
   let latest: Date | null = null;
 
   while (current <= toDate) {
-    const dateStr = current.toISOString().slice(0, 10);
+    const dateStr = localDateStr(current);
     const filePath = join(eventsDir, `${dateStr}.jsonl`);
     try {
       if (existsSync(filePath)) {
@@ -59,7 +60,7 @@ function getEventsLastUpdated(eventsDir: string, from: string, to: string): stri
 export function getRecentContext(input: ContextInput, cwd?: string): ContextOutput {
   const start = performance.now();
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  const today = localDateStr(now);
 
   let from: string;
   let to: string;
@@ -74,7 +75,7 @@ export function getRecentContext(input: ContextInput, cwd?: string): ContextOutp
     case "this_week": {
       const weekAgo = new Date(now);
       weekAgo.setDate(weekAgo.getDate() - 6);
-      from = weekAgo.toISOString().slice(0, 10);
+      from = localDateStr(weekAgo);
       to = today;
       break;
     }

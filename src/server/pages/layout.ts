@@ -89,23 +89,26 @@ interface NavItem {
   badge?: string;
 }
 
-const NAV_PRIMARY: NavItem[] = [
+// 4-layer navigation (Phase 15 §2.3): Observe → Understand → Identity → System
+const NAV_OBSERVE: NavItem[] = [
   { path: "/", label: "Home", icon: iconHome() },
+  { path: "/projects", label: "Projects", icon: iconFolder() },
   { path: "/live", label: "Live", icon: iconZap() },
-  { path: "/intelligence", label: "Intelligence", icon: iconBarChart() },
-  { path: "/cost", label: "Cost", icon: iconDollarSign() },
-  { path: "/comprehension", label: "Comprehension", icon: iconBrain() },
-  { path: "/coach", label: "Coach", icon: iconTarget() },
-  { path: "/alerts", label: "Alerts", icon: iconAlertTriangle() },
+  { path: "/distill", label: "Distill", icon: iconCalendar() },
 ];
 
-const NAV_SECONDARY: NavItem[] = [
-  { path: "/distill", label: "Distill", icon: iconCalendar() },
+const NAV_UNDERSTAND: NavItem[] = [
+  { path: "/intelligence", label: "Intelligence", icon: iconBarChart() },
+  { path: "/decisions", label: "Decisions", icon: iconSearch() },
+  { path: "/coach", label: "Coach", icon: iconTarget() },
+];
+
+const NAV_IDENTITY: NavItem[] = [
   { path: "/profile", label: "Profile", icon: iconUser() },
   { path: "/cards", label: "Cards", icon: iconCards() },
-  { path: "/portfolio", label: "Portfolio", icon: iconFolder() },
-  { path: "/search", label: "Search", icon: iconSearch() },
-  { path: "/velocity", label: "Velocity", icon: iconTrendingUp() },
+];
+
+const NAV_SYSTEM: NavItem[] = [
   { path: "/integrations", label: "Integrations", icon: iconPlug() },
   { path: "/logs", label: "Logs", icon: iconTerminalSquare() },
 ];
@@ -152,16 +155,12 @@ export function layout(title: string, content: string, options?: LayoutOptions):
   }
 
   const alertCount = options?.alertCount ?? 0;
-  const alertBadge = alertCount > 0 ? `<span class="badge nav-label">${alertCount}</span>` : "";
 
-  const navPrimaryHtml = NAV_PRIMARY.map((item) => {
-    if (item.path === "/alerts" && alertBadge && options) {
-      return renderNavItem({ ...item, badge: String(options.alertCount) });
-    }
-    return renderNavItem(item);
-  }).join("\n        ");
-
-  const navSecondaryHtml = NAV_SECONDARY.map(renderNavItem).join("\n        ");
+  const navObserveHtml = NAV_OBSERVE.map(renderNavItem).join("\n        ");
+  const navUnderstandHtml = NAV_UNDERSTAND.map(renderNavItem).join("\n        ");
+  const navIdentityHtml = NAV_IDENTITY.map(renderNavItem).join("\n        ");
+  const navSystemHtml = NAV_SYSTEM.map(renderNavItem).join("\n        ");
+  const _alertBadge = alertCount;
 
   return `<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -195,10 +194,19 @@ export function layout(title: string, content: string, options?: LayoutOptions):
     </div>
 
     <div class="flex flex-col gap-0.5 flex-1">
-      ${navPrimaryHtml}
+      <div class="divider-label mb-2 px-3 text-[11px] uppercase tracking-wider text-muted font-medium">Observe</div>
+      ${navObserveHtml}
 
-      <div class="divider-label mt-4 mb-2 px-3 text-[11px] uppercase tracking-wider text-muted font-medium">More</div>
-      ${navSecondaryHtml}
+      <div class="divider-label mt-4 mb-2 px-3 text-[11px] uppercase tracking-wider text-muted font-medium">Understand</div>
+      ${navUnderstandHtml}
+
+      <div class="divider-label mt-4 mb-2 px-3 text-[11px] uppercase tracking-wider text-muted font-medium">Identity</div>
+      ${navIdentityHtml}
+
+      <div class="divider-label mt-4 mb-2 px-3 text-[11px] uppercase tracking-wider text-muted font-medium" style="cursor:pointer" onclick="this.nextElementSibling.classList.toggle('hidden')">System ▸</div>
+      <div class="hidden">
+        ${navSystemHtml}
+      </div>
     </div>
 
     <div class="flex flex-col gap-0.5 mt-auto pt-4 border-t border-border">
@@ -223,6 +231,10 @@ export function layout(title: string, content: string, options?: LayoutOptions):
     <div class="live-strip flex-shrink-0">
       <span class="live-dot" id="live-dot"></span>
       <span id="live-status">Connecting…</span>
+      <span class="mx-3">│</span>
+      <select id="project-filter" class="bg-raised border border-border rounded px-2 py-0.5 text-xs text-foreground font-mono" style="max-width:180px" onchange="window.__unfade.setProject(this.value)">
+        <option value="">All Projects</option>
+      </select>
       <span class="flex-1"></span>
       <span id="live-freshness"></span>
       <span id="live-counts"></span>
@@ -263,25 +275,77 @@ export function layout(title: string, content: string, options?: LayoutOptions):
   function closeDrawer(){document.getElementById('drawer-backdrop').classList.remove('open');document.getElementById('evidence-drawer').classList.remove('open');};
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeDrawer();});
 
-  // SSE live strip
-  (function(){
-    if(typeof EventSource==='undefined')return;
-    var es=new EventSource('/api/stream');
-    var dot=document.getElementById('live-dot');
-    var status=document.getElementById('live-status');
-    var freshness=document.getElementById('live-freshness');
-    var counts=document.getElementById('live-counts');
-    dot.classList.remove('stale');
-    status.textContent='Live';
-    es.addEventListener('summary',function(e){
-      try{
-        var d=JSON.parse(e.data);
-        var ago=Math.round((Date.now()-new Date(d.updatedAt).getTime())/1000);
-        freshness.textContent='Updated '+(ago<60?ago+'s':Math.round(ago/60)+'m')+' ago';
-        counts.textContent='Events (24h): '+(d.eventCount24h||0)+' · Direction: '+(d.directionDensity24h||0)+'%';
-      }catch(err){}
-    });
-    es.onerror=function(){dot.classList.add('stale');status.textContent='Reconnecting…';};
+  // Shared client module (Phase 15 §2.9)
+  window.__unfade = {
+    sse: null,
+    projectId: localStorage.getItem('unfade-project') || '',
+    onSummary: [],
+    onEvent: [],
+    onHealth: [],
+
+    fetch: function(path) {
+      var sep = path.includes('?') ? '&' : '?';
+      var url = this.projectId ? path + sep + 'project=' + this.projectId : path;
+      return fetch(url);
+    },
+
+    setProject: function(id) {
+      this.projectId = id;
+      localStorage.setItem('unfade-project', id);
+      window.location.search = id ? '?project=' + id : '';
+    },
+
+    initSSE: function() {
+      if (this.sse || typeof EventSource === 'undefined') return;
+      var self = this;
+      self.sse = new EventSource('/api/stream');
+      var dot = document.getElementById('live-dot');
+      var status = document.getElementById('live-status');
+      var freshness = document.getElementById('live-freshness');
+      var counts = document.getElementById('live-counts');
+      if (dot) { dot.classList.remove('stale'); }
+      if (status) { status.textContent = 'Live'; }
+
+      self.sse.addEventListener('summary', function(e) {
+        try {
+          var d = JSON.parse(e.data);
+          self.onSummary.forEach(function(cb) { cb(d); });
+          var ago = Math.round((Date.now() - new Date(d.updatedAt).getTime()) / 1000);
+          if (freshness) freshness.textContent = 'Updated ' + (ago < 60 ? ago + 's' : Math.round(ago / 60) + 'm') + ' ago';
+          if (counts) counts.textContent = 'Events (24h): ' + (d.eventCount24h || 0) + ' · Direction: ' + (d.directionDensity24h || 0) + '%';
+        } catch(err) {}
+      });
+
+      self.sse.addEventListener('event', function(e) {
+        try { var d = JSON.parse(e.data); self.onEvent.forEach(function(cb) { cb(d); }); } catch(err) {}
+      });
+
+      self.sse.addEventListener('health', function(e) {
+        try { var d = JSON.parse(e.data); self.onHealth.forEach(function(cb) { cb(d); }); } catch(err) {}
+      });
+
+      self.sse.onerror = function() {
+        if (dot) dot.classList.add('stale');
+        if (status) status.textContent = 'Reconnecting…';
+      };
+    }
+  };
+
+  // Initialize SSE + populate project selector
+  window.__unfade.initSSE();
+  (function() {
+    var sel = document.getElementById('project-filter');
+    var current = window.__unfade.projectId || new URLSearchParams(window.location.search).get('project') || '';
+    fetch('/api/repos').then(function(r) { return r.json(); }).then(function(repos) {
+      if (!repos || !repos.length) return;
+      repos.forEach(function(r) {
+        var opt = document.createElement('option');
+        opt.value = r.id;
+        opt.textContent = r.label;
+        if (r.id === current) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }).catch(function() {});
   })();
   </script>
 </body>

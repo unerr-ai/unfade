@@ -9,6 +9,7 @@ import { readEventRange } from "../../services/capture/event-store.js";
 import type { SummaryJson } from "../../services/intelligence/summary-writer.js";
 import type { RepoEntry } from "../../services/registry/registry.js";
 import { findRepoById, loadRegistry } from "../../services/registry/registry.js";
+import { localToday } from "../../utils/date.js";
 
 export const reposRoutes = new Hono();
 
@@ -21,8 +22,9 @@ interface RepoWithSummary {
   summary: SummaryJson | null;
 }
 
-function readRepoSummary(repo: RepoEntry): SummaryJson | null {
-  const summaryPath = join(repo.root, ".unfade", "state", "summary.json");
+function readRepoSummary(_repo: RepoEntry): SummaryJson | null {
+  const { getStateDir } = require("../../utils/paths.js") as typeof import("../../utils/paths.js");
+  const summaryPath = join(getStateDir(), "summary.json");
   if (!existsSync(summaryPath)) return null;
   try {
     return JSON.parse(readFileSync(summaryPath, "utf-8")) as SummaryJson;
@@ -76,7 +78,7 @@ reposRoutes.get("/api/repos/:id/events", (c) => {
     return c.json({ error: "Repo not found" }, 404);
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const from = c.req.query("from") ?? today;
   const to = c.req.query("to") ?? today;
   const limitStr = c.req.query("limit");

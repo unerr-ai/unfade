@@ -169,3 +169,5 @@ make clean        # Remove binaries
 - `.internal/architecture/PHASE_7_WEB_UI_UX_ARCHITECTURE.md` — Web UI re-architecture (localhost:7654), RRVV spec
 - `.internal/architecture/PHASE_13_GAP_REMEDIATION_AND_COHERENCE.md` — U2D audit: gap analysis + remediation sprints (13A–13E)
 - `.internal/architecture/PHASE_14_GLOBAL_FIRST_STORAGE_ARCHITECTURE.md` — Global-first storage: `~/.unfade/` with `projectId` dimension (14A–14F)
+- `.internal/architecture/PHASE_15_RRVV_UI_UX_SYSTEM_REDESIGN.md` — UI/UX redesign: component library, Intelligence Hub, project selector, system reveal (15A–15E)
+- `.internal/architecture/PHASE_10_SYSTEM_HARDENING.md` — System hardening: logging, onboarding + project discovery, daemon control, monitoring lifecycle (§7–§10 added post-Phase 14/15)

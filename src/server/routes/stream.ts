@@ -1,17 +1,132 @@
 // FILE: src/server/routes/stream.ts
-// UF-225: SSE endpoint — pushes summary.json updates and health ticks to connected clients.
-// Uses Hono's built-in streamSSE() helper. Polls summary.json mtime every 2s for changes.
-// On connection: sends current summary as initial event (client doesn't need a separate fetch).
+// UF-225: SSE endpoint — pushes summary.json updates, per-capture events, and health ticks.
+// Uses Hono's streamSSE() helper. Polls summary.json mtime every 2s for changes.
+// On connection: sends current summary + backfills recent capture events for live UI.
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { getProjectDataDir, getStateDir } from "../../utils/paths.js";
+import { localToday } from "../../utils/date.js";
+import { getEventsDir, getIntelligenceDir, getStateDir } from "../../utils/paths.js";
 
 export const streamRoutes = new Hono();
 
 const POLL_INTERVAL_MS = 2000;
+const EVENT_BACKFILL_LINES = 20;
+const EVENT_TAIL_CHUNK_MAX = 512 * 1024;
+
+/** Read bytes [start, endExclusive) from a file (sync). */
+function readBytesSync(path: string, start: number, endExclusive: number): Buffer {
+  const len = endExclusive - start;
+  if (len <= 0) return Buffer.alloc(0);
+  const buf = Buffer.alloc(len);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, buf, 0, len, start);
+  } finally {
+    closeSync(fd);
+  }
+  return buf;
+}
+
+function eventsPathForToday(): string {
+  return join(getEventsDir(), `${localToday()}.jsonl`);
+}
+
+/** Find the most recent non-empty events JSONL file (for backfill when today's file doesn't exist). */
+function findLatestEventsFile(): string | null {
+  const dir = getEventsDir();
+  if (!existsSync(dir)) return null;
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".jsonl") && !f.endsWith(".epoch"))
+    .sort()
+    .reverse();
+  for (const f of files) {
+    const p = join(dir, f);
+    if (statSync(p).size > 0) return p;
+  }
+  return null;
+}
+
+/** Read last N complete JSON lines from a JSONL file (best-effort for large files). */
+function readLastJsonlLines(filePath: string, maxLines: number): unknown[] {
+  if (!existsSync(filePath)) return [];
+  const stat = statSync(filePath);
+  if (stat.size === 0) return [];
+  const start = Math.max(0, stat.size - EVENT_TAIL_CHUNK_MAX);
+  const buf = readBytesSync(filePath, start, stat.size);
+  const text = buf.toString("utf-8");
+  const lines = text.split("\n").filter((l) => l.trim().length > 0);
+  const tail = lines.slice(-maxLines);
+  const out: unknown[] = [];
+  for (const line of tail) {
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      /* skip corrupt */
+    }
+  }
+  return out;
+}
+
+interface EventTailState {
+  path: string;
+  offset: number;
+  pending: string;
+}
+
+function createEventTailState(): EventTailState {
+  return { path: "", offset: 0, pending: "" };
+}
+
+/**
+ * Read newly appended complete lines from the active JSONL file.
+ * Updates `state` in place; returns parsed event objects.
+ */
+function drainNewEventLines(state: EventTailState): unknown[] {
+  const path = eventsPathForToday();
+  if (path !== state.path) {
+    state.path = path;
+    state.offset = 0;
+    state.pending = "";
+  }
+  if (!existsSync(path)) {
+    return [];
+  }
+  const stat = statSync(path);
+  if (stat.size < state.offset) {
+    // truncated / rotated file
+    state.offset = 0;
+    state.pending = "";
+  }
+  if (stat.size === state.offset) {
+    return [];
+  }
+  const chunk = readBytesSync(path, state.offset, stat.size);
+  state.pending += chunk.toString("utf-8");
+  const parts = state.pending.split("\n");
+  state.pending = parts.pop() ?? "";
+  const events: unknown[] = [];
+  for (const line of parts) {
+    if (!line.trim()) continue;
+    try {
+      events.push(JSON.parse(line));
+    } catch {
+      /* skip corrupt */
+    }
+  }
+  state.offset = stat.size - Buffer.byteLength(state.pending, "utf8");
+  return events;
+}
 
 streamRoutes.get("/api/stream", (c) => {
   return streamSSE(c, async (stream) => {
@@ -19,6 +134,7 @@ streamRoutes.get("/api/stream", (c) => {
     let lastMtimeMs = 0;
     let lastIntelligenceMtimeMs = 0;
     let aborted = false;
+    const eventTail = createEventTailState();
 
     c.req.raw.signal.addEventListener("abort", () => {
       aborted = true;
@@ -49,14 +165,50 @@ streamRoutes.get("/api/stream", (c) => {
 
     await readAndSend();
 
+    // Backfill recent events: try today first, fall back to most recent file
+    try {
+      const todayPath = eventsPathForToday();
+      const backfillPath =
+        existsSync(todayPath) && statSync(todayPath).size > 0 ? todayPath : findLatestEventsFile();
+      if (backfillPath) {
+        for (const ev of readLastJsonlLines(backfillPath, EVENT_BACKFILL_LINES)) {
+          await stream.writeSSE({
+            data: JSON.stringify(ev),
+            event: "event",
+            id: String(eventId++),
+          });
+        }
+      }
+      eventTail.path = todayPath;
+      if (existsSync(todayPath)) {
+        const st = statSync(todayPath);
+        eventTail.offset = st.size;
+        eventTail.pending = "";
+      }
+    } catch {
+      /* non-fatal */
+    }
+
     while (!aborted) {
       await stream.sleep(POLL_INTERVAL_MS);
       if (aborted) break;
       await readAndSend();
 
+      try {
+        for (const ev of drainNewEventLines(eventTail)) {
+          await stream.writeSSE({
+            data: JSON.stringify(ev),
+            event: "event",
+            id: String(eventId++),
+          });
+        }
+      } catch {
+        /* non-fatal */
+      }
+
       // 12A.11: Push intelligence updates when any analyzer output changes
       try {
-        const intelligenceDir = join(getProjectDataDir(), "intelligence");
+        const intelligenceDir = getIntelligenceDir();
         if (existsSync(intelligenceDir)) {
           const files = readdirSync(intelligenceDir).filter((f) => f.endsWith(".json"));
           let maxMtime = 0;

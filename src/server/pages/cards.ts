@@ -5,13 +5,14 @@
 import { existsSync, readdirSync } from "node:fs";
 import { Hono } from "hono";
 import { loadCardIdentityData } from "../../services/cards/identity.js";
+import { localToday } from "../../utils/date.js";
 import { getCardsDir } from "../../utils/paths.js";
 import { escapeHtml, layout } from "./layout.js";
 
 export const cardsPage = new Hono();
 
 cardsPage.get("/cards", (c) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
 
   const cardsDir = getCardsDir();
   let existingCards: string[] = [];

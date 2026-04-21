@@ -3,6 +3,7 @@
 // cost_per_directed_decision = daily_spend / directed_decision_count
 // Trend: compare current vs 7d trailing average.
 
+import { localToday } from "../../utils/date.js";
 import { readTodaySpend, readTrailingSpend } from "./token-proxy.js";
 
 type DbLike = {
@@ -26,7 +27,7 @@ export function computeCostPerQuality(db: DbLike): CostQualityResult {
   const todaySpendData = readTodaySpend(db);
   const todaySpend = todaySpendData?.totalCost ?? 0;
 
-  const todayDirected = countDirectedDecisions(db, new Date().toISOString().slice(0, 10));
+  const todayDirected = countDirectedDecisions(db, localToday());
   const costPerDirected =
     todayDirected > 0 && todaySpend > 0
       ? Math.round((todaySpend / todayDirected) * 100) / 100

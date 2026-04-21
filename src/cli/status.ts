@@ -12,6 +12,7 @@ import {
 import { presentMetric } from "../services/intelligence/presentation.js";
 import { readSnapshots } from "../services/intelligence/snapshot.js";
 import { detectState } from "../state/detector.js";
+import { localToday } from "../utils/date.js";
 import { queryDaemonStatus, queryIngestStatus } from "../utils/ipc.js";
 import { getDistillsDir, getProfileDir } from "../utils/paths.js";
 import { theme, writeBlank, writeLine } from "./ui.js";
@@ -167,7 +168,7 @@ export async function printStatus(config: {
   omitCommandsFooter?: boolean;
 }): Promise<void> {
   const state = detectState({ skipLlmCheck: true });
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const eventCount = countEvents(today);
   const profile = loadProfile();
   const distill = loadLatestDistill();

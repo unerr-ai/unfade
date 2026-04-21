@@ -72,7 +72,7 @@ func SaveSequenceCounters(stateDir string) error {
 	sessionSeqCounters.mu.Lock()
 	state := sequencesState{
 		Sessions: make(map[string]int64, len(sessionSeqCounters.counters)),
-		Updated:  time.Now().UTC().Format(time.RFC3339),
+		Updated:  time.Now().Format(time.RFC3339),
 	}
 	for k, v := range sessionSeqCounters.counters {
 		state.Sessions[k] = v

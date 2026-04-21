@@ -2,6 +2,7 @@
 // UF-081: Heatmap renderer — SVG heatmap from daily decision counts.
 // GitHub-style contribution graph: 52×7 grid, dark theme, 5 color levels.
 
+import { localDateStr } from "../../utils/date.js";
 import type { DayCount } from "./site-generator.js";
 
 // ---------------------------------------------------------------------------
@@ -101,7 +102,7 @@ export function renderHeatmapSvg(dayCounts: DayCount[]): string {
 
       if (cellDate > today) break;
 
-      const dateStr = cellDate.toISOString().slice(0, 10);
+      const dateStr = localDateStr(cellDate);
       const dc = countMap.get(dateStr);
       const intensity = dc?.intensity ?? 0;
       const color = intensityColor(intensity);

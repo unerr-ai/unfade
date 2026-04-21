@@ -1,369 +1,417 @@
 // FILE: src/server/pages/home.ts
-// UF-303: Home page — the 10-second wow. Hero direction density + KPI strip + insights + quick actions.
-// Replaces dashboard.ts. First paint from /api/summary, SSE for live updates.
+// Enterprise home: inline activation + steady-state activity dashboard. Single SSE path via window.__unfade.
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Hono } from "hono";
+import { readSummary } from "../../services/intelligence/summary-writer.js";
+import { getStateDir } from "../../utils/paths.js";
+import { activationSection } from "../components/system-reveal.js";
 import {
   iconAlertTriangle,
   iconBarChart,
   iconCalendar,
   iconCards,
+  iconFolder,
   iconTarget,
   iconTrendingUp,
 } from "../icons.js";
 import { lineageDrillthroughScript } from "./components/lineage-drillthrough.js";
-import { layout } from "./layout.js";
+import { escapeHtml, layout } from "./layout.js";
 
 export const homePage = new Hono();
 
+const ACTIVATION_GRACE_MS = 120_000;
+
 homePage.get("/", (c) => {
+  const summary = readSummary();
+  const warm = !!summary && (summary.eventCount24h >= 5 || summary.firstRunComplete === true);
+  let needsActivation = !warm;
+  let sessionId = "unknown";
+  try {
+    const setupPath = join(getStateDir(), "setup-status.json");
+    if (existsSync(setupPath)) {
+      const setup = JSON.parse(readFileSync(setupPath, "utf-8")) as { initializedAt?: string };
+      if (setup.initializedAt) {
+        sessionId = setup.initializedAt;
+        const initAge = Date.now() - Date.parse(setup.initializedAt);
+        if (!Number.isNaN(initAge) && initAge >= 0 && initAge < ACTIVATION_GRACE_MS) {
+          needsActivation = true;
+        }
+      }
+    }
+  } catch {
+    /* keep defaults */
+  }
+  const sessionAttr = escapeHtml(sessionId);
+
   const content = `
     <style>
-      @keyframes pulse-glow {
-        0%, 100% { opacity: 0.4; transform: scale(1); }
-        50% { opacity: 1; transform: scale(1.05); }
-      }
-      @keyframes orbit {
-        from { transform: rotate(0deg) translateX(60px) rotate(0deg); }
-        to { transform: rotate(360deg) translateX(60px) rotate(-360deg); }
-      }
-      @keyframes fade-up {
-        from { opacity: 0; transform: translateY(12px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      @keyframes count-pulse {
-        0%, 100% { transform: scale(1); }
-        50% { transform: scale(1.08); }
-      }
-      .loader-orbit { animation: orbit 3s linear infinite; }
-      .loader-orbit:nth-child(2) { animation-delay: -1s; }
-      .loader-orbit:nth-child(3) { animation-delay: -2s; }
-      .logo-pulse { animation: pulse-glow 2.5s ease-in-out infinite; }
-      .fade-up { animation: fade-up 0.6s ease-out both; }
-      .fade-up-1 { animation-delay: 0.1s; }
-      .fade-up-2 { animation-delay: 0.25s; }
-      .fade-up-3 { animation-delay: 0.4s; }
-      .event-count-bump { animation: count-pulse 0.3s ease-out; }
+      #home-root { --home-ease: 400ms cubic-bezier(0.16, 1, 0.3, 1); position: relative; }
+      #home-root > .home-layer { transition: opacity var(--home-ease), transform var(--home-ease), max-height var(--home-ease), margin var(--home-ease), padding var(--home-ease); overflow: hidden; }
+      .home-layer-dash { max-height: 6000px; opacity: 1; transform: translateY(0); }
+      .home-layer-act { max-height: 6000px; opacity: 1; transform: translateY(0); }
+      .home-mode-activation .home-layer-dash { max-height: 0; opacity: 0; transform: translateY(12px); pointer-events: none; margin-bottom: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; border: none; }
+      .home-mode-dashboard .home-layer-act { max-height: 0; opacity: 0; transform: translateY(-12px); pointer-events: none; margin-bottom: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; border: none; }
+      .hd-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+      .hd-dot.ok { background: var(--success); box-shadow: 0 0 0 2px rgba(16,185,129,0.15); }
+      .hd-dot.warn { background: var(--warning); animation: hd-p 1.4s cubic-bezier(0.16,1,0.3,1) infinite; }
+      .hd-dot.bad { background: var(--error); }
+      .hd-dot.muted { background: rgba(255,255,255,0.12); }
+      @keyframes hd-p { 0%,100%{opacity:1} 50%{opacity:0.5} }
+      .de-row { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 12px 0; display: flex; align-items: baseline; gap: 12px; font-size: 13px; }
+      .de-row:last-child { border-bottom: none; }
+      .de-src { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; min-width: 44px; font-variant-numeric: tabular-nums; }
+      .de-time { font-size: 11px; font-family: 'JetBrains Mono', monospace; color: rgba(250,250,250,0.4); margin-left: auto; font-variant-numeric: tabular-nums; }
+      .mk-val { font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+      .mk-lab { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: rgba(250,250,250,0.45); margin-top: 8px; }
     </style>
 
-    <!-- First-run / Loading state -->
-    <div id="home-loading" class="flex flex-col items-center justify-center" style="min-height:calc(100vh - 180px)">
-      <div class="relative mb-8">
-        <div class="font-mono text-6xl font-bold text-accent logo-pulse">unfade</div>
-        <div class="absolute inset-0 flex items-center justify-center" style="pointer-events:none">
-          <div class="loader-orbit w-2 h-2 rounded-full bg-cyan opacity-60"></div>
-          <div class="loader-orbit w-1.5 h-1.5 rounded-full bg-accent opacity-40"></div>
-          <div class="loader-orbit w-1 h-1 rounded-full bg-cyan opacity-30"></div>
-        </div>
+    <div id="home-root" class="home-mode-${needsActivation ? "activation" : "dashboard"}" data-needs-activation="${needsActivation ? "true" : "false"}" data-session-id="${sessionAttr}">
+      <div class="home-layer home-layer-act max-w-[1200px] mx-auto w-full mb-8">
+        ${activationSection()}
       </div>
-      <p class="text-sm text-muted fade-up fade-up-1">Connecting to intelligence layer</p>
-      <div class="flex items-center gap-1.5 mt-3 fade-up fade-up-2">
-        <span class="w-1.5 h-1.5 rounded-full bg-accent logo-pulse"></span>
-        <span class="w-1.5 h-1.5 rounded-full bg-accent logo-pulse" style="animation-delay:0.3s"></span>
-        <span class="w-1.5 h-1.5 rounded-full bg-accent logo-pulse" style="animation-delay:0.6s"></span>
-      </div>
-    </div>
 
-    <!-- First-run onboarding / calibrating -->
-    <div id="home-onboarding" class="hidden">
-      <div class="flex flex-col items-center justify-center" style="min-height:calc(100vh - 180px)">
-        <div class="bg-surface border border-accent/30 rounded-lg p-10 mb-6 text-center max-w-xl w-full fade-up">
-          <div class="font-mono text-4xl font-bold text-accent mb-2">unfade</div>
-          <div class="font-heading text-2xl font-semibold mb-3 fade-up fade-up-1">Your reasoning observatory is warming up</div>
-          <p class="text-muted text-sm mb-6 max-w-md mx-auto fade-up fade-up-2">Unfade is scanning your AI sessions, git history, and terminal activity. Insights appear as data flows in.</p>
-
-          <div class="grid grid-cols-3 gap-4 mb-6 fade-up fade-up-2">
-            <div class="bg-raised rounded-lg p-4">
-              <div class="font-mono text-2xl font-bold text-cyan" id="onboard-events">0</div>
-              <div class="text-[11px] text-muted mt-1">events captured</div>
-            </div>
-            <div class="bg-raised rounded-lg p-4">
-              <div class="font-mono text-2xl font-bold text-accent" id="onboard-tools">—</div>
-              <div class="text-[11px] text-muted mt-1">tools detected</div>
-            </div>
-            <div class="bg-raised rounded-lg p-4">
-              <div class="font-mono text-2xl font-bold text-foreground" id="onboard-status">●</div>
-              <div class="text-[11px] text-muted mt-1">capture engine</div>
-            </div>
+      <div class="home-layer home-layer-dash max-w-[1200px] mx-auto w-full mb-8">
+        <div class="bg-surface border border-border rounded-lg px-6 py-3 mb-4 flex flex-wrap items-center gap-6" id="home-health" role="status" aria-label="System health">
+          <span class="text-[11px] uppercase tracking-wider text-muted font-medium">System health</span>
+          <div class="flex items-center gap-2">
+            <span class="hd-dot muted" id="dh-sse"></span>
+            <span class="text-[13px] text-muted" id="dh-sse-l">SSE</span>
           </div>
-
-          <div class="flex items-center justify-center gap-3 mb-3 fade-up fade-up-3">
-            <div class="h-1.5 rounded-full bg-raised overflow-hidden" style="width:200px">
-              <div class="h-full bg-accent rounded-full transition-all duration-500" id="onboard-bar" style="width:0"></div>
-            </div>
-            <span class="text-xs text-muted font-mono" id="onboard-pct">0%</span>
+          <div class="flex items-center gap-2">
+            <span class="hd-dot muted" id="dh-cap"></span>
+            <span class="text-[13px] text-muted" id="dh-cap-l">Capture</span>
           </div>
-          <p class="text-xs text-muted fade-up fade-up-3" id="onboard-hint">Waiting for first events…</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Main content (shown when data exists) -->
-    <div id="home-live" class="hidden">
-
-      <!-- Project Selector -->
-      <div id="project-selector" class="flex items-center gap-3 mb-4">
-        <label class="text-xs text-muted uppercase tracking-wider">Project</label>
-        <select id="project-filter" class="bg-surface border border-border rounded px-3 py-1.5 text-sm text-foreground font-mono" onchange="window.location.search='?project='+this.value">
-          <option value="">All projects</option>
-        </select>
-      </div>
-
-      <!-- Hero Card -->
-      <div class="bg-surface border border-border rounded-lg p-6 mb-6 flex items-center justify-between" style="min-height:140px">
-        <div>
-          <div class="text-xs text-muted uppercase tracking-wider mb-1">Human-Directed</div>
-          <div class="font-mono text-5xl font-bold text-cyan" id="h-direction">—</div>
-          <div class="flex items-center gap-2 mt-2">
-            <span class="text-sm text-muted" id="h-direction-label"></span>
-            <span id="h-trend"></span>
+          <div class="flex items-center gap-2">
+            <span class="hd-dot muted" id="dh-mat"></span>
+            <span class="text-[13px] text-muted" id="dh-mat-l">Materializer</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="hd-dot muted" id="dh-int"></span>
+            <span class="text-[13px] text-muted" id="dh-int-l">Intelligence</span>
           </div>
         </div>
-        <div class="text-right">
-          <div class="text-xs text-muted" id="h-freshness"></div>
-          <div class="text-xs text-muted mt-1" id="h-confidence"></div>
-        </div>
-      </div>
 
-      <!-- KPI Strip -->
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div class="bg-surface border border-border rounded-lg p-4 text-center">
-          <div class="font-mono text-3xl font-bold text-foreground" id="h-events">0</div>
-          <div class="text-xs text-muted mt-1">Events (24h)</div>
-        </div>
-        <div class="bg-surface border border-border rounded-lg p-4 text-center">
-          <div class="font-mono text-3xl font-bold text-accent" id="h-comprehension">—</div>
-          <div class="text-xs text-muted mt-1">Comprehension</div>
-        </div>
-        <div class="bg-surface border border-border rounded-lg p-4 text-center">
-          <div class="font-mono text-3xl font-bold text-accent" id="h-domain">—</div>
-          <div class="text-xs text-muted mt-1">Top Domain</div>
-        </div>
-        <div class="bg-surface border border-border rounded-lg p-4 text-center">
-          <div class="font-mono text-3xl font-bold text-accent" id="h-cost">—</div>
-          <div class="text-xs text-muted mt-1">Cost (est.)</div>
-          <div class="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded" style="background:var(--proxy);color:var(--accent)">estimate</div>
-        </div>
-      </div>
-
-      <!-- Two-column: Insights + Quick Actions -->
-      <div class="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6">
-
-        <!-- Insight Stream -->
-        <div class="bg-surface border border-border rounded-lg p-5">
-          <h2 class="font-heading text-lg font-semibold mb-3">Recent Insights</h2>
-          <div id="h-insights" class="space-y-2 text-sm text-muted">Loading…</div>
-        </div>
-
-        <!-- Quick Actions + Tool Mix -->
-        <div class="space-y-4">
-          <div class="bg-surface border border-border rounded-lg p-5">
-            <h2 class="font-heading text-lg font-semibold mb-3">Quick Actions</h2>
-            <div class="space-y-2">
-              <a href="/intelligence" class="flex items-center gap-2 text-sm text-muted hover:text-foreground no-underline py-1">${iconBarChart({ size: 16 })} Intelligence Hub</a>
-              <a href="/coach" class="flex items-center gap-2 text-sm text-muted hover:text-foreground no-underline py-1">${iconTarget({ size: 16 })} Prompt Coach</a>
-              <a href="/alerts" class="flex items-center gap-2 text-sm text-muted hover:text-foreground no-underline py-1">${iconAlertTriangle({ size: 16 })} Alerts & Replays</a>
-              <a href="/distill" class="flex items-center gap-2 text-sm text-muted hover:text-foreground no-underline py-1">${iconCalendar({ size: 16 })} Latest Distill</a>
-              <a href="/cards" class="flex items-center gap-2 text-sm text-muted hover:text-foreground no-underline py-1">${iconCards({ size: 16 })} Generate Card</a>
-              <a href="/velocity" class="flex items-center gap-2 text-sm text-muted hover:text-foreground no-underline py-1">${iconTrendingUp({ size: 16 })} Velocity Trends</a>
+        <div class="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4 mb-8">
+          <div class="bg-surface border border-border rounded-lg p-6 min-h-[320px]">
+            <div class="text-[11px] uppercase tracking-wider text-muted font-medium mb-4">Event stream</div>
+            <div id="dash-events" class="min-h-[200px]">
+              <p id="dash-events-empty" style="color:rgba(250,250,250,0.3);padding:40px 0;text-align:center;font-size:13px">No events captured yet. Start working to see your activity stream.</p>
             </div>
           </div>
-          <div class="bg-surface border border-border rounded-lg p-5">
-            <h2 class="font-heading text-lg font-semibold mb-3">Tool Mix</h2>
-            <div id="h-tools" class="flex flex-wrap gap-2 text-sm text-muted">—</div>
+          <div class="flex flex-col gap-4">
+            <div class="bg-surface border border-border rounded-lg p-6 flex-1">
+              <div class="text-[11px] uppercase tracking-wider text-muted font-medium mb-6">Metrics</div>
+              <div class="space-y-6">
+                <div>
+                  <div class="mk-val text-cyan" id="dash-dir">—</div>
+                  <div class="mk-lab">Direction (24h)</div>
+                </div>
+                <div>
+                  <div class="mk-val text-foreground" id="dash-ev">—</div>
+                  <div class="mk-lab">Events (24h)</div>
+                </div>
+                <div>
+                  <div class="mk-val text-accent" id="dash-comp">—</div>
+                  <div class="mk-lab">Comprehension</div>
+                </div>
+                <div>
+                  <div class="mk-val text-accent" id="dash-cost">—</div>
+                  <div class="mk-lab">Cost (est.)</div>
+                  <div class="inline-block mt-2 text-[10px] px-1.5 py-0.5 rounded" style="background:var(--proxy);color:var(--accent)">estimate</div>
+                </div>
+              </div>
+            </div>
+            <div class="bg-surface border border-border rounded-lg p-6">
+              <div class="text-[11px] uppercase tracking-wider text-muted font-medium mb-4">Quick actions</div>
+              <div class="space-y-2">
+                <a href="/intelligence" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconBarChart({ size: 16 })}<span class="flex-1 ml-2">Intelligence Hub</span><span class="text-muted">→</span></a>
+                <a href="/projects" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconFolder({ size: 16 })}<span class="flex-1 ml-2">Projects</span><span class="text-muted">→</span></a>
+                <a href="/distill" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconCalendar({ size: 16 })}<span class="flex-1 ml-2">Distill</span><span class="text-muted">→</span></a>
+                <a href="/coach" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconTarget({ size: 16 })}<span class="flex-1 ml-2">Coach</span><span class="text-muted">→</span></a>
+                <a href="/alerts" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconAlertTriangle({ size: 16 })}<span class="flex-1 ml-2">Alerts</span><span class="text-muted">→</span></a>
+                <a href="/cards" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconCards({ size: 16 })}<span class="flex-1 ml-2">Cards</span><span class="text-muted">→</span></a>
+                <a href="/velocity" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2">${iconTrendingUp({ size: 16 })}<span class="flex-1 ml-2">Velocity</span><span class="text-muted">→</span></a>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
 
-    <!-- Setup Required State -->
-    <div id="home-setup" class="hidden">
-      <div class="bg-surface border border-warning/30 rounded-lg p-8 text-center">
-        <div class="font-heading text-2xl font-semibold mb-3">Setup Required</div>
-        <p class="text-muted text-sm mb-4 max-w-lg mx-auto">No LLM provider is configured. Unfade can capture your reasoning patterns but needs an AI provider to generate daily distills and deeper intelligence.</p>
-        <a href="/settings" class="inline-block bg-accent text-white px-6 py-2.5 rounded-lg font-medium text-sm no-underline hover:bg-accent-dim transition-colors">Configure LLM Provider</a>
-        <p class="text-xs text-muted mt-4">You can also use structured summaries (no AI) — but AI-powered distills are recommended.</p>
-      </div>
-    </div>
-
-    <!-- Ingesting State -->
-    <div id="home-ingesting" class="hidden">
-      <div class="bg-surface border border-accent/30 rounded-lg p-8 text-center">
-        <div class="font-heading text-2xl font-semibold mb-3">Bootstrapping Reasoning Profile</div>
-        <p class="text-muted text-sm mb-4">Ingesting historical data from your repository. This runs in the background.</p>
-        <div class="flex items-center justify-center gap-2 mb-2">
-          <div class="h-2 w-48 bg-raised rounded-full overflow-hidden"><div class="h-full bg-accent rounded-full transition-all" id="ingest-bar" style="width:0"></div></div>
-          <span class="text-xs text-muted" id="ingest-pct">0%</span>
+        <div class="bg-surface border border-border rounded-lg p-6 mb-8">
+          <div class="text-[11px] uppercase tracking-wider text-muted font-medium mb-4">Recent narratives</div>
+          <div id="dash-insights" class="text-[13px] text-muted">Loading…</div>
         </div>
-        <p class="text-xs text-muted">Keep working — insights will appear as data accumulates.</p>
-      </div>
-    </div>
-
-    <!-- Stale State Banner -->
-    <div id="home-stale" class="hidden mb-4">
-      <div class="bg-surface border border-warning/40 rounded-lg px-4 py-3 flex items-center gap-3">
-        <span class="text-warning text-sm font-medium">No recent activity</span>
-        <span class="text-xs text-muted">Last event was more than 24 hours ago. Resume working to keep your reasoning profile fresh.</span>
       </div>
     </div>
 
     ${lineageDrillthroughScript()}
     <script>
     (function(){
-      var loading=document.getElementById('home-loading');
-      var onboarding=document.getElementById('home-onboarding');
-      var live=document.getElementById('home-live');
-      var setupEl=document.getElementById('home-setup');
-      var ingestingEl=document.getElementById('home-ingesting');
-      var staleEl=document.getElementById('home-stale');
+      var LS_KEY = 'unfade-activation-seen';
+      var SESS_KEY = 'unfade-session-id';
+      var THRESH = 5;
 
-      // Populate project selector from registry
-      var projectFilter=document.getElementById('project-filter');
-      var currentProject=new URLSearchParams(window.location.search).get('project')||'';
-      fetch('/api/repos').then(function(r){return r.json()}).then(function(repos){
-        if(!repos||!repos.length)return;
-        repos.forEach(function(r){
-          var opt=document.createElement('option');
-          opt.value=r.id;
-          opt.textContent=r.label;
-          if(r.id===currentProject)opt.selected=true;
-          projectFilter.appendChild(opt);
-        });
-      }).catch(function(){});
-
-      // 5-state machine: setup-required → ingesting → calibrating → live → stale
-      var currentState='loading';
-
-      function hideAll(){
-        loading.classList.add('hidden');
-        onboarding.classList.add('hidden');
-        live.classList.add('hidden');
-        setupEl.classList.add('hidden');
-        ingestingEl.classList.add('hidden');
-        staleEl.classList.add('hidden');
+      function syncActivationSession(){
+        try {
+          var root = document.getElementById('home-root');
+          if(!root) return;
+          var sid = root.getAttribute('data-session-id') || '';
+          var prev = localStorage.getItem(SESS_KEY);
+          if(prev !== sid){
+            localStorage.removeItem(LS_KEY);
+            localStorage.setItem(SESS_KEY, sid);
+          }
+        } catch(e) {}
       }
 
-      function setState(state, data){
-        currentState=state;
-        hideAll();
-        switch(state){
-          case 'setup-required': window.location.href='/setup'; return;
-          case 'ingesting': ingestingEl.classList.remove('hidden'); break;
-          case 'calibrating':
-            onboarding.classList.remove('hidden');
-            if(data){
-              var evts=data.eventCount24h||0;
-              var pct=Math.min(Math.round(evts/5*100),100);
-              document.getElementById('onboard-bar').style.width=pct+'%';
-              document.getElementById('onboard-pct').textContent=pct+'%';
-              var evtEl=document.getElementById('onboard-events');
-              if(evtEl.textContent!==String(evts)){evtEl.textContent=evts;evtEl.classList.remove('event-count-bump');void evtEl.offsetWidth;evtEl.classList.add('event-count-bump');}
-              if(data.toolMix&&Object.keys(data.toolMix).length>0){
-                document.getElementById('onboard-tools').textContent=Object.keys(data.toolMix).join(', ');
-              }
-              document.getElementById('onboard-status').innerHTML='<span class="text-green-400">●</span>';
-              document.getElementById('onboard-hint').textContent=pct>=100?'Ready — loading dashboard…':(5-evts)+' more events until first insight';
-              if(pct>=100)setTimeout(function(){location.reload();},1500);
-            } else {
-              document.getElementById('onboard-status').innerHTML='<span class="logo-pulse text-accent">●</span>';
-              document.getElementById('onboard-hint').textContent='Capture engine starting — keep working normally';
-            }
-            break;
-          case 'live': live.classList.remove('hidden'); break;
-          case 'stale': live.classList.remove('hidden'); staleEl.classList.remove('hidden'); break;
+      function whenReady(fn){
+        if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+        else fn();
+      }
+
+      function setDot(el, state){
+        if(!el) return;
+        el.className = 'hd-dot ' + (state==='ok'?'ok':state==='warn'?'warn':state==='bad'?'bad':'muted');
+      }
+
+      function setActDot(id, state){
+        var d = document.getElementById('ha-dot-'+id);
+        var lab = document.getElementById('ha-st-'+id);
+        if(!d) return;
+        d.className = 'ua-dot ' + (state==='ready'?'ready':state==='building'?'building':state==='error'?'error':'waiting');
+        if(lab){
+          lab.textContent = state==='ready'?'Ready':state==='building'?'Starting…':state==='error'?'Error':'Waiting';
+          lab.style.color = state==='ready'?'var(--success)':state==='error'?'var(--error)':'rgba(250,250,250,0.5)';
         }
       }
 
-      function dirLabel(p){if(p>=70)return'You steer confidently';if(p>=50)return'Balanced collaboration';if(p>=30)return'Model-assisted';if(p>0)return'Model-led';return'';}
-
-      function updateLive(s){
-        document.getElementById('h-direction').textContent=s.directionDensity24h+'%';
-        document.getElementById('h-direction-label').textContent=dirLabel(s.directionDensity24h);
-        document.getElementById('h-events').textContent=s.eventCount24h||'0';
-        document.getElementById('h-comprehension').textContent=s.comprehensionScore!=null?s.comprehensionScore:'—';
-        document.getElementById('h-domain').textContent=s.topDomain||'—';
-        if(s.costPerDirectedDecision!=null){
-          document.getElementById('h-cost').textContent='$'+s.costPerDirectedDecision.toFixed(2);
-        }
-        var ago=Math.round((Date.now()-new Date(s.updatedAt).getTime())/1000);
-        document.getElementById('h-freshness').textContent='Updated '+(ago<60?ago+'s':Math.round(ago/60)+'m')+' ago';
-        document.getElementById('h-confidence').textContent=s.firstRunComplete?'First-run data':'';
-        if(s.toolMix&&Object.keys(s.toolMix).length>0){
-          document.getElementById('h-tools').innerHTML=Object.entries(s.toolMix).map(function(e){
-            return'<span class="bg-raised border border-border rounded px-3 py-1 font-mono text-xs">'+e[0]+' <span class="text-cyan">'+e[1]+'</span></span>';
-          }).join('');
-        }
-
-        // Determine: stale if last event > 24h
-        if(s.updatedAt){
-          var ageMs=Date.now()-new Date(s.updatedAt).getTime();
-          if(ageMs > 86400000){ setState('stale',s); return; }
-        }
-        setState('live',s);
+      function makeRowTick(){
+        var t0 = Date.now();
+        return function(){
+          var s = Math.max(0, Math.round((Date.now()-t0)/1000));
+          if(s<1) return 'now';
+          if(s<60) return s+'s';
+          return Math.round(s/60)+'m';
+        };
       }
 
-      function handleSummary(s){
-        if(!s||s.eventCount24h<5){
-          setState('calibrating',s);
-          return;
-        }
-        updateLive(s);
+      function setCtx(id, text){
+        var el = document.getElementById('ha-ctx-'+id);
+        if(el) el.textContent = text;
       }
 
-      // Server middleware guarantees setup is complete if we reach this page.
-      // Go directly to summary check.
-      fetch('/api/summary').then(function(r){return r.status===204?null:r.json();}).then(function(d){
-        if(d) handleSummary(d); else setState('calibrating',null);
-      }).catch(function(){
-        setState('calibrating',null);
-      });
-
-      // 11E.8: Fetch narrative insights first, fall back to raw insights
-      Promise.all([
-        fetch('/api/intelligence/narratives').then(function(r){return r.ok?r.json():null;}).catch(function(){return null;}),
-        fetch('/api/insights/recent').then(function(r){return r.json();}).catch(function(){return[];})
-      ]).then(function(results){
-        var narratives=results[0]&&results[0].narratives?results[0].narratives:[];
-        var rawInsights=results[1]||[];
-        var el=document.getElementById('h-insights');
-
-        // Prefer narratives (causal claims), fall back to raw insights
-        if(narratives.length>0){
-          el.innerHTML=narratives.slice(-5).reverse().map(function(n){
-            var badge='<span class="inline-block text-[10px] px-1.5 py-0.5 rounded mr-1 '+severityClass(n.severity)+'">'+(n.severity||'info')+'</span>';
-            var why='<button class="text-xs text-muted hover:text-accent cursor-pointer underline underline-offset-2 bg-transparent border-none p-0 ml-2" onclick="toggleLineage(''+n.id+'','lineage-'+n.id.slice(0,8)+'')">Why? →</button>';
-            var lineageDetail='<div class="lineage-detail hidden mt-2 pl-3 border-l-2 border-border" id="lineage-'+n.id.slice(0,8)+'-detail"><div class="text-xs text-muted">Loading…</div></div>';
-            return'<div class="py-2 border-b border-border last:border-0">'+badge+'<span class="text-foreground text-sm">'+n.claim+'</span>'+why+lineageDetail+'</div>';
-          }).join('');
-        } else if(rawInsights.length>0){
-          el.innerHTML=rawInsights.slice(-5).reverse().map(function(i){
-            return'<div class="py-2 border-b border-border last:border-0 text-foreground text-sm">'+(i.claim||JSON.stringify(i))+'</div>';
-          }).join('');
+      function appendEventRow(container, d, tick){
+        if(!container) return;
+        var emptyEl = document.getElementById(container.id+'-empty');
+        if(emptyEl) emptyEl.remove();
+        var row = document.createElement('div');
+        row.className = container.id==='ha-events' ? 'ua-event' : 'de-row';
+        var src = (d.source||'event').replace('ai-session','AI');
+        var col = src==='git'?'var(--success)':(src==='AI'||d.source==='ai-session')?'var(--cyan)':'rgba(250,250,250,0.35)';
+        var sum = (d.content&&d.content.summary)||'Event captured';
+        if(sum.length>64) sum = sum.slice(0,61)+'…';
+        var tm = tick();
+        if(container.id==='ha-events'){
+          row.innerHTML = '<span class="ua-src" style="color:'+col+'">'+src+'</span><span class="ua-body" style="color:rgba(250,250,250,0.7)">'+sum+'</span><span class="ua-mono" style="font-size:11px;color:rgba(250,250,250,0.35);margin-left:auto">'+tm+'</span>';
         } else {
-          el.innerHTML='<p class="text-muted">No insights yet — keep working.</p>';
+          row.innerHTML = '<span class="de-src" style="color:'+col+'">'+src+'</span><span style="color:rgba(250,250,250,0.8)">'+sum+'</span><span class="de-time">'+tm+'</span>';
         }
-      });
-
-      function severityClass(s){
-        if(s==='critical')return'bg-red-500/20 text-red-400';
-        if(s==='warning')return'bg-yellow-500/20 text-yellow-400';
-        return'bg-accent/20 text-accent';
+        container.appendChild(row);
+        while(container.children.length>6) container.removeChild(container.firstChild);
       }
 
-      if(typeof EventSource!=='undefined'){
-        var es=new EventSource('/api/stream');
-        es.addEventListener('summary',function(e){try{handleSummary(JSON.parse(e.data));}catch(err){}});
-        es.addEventListener('health',function(e){
-          try{
-            var h=JSON.parse(e.data);
-            // Update live strip from health events
-            var dot=document.getElementById('live-dot');
-            var status=document.getElementById('live-status');
-            if(h.daemonAlive){dot.classList.remove('stale');status.textContent='Live';}
-            else{dot.classList.add('stale');status.textContent='Daemon stopped';}
-          }catch(err){}
+      function setProgress(n){
+        var pct = Math.min(Math.round(n/THRESH*100),100);
+        var bar = document.getElementById('ha-bar');
+        var lbl = document.getElementById('ha-progress-label');
+        var cnt = document.getElementById('ha-event-count');
+        if(bar) bar.style.width = pct+'%';
+        if(lbl) lbl.textContent = Math.min(n,THRESH)+' of '+THRESH+' events toward first insights';
+        if(cnt) cnt.textContent = String(n);
+      }
+
+      function applySummaryToDashboard(s){
+        if(!s) return;
+        var dir = document.getElementById('dash-dir');
+        var ev = document.getElementById('dash-ev');
+        var comp = document.getElementById('dash-comp');
+        var cost = document.getElementById('dash-cost');
+        if(dir) dir.textContent = (s.directionDensity24h!=null?s.directionDensity24h:'—')+(s.directionDensity24h!=null?'%':'');
+        if(ev) ev.textContent = s.eventCount24h!=null?String(s.eventCount24h):'—';
+        if(comp) comp.textContent = s.comprehensionScore!=null?s.comprehensionScore:'—';
+        if(cost) cost.textContent = s.costPerDirectedDecision!=null?('$'+s.costPerDirectedDecision.toFixed(2)):'—';
+
+        setDot(document.getElementById('dh-sse'), 'ok');
+        var dhMat = document.getElementById('dh-mat');
+        var dhInt = document.getElementById('dh-int');
+        setDot(dhMat, 'ok');
+        setDot(dhInt, s.firstRunComplete ? 'ok' : 'warn');
+      }
+
+      function syncHealthDash(h){
+        var cap = document.getElementById('dh-cap');
+        var capL = document.getElementById('dh-cap-l');
+        if(h && h.daemonAlive!==undefined){
+          setDot(cap, h.daemonAlive?'ok':'bad');
+          if(capL) capL.textContent = h.daemonAlive?'Capture':'Capture stopped';
+        }
+      }
+
+      function transitionToDashboard(){
+        var root = document.getElementById('home-root');
+        if(!root) return;
+        root.classList.remove('home-mode-activation');
+        root.classList.add('home-mode-dashboard');
+        try { localStorage.setItem(LS_KEY, '1'); } catch(e) {}
+      }
+
+      function shouldStartActivation(){
+        var root = document.getElementById('home-root');
+        if(!root) return false;
+        if(root.getAttribute('data-needs-activation')!=='true') return false;
+        try { if(localStorage.getItem(LS_KEY)) return false; } catch(e) {}
+        return true;
+      }
+
+      function wireInsights(){
+        Promise.all([
+          window.__unfade.fetch('/api/intelligence/narratives').then(function(r){return r.ok?r.json():null}).catch(function(){return null;}),
+          window.__unfade.fetch('/api/insights/recent').then(function(r){return r.json();}).catch(function(){return[];})
+        ]).then(function(results){
+          var narratives = results[0]&&results[0].narratives?results[0].narratives:[];
+          var raw = results[1]||[];
+          var el = document.getElementById('dash-insights');
+          if(!el) return;
+          function sevClass(s){
+            if(s==='critical') return 'bg-red-500/20 text-red-400';
+            if(s==='warning') return 'bg-yellow-500/20 text-yellow-400';
+            return 'bg-accent/20 text-accent';
+          }
+          if(narratives.length>0){
+            el.innerHTML = narratives.slice(-5).reverse().map(function(n){
+              var badge = '<span class="inline-block text-[10px] px-1.5 py-0.5 rounded mr-1 '+sevClass(n.severity)+'">'+(n.severity||'info')+'</span>';
+              var why = '<button type="button" class="text-xs text-muted hover:text-accent cursor-pointer underline underline-offset-2 bg-transparent border-none p-0 ml-2" onclick="toggleLineage(\\''+n.id+'\\',\\'lineage-'+n.id.slice(0,8)+'\\')">Why? →</button>';
+              var det = '<div class="lineage-detail hidden mt-2 pl-3 border-l-2 border-border" id="lineage-'+n.id.slice(0,8)+'-detail"><div class="text-xs text-muted">Loading…</div></div>';
+              return '<div class="py-3 border-b border-border last:border-0">'+badge+'<span class="text-foreground">'+n.claim+'</span>'+why+det+'</div>';
+            }).join('');
+          } else if(raw.length>0){
+            el.innerHTML = raw.slice(-5).reverse().map(function(i){
+              return '<div class="py-3 border-b border-border last:border-0 text-foreground">'+(i.claim||JSON.stringify(i))+'</div>';
+            }).join('');
+          } else {
+            el.innerHTML = '<p class="text-muted">No narratives yet — keep working.</p>';
+          }
         });
       }
+
+      whenReady(function(){
+        var root = document.getElementById('home-root');
+        if(!root) return;
+
+        syncActivationSession();
+
+        if(!shouldStartActivation()){
+          root.classList.remove('home-mode-activation');
+          root.classList.add('home-mode-dashboard');
+        }
+
+        var eventCount = 0;
+
+        var skip = document.getElementById('ha-skip');
+        if(skip) skip.addEventListener('click', function(){ transitionToDashboard(); });
+
+        window.__unfade.onHealth.push(function(h){
+          syncHealthDash(h);
+          if(h && h.daemonAlive){
+            setActDot('capture','ready');
+            setCtx('sse', 'Connected · uptime '+Math.round(h.uptime||0)+'s');
+          } else if(h && h.daemonAlive===false){
+            setActDot('capture','error');
+          }
+        });
+
+        window.__unfade.onSummary.push(function(d){
+          setActDot('sse','ready');
+          setActDot('mat','ready');
+          setCtx('mat', 'Materialized '+(d.eventCount24h||0)+' events into SQLite');
+          eventCount = Math.max(eventCount, d.eventCount24h || 0);
+          setProgress(eventCount);
+          applySummaryToDashboard(d);
+
+          if(eventCount>0 && !document.querySelector('#ha-events .ua-event')){
+            var he=document.getElementById('ha-events-empty');
+            if(he) he.textContent=eventCount+' events captured. New events appear here in real time.';
+          }
+          if(eventCount>0 && !document.querySelector('#dash-events .de-row')){
+            var de=document.getElementById('dash-events-empty');
+            if(de) de.textContent=eventCount+' events captured today. New events appear here in real time.';
+          }
+
+          if(d.directionDensity24h>0){
+            setCtx('intel', 'Direction: '+d.directionDensity24h+'% | Comprehension: '+(d.comprehensionScore!=null?d.comprehensionScore:'—'));
+            var m = document.getElementById('ha-metrics');
+            if(m) m.classList.remove('hidden');
+            var a = document.getElementById('ha-m-dir'); if(a) a.textContent = d.directionDensity24h+'%';
+            var b = document.getElementById('ha-m-comp'); if(b) b.textContent = d.comprehensionScore!=null?d.comprehensionScore:'—';
+            var c = document.getElementById('ha-m-ev'); if(c) c.textContent = String(d.eventCount24h||0);
+          }
+
+          if(d.firstRunComplete || (d.eventCount24h!=null && d.eventCount24h>=THRESH)){
+            setActDot('intel','ready');
+            if(root.classList.contains('home-mode-activation')){
+              setTimeout(function(){ transitionToDashboard(); }, 600);
+            }
+          } else {
+            setActDot('intel','building');
+          }
+        });
+
+        window.__unfade.onEvent.push(function(d){
+          setActDot('capture','ready');
+          setActDot('mat','building');
+          var evSrc=(d.source||'event').replace('ai-session','AI');
+          var evSum=(d.content&&d.content.summary)||'Event captured';
+          if(evSum.length>55) evSum=evSum.slice(0,52)+'…';
+          setCtx('capture', evSrc.toUpperCase()+': '+evSum);
+          eventCount++;
+          setProgress(eventCount);
+          var tick = makeRowTick();
+          appendEventRow(document.getElementById('ha-events'), d, tick);
+          appendEventRow(document.getElementById('dash-events'), d, tick);
+        });
+
+        setActDot('sse','building');
+        window.__unfade.fetch('/api/summary').then(function(r){ return r.status===204?null:r.json(); }).then(function(s){
+          if(s){
+            eventCount = s.eventCount24h||0;
+            setProgress(eventCount);
+            applySummaryToDashboard(s);
+            setActDot('sse','ready');
+            setActDot('mat','ready');
+            if(s.directionDensity24h>0){
+              var m = document.getElementById('ha-metrics'); if(m) m.classList.remove('hidden');
+              var a = document.getElementById('ha-m-dir'); if(a) a.textContent = s.directionDensity24h+'%';
+              var b = document.getElementById('ha-m-comp'); if(b) b.textContent = s.comprehensionScore!=null?s.comprehensionScore:'—';
+              var c = document.getElementById('ha-m-ev'); if(c) c.textContent = String(s.eventCount24h||0);
+            }
+            if(s.firstRunComplete || (s.eventCount24h>=THRESH)){
+              setActDot('intel','ready');
+              if(root.classList.contains('home-mode-activation')){
+                setTimeout(function(){ transitionToDashboard(); }, 400);
+              }
+            }
+          }
+        }).catch(function(){});
+
+        wireInsights();
+
+        setTimeout(function(){
+          setActDot('sse','ready');
+          setActDot('mat','ready');
+          if(document.getElementById('ha-dot-capture').classList.contains('waiting')) setActDot('capture','building');
+        }, 6000);
+      });
     })();
     </script>
   `;

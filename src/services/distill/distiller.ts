@@ -9,6 +9,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UnfadeConfig } from "../../schemas/config.js";
+import { localDateStr } from "../../utils/date.js";
 import type { DailyDistill } from "../../schemas/distill.js";
 import type { CaptureEvent } from "../../schemas/event.js";
 import type { ReasoningModelV2 } from "../../schemas/profile.js";
@@ -340,7 +341,7 @@ export async function backfill(
   for (let i = days; i >= 1; i--) {
     const date = new Date(today);
     date.setDate(date.getDate() - i);
-    const dateStr = date.toISOString().slice(0, 10);
+    const dateStr = localDateStr(date);
 
     const result = await distill(dateStr, config, { ...options, silent: true });
     if (result) {

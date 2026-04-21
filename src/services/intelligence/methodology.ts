@@ -2,13 +2,15 @@
 // UF-244: Methodology document generator for leadership export packs.
 // Explains each metric, how it's computed, and what it means — finance-grade defensibility.
 
+import { localToday } from "../../utils/date.js";
+
 const METHODOLOGY_VERSION = "1.0";
 
 export function generateMethodology(): string {
   return `# Unfade Intelligence Methodology
 
 **Version:** ${METHODOLOGY_VERSION}
-**Generated:** ${new Date().toISOString().slice(0, 10)}
+**Generated:** ${localToday()}
 **Source:** Local analysis of AI session transcripts, git events, and terminal activity
 
 ---

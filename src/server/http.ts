@@ -14,26 +14,20 @@ import type { UnfadeConfig } from "../schemas/config.js";
 import { mountMcpHttp } from "../services/mcp/server.js";
 import { logger } from "../utils/logger.js";
 import { getStateDir } from "../utils/paths.js";
-import { alertsPage } from "./pages/alerts.js";
 import { cardsPage } from "./pages/cards.js";
-import { coachPage } from "./pages/coach.js";
-import { comprehensionPage } from "./pages/comprehension.js";
-import { costPage } from "./pages/cost.js";
-import { costsPage } from "./pages/costs.js";
+import { decisionsPage } from "./pages/decisions.js";
 import { distillPage } from "./pages/distill.js";
-import { efficiencyPage } from "./pages/efficiency.js";
 import { homePage } from "./pages/home.js";
 import { integrationsPage } from "./pages/integrations.js";
 import { intelligencePage } from "./pages/intelligence.js";
 import { livePage } from "./pages/live.js";
 import { logsPage } from "./pages/logs.js";
-import { portfolioPage } from "./pages/portfolio.js";
+// portfolio.ts removed in Phase 15 — merged into Home (All Projects view)
 import { profilePage } from "./pages/profile.js";
-import { repoDetailPage } from "./pages/repo-detail.js";
-import { searchPage } from "./pages/search.js";
+import { projectsPage } from "./pages/projects.js";
+// repo-detail.ts removed in Phase 15 — merged into Home (project-selected view)
 import { settingsPage } from "./pages/settings.js";
 import { setupPage } from "./pages/setup.js";
-import { velocityPage } from "./pages/velocity-page.js";
 import { actionsRoutes } from "./routes/actions.js";
 import { amplifyRoutes } from "./routes/amplify.js";
 import { cardsRoutes } from "./routes/cards.js";
@@ -47,9 +41,11 @@ import { insightsRoutes } from "./routes/insights.js";
 import { integrationsRoutes } from "./routes/integrations.js";
 import { intelligenceRoutes } from "./routes/intelligence.js";
 import { onboardingRoutes } from "./routes/intelligence-onboarding.js";
+import { intelligenceTabRoutes } from "./routes/intelligence-tabs.js";
 import { lineageRoutes } from "./routes/lineage.js";
 import { logsRoutes } from "./routes/logs.js";
 import { profileRoutes } from "./routes/profile.js";
+import { projectRoutes } from "./routes/projects.js";
 import { queryRoutes } from "./routes/query.js";
 import { reposRoutes } from "./routes/repos.js";
 import { settingsRoutes } from "./routes/settings.js";
@@ -176,6 +172,7 @@ export function createApp(): Hono {
   app.route("", streamRoutes);
   app.route("", insightsRoutes);
   app.route("", reposRoutes);
+  app.route("", projectRoutes);
   app.route("", heatmapRoutes);
   app.route("", decisionDetailRoutes);
   app.route("", intelligenceRoutes);
@@ -187,19 +184,21 @@ export function createApp(): Hono {
   app.route("", actionsRoutes);
   app.route("", logsRoutes);
 
-  // Phase 5.6: Multi-repo pages
-  app.route("", portfolioPage);
-  app.route("", repoDetailPage);
+  // /decisions is now a real page (Sprint 15C) — registered via decisionsPage route above
+  // /portfolio and /repos/:id redirects (Phase 15 — merged into Home)
+  app.get("/portfolio", (c) => c.redirect("/"));
 
   // Phase 7: Intelligence pages
-  app.route("", efficiencyPage);
-  app.route("", costsPage);
-  app.route("", coachPage);
-  app.route("", velocityPage);
-  app.route("", alertsPage);
+  // Phase 15: standalone intelligence pages merged into Intelligence Hub tabs
+  app.get("/efficiency", (c) => c.redirect("/intelligence?tab=overview"));
+  app.get("/cost", (c) => c.redirect("/intelligence?tab=cost"));
+  app.get("/coach", (c) => c.redirect("/intelligence?tab=patterns"));
+  app.get("/velocity", (c) => c.redirect("/intelligence?tab=velocity"));
+  app.get("/alerts", (c) => c.redirect("/intelligence?tab=patterns"));
+  app.get("/comprehension", (c) => c.redirect("/intelligence?tab=comprehension"));
+  app.route("", intelligenceTabRoutes);
   app.route("", intelligencePage);
-  app.route("", costPage);
-  app.route("", comprehensionPage);
+  // cost.ts and comprehension.ts removed — redirected to Intelligence Hub above
 
   // Mount Web UI pages (server-rendered HTML + htmx)
   app.route("", setupPage);
@@ -209,7 +208,9 @@ export function createApp(): Hono {
   app.route("", profilePage);
   app.route("", settingsPage);
   app.route("", cardsPage);
-  app.route("", searchPage);
+  app.route("", decisionsPage);
+  app.route("", projectsPage);
+  app.get("/search", (c) => c.redirect("/decisions"));
   app.route("", integrationsPage);
   app.route("", logsPage);
 

@@ -41,16 +41,11 @@ program
 
 program
   .command("reset")
-  .description("Remove this repo's .unfade/, stop capture; --global for ~/.unfade/ and all agents")
-  .option("--yes", "Confirm destructive reset")
-  .option("--global", "Also delete ~/.unfade/ and remove all unfade agents")
-  .option("--keep-hooks", "Leave the unfade shell hook block in your rc file")
-  .action(async (opts) => {
-    await resetCommand({
-      yes: Boolean(opts.yes),
-      keepHooks: Boolean(opts.keepHooks),
-      global: Boolean(opts.global),
-    });
+  .description(
+    "Stop all daemons and remove this repo's .unfade/ plus global ~/.unfade/ (full clean slate)",
+  )
+  .action(async () => {
+    await resetCommand();
   });
 
 // --- Run-and-Exit Commands ---

@@ -221,27 +221,26 @@ describe("Personalization-weighted search (UF-076)", () => {
     }
   });
 
-  it("search page shows personalization banner when profile exists", async () => {
-    // Set up profile
+  it("decisions page renders when profile exists", async () => {
     const profileDir = join(tmpDir, ".unfade", "profile");
     mkdirSync(profileDir, { recursive: true });
     writeFileSync(join(profileDir, "reasoning_model.json"), JSON.stringify(makeV2Profile()));
 
     const { createApp } = await import("../../../src/server/http.js");
     const app = createApp();
-    const res = await app.request("/search");
+    const res = await app.request("/decisions");
     const html = await res.text();
 
-    expect(html).toContain("Personalized search active");
-    expect(html).toContain("backend"); // top domain badge
+    expect(html).toContain("Decisions");
+    expect(html).toContain("Search decisions");
   });
 
-  it("search page omits personalization banner when no profile", async () => {
+  it("decisions page renders when no profile exists", async () => {
     const { createApp } = await import("../../../src/server/http.js");
     const app = createApp();
-    const res = await app.request("/search");
+    const res = await app.request("/decisions");
     const html = await res.text();
 
-    expect(html).not.toContain("Personalized search active");
+    expect(html).toContain("Decisions");
   });
 });

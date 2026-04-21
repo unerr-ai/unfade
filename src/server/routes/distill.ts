@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { loadConfig } from "../../config/manager.js";
 import { distill } from "../../services/distill/distiller.js";
+import { localToday } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getDistillsDir } from "../../utils/paths.js";
 
@@ -130,7 +131,7 @@ distillRoutes.post("/distill", async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const date = (body as Record<string, unknown>).date as string | undefined;
-    const targetDate = date ?? new Date().toISOString().slice(0, 10);
+    const targetDate = date ?? localToday();
 
     const config = loadConfig();
     const result = await distill(targetDate, config);

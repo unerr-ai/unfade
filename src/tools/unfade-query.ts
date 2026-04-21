@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { CaptureEvent } from "../schemas/event.js";
 import type { McpMeta, QueryInput, QueryOutput, QueryResultItem } from "../schemas/mcp.js";
 import { readEventRange } from "../services/capture/event-store.js";
+import { localToday } from "../utils/date.js";
 import { getDistillsDir, getEventsDir } from "../utils/paths.js";
 
 /**
@@ -147,7 +148,7 @@ export function queryEvents(input: QueryInput, cwd?: string): QueryOutput {
   const start = performance.now();
   const now = Date.now();
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const from = input.dateRange?.from ?? "2000-01-01";
   const to = input.dateRange?.to ?? today;
   const keywords = input.query.toLowerCase().split(/\s+/).filter(Boolean);
