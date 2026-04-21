@@ -14,6 +14,7 @@ import {
 function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: randomUUID(),
+    projectId: "test-project-id",
     timestamp: "2026-04-15T10:00:00.000Z",
     source: "git",
     type: "commit",

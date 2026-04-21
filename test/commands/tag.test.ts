@@ -11,7 +11,7 @@ function createMockTagDb() {
       if (sql.includes("INSERT INTO features")) {
         features.push({
           id: params![0] as string,
-          name: params![1] as string,
+          name: params![2] as string,
           event_count: 0,
         });
       } else if (sql.includes("INSERT OR IGNORE INTO event_features")) {

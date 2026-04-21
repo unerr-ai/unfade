@@ -4,6 +4,7 @@ import { CaptureEventSchema } from "../../src/schemas/event.js";
 
 const validEvent = {
   id: "550e8400-e29b-41d4-a716-446655440000",
+  projectId: "test-project-id",
   timestamp: "2026-04-15T10:30:00Z",
   source: "git" as const,
   type: "commit" as const,

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { UnfadeConfigSchema } from "../../../src/schemas/config.js";
 import type { CaptureEvent } from "../../../src/schemas/event.js";
-import { distill } from "../../../src/services/distill/distiller.js";
+import { distill, distillIncremental } from "../../../src/services/distill/distiller.js";
 
 let tmpDir: string;
 
@@ -28,6 +28,7 @@ function rmrf(dir: string): void {
 function makeEvent(overrides: Partial<CaptureEvent> = {}): CaptureEvent {
   return {
     id: globalThis.crypto.randomUUID(),
+    projectId: "test-project-id",
     type: "commit",
     source: "git",
     timestamp: "2026-04-15T10:00:00Z",
@@ -123,5 +124,55 @@ describe("distill", () => {
     const result = await distill("2026-04-15", config, { cwd: tmpDir, silent: true });
     expect(result).not.toBeNull();
     expect(result?.distill.eventsProcessed).toBe(3);
+  });
+});
+
+describe("distillIncremental", () => {
+  it("returns null for zero-event days", async () => {
+    const result = await distillIncremental("2026-04-15", { cwd: tmpDir });
+    expect(result).toBeNull();
+  });
+
+  it("produces a fallback distill when events exist", async () => {
+    writeEvents(tmpDir, "2026-04-15", [makeEvent()]);
+    const result = await distillIncremental("2026-04-15", { cwd: tmpDir });
+    expect(result).not.toBeNull();
+    expect(result?.distill.synthesizedBy).toBe("fallback");
+    expect(existsSync(result!.path)).toBe(true);
+  });
+
+  it("populates profile and graph directories", async () => {
+    writeEvents(tmpDir, "2026-04-15", [makeEvent()]);
+    await distillIncremental("2026-04-15", { cwd: tmpDir });
+
+    expect(existsSync(join(tmpDir, ".unfade", "profile", "reasoning_model.json"))).toBe(true);
+    expect(existsSync(join(tmpDir, ".unfade", "graph", "decisions.jsonl"))).toBe(true);
+  });
+
+  it("does not overwrite an LLM-enriched distill", async () => {
+    writeEvents(tmpDir, "2026-04-15", [makeEvent()]);
+
+    // Create a fake LLM distill
+    const distillsDir = join(tmpDir, ".unfade", "distills");
+    mkdirSync(distillsDir, { recursive: true });
+    writeFileSync(
+      join(distillsDir, "2026-04-15.md"),
+      "# Distill\n**Synthesized by:** llm\nRich LLM content here",
+      "utf-8",
+    );
+
+    const result = await distillIncremental("2026-04-15", { cwd: tmpDir });
+    expect(result).toBeNull();
+  });
+
+  it("overwrites a previous fallback distill with updated data", async () => {
+    writeEvents(tmpDir, "2026-04-15", [makeEvent()]);
+    const r1 = await distillIncremental("2026-04-15", { cwd: tmpDir });
+    expect(r1).not.toBeNull();
+
+    // Run again — should overwrite (fallback can be refreshed)
+    const r2 = await distillIncremental("2026-04-15", { cwd: tmpDir });
+    expect(r2).not.toBeNull();
+    expect(r1?.path).toBe(r2?.path);
   });
 });

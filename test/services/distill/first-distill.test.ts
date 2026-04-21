@@ -7,6 +7,7 @@ import { generateFirstDistill } from "../../../src/services/distill/first-distil
 function makeEvent(overrides: Record<string, unknown> = {}) {
   return {
     id: globalThis.crypto.randomUUID(),
+    projectId: "test-project-id",
     type: "commit",
     source: "git",
     timestamp: "2026-04-15T10:00:00Z",

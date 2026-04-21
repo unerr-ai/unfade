@@ -42,9 +42,9 @@ const SiteSchema = z.object({
 
 const PricingSchema = z.record(z.string(), z.number()).default({
   "claude-code": 0.01,
-  "cursor": 0.005,
-  "codex": 0.008,
-  "aider": 0.006,
+  cursor: 0.005,
+  codex: 0.008,
+  aider: 0.006,
 });
 
 const ActionsSchema = z.object({

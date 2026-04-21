@@ -36,6 +36,43 @@ export interface ManagedRepo {
 
 export class RepoManager {
   private repos = new Map<string, ManagedRepo>();
+  private globalAiDaemon: EmbeddedDaemon | null = null;
+
+  /**
+   * Start the single global AI capture daemon.
+   * This runs ONE instance that watches all AI tool directories (~/.claude/, Cursor, etc.)
+   * and tags events with projectId via registry matching.
+   */
+  startGlobalAICapture(): void {
+    if (this.globalAiDaemon) return;
+
+    try {
+      ensureBinaries();
+    } catch {
+      logger.debug("Global AI capture: binary not available — skipping");
+      return;
+    }
+
+    this.globalAiDaemon = new EmbeddedDaemon("", {
+      captureMode: "ai-global",
+      projectId: "global-ai",
+      onRestart: (attempt) => {
+        logger.warn(`[ai-global] capture restarted (attempt ${attempt})`);
+      },
+    });
+    this.globalAiDaemon.start();
+    logger.debug("Global AI capture daemon started", { pid: this.globalAiDaemon.getPid() });
+  }
+
+  /**
+   * Stop the global AI capture daemon.
+   */
+  async stopGlobalAICapture(): Promise<void> {
+    if (this.globalAiDaemon) {
+      await this.globalAiDaemon.stop();
+      this.globalAiDaemon = null;
+    }
+  }
 
   /**
    * Add a repo: ensure binaries, start daemon, materializer, and scheduler.
@@ -44,13 +81,14 @@ export class RepoManager {
     if (this.repos.has(entry.id)) return this.repos.get(entry.id)!;
 
     try {
-      ensureBinaries(entry.root);
+      ensureBinaries();
     } catch {
       logger.debug(`Repo ${entry.label}: binary not available — skipping`);
       return null;
     }
 
     const daemon = new EmbeddedDaemon(entry.root, {
+      projectId: entry.id,
       onRestart: (attempt, repoRoot) => {
         appendRecentInsight(repoRoot, {
           claim: `Capture engine restarted (attempt ${attempt})`,
@@ -170,6 +208,7 @@ export class RepoManager {
     for (const [, managed] of this.repos) {
       stopPromises.push(managed.daemon.stop());
     }
+    stopPromises.push(this.stopGlobalAICapture());
     await Promise.all(stopPromises);
 
     for (const [, managed] of this.repos) {
@@ -181,14 +220,14 @@ export class RepoManager {
 }
 
 /**
- * 11A.4: Wait for the Go daemon's ingest lock to clear before starting materialization.
- * Polls every 500ms, gives up after 30s (materializer tick-based deferral will handle it).
+ * Wait for the Go daemon's ingest lock to clear before starting materialization.
+ * Checks the global events dir (not per-project).
  */
-async function waitForIngestClear(repoRoot: string, timeoutMs = 30_000): Promise<void> {
-  const lockPath = join(getEventsDir(repoRoot), ".ingest.lock");
+async function waitForIngestClear(_repoRoot: string, timeoutMs = 30_000): Promise<void> {
+  const lockPath = join(getEventsDir(), ".ingest.lock");
   if (!existsSync(lockPath)) return;
 
-  logger.debug("Waiting for ingest lock to clear", { repoRoot });
+  logger.debug("Waiting for ingest lock to clear");
   const deadline = Date.now() + timeoutMs;
   while (existsSync(lockPath) && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 500));
@@ -199,23 +238,30 @@ async function waitForIngestClear(repoRoot: string, timeoutMs = 30_000): Promise
   }
 }
 
+const INCREMENTAL_DISTILL_INTERVAL_MS = 5 * 60 * 1000; // 5 min throttle
+
+/**
+ * Create the global materializer. All artifacts write to ~/.unfade/ (no repoRoot override).
+ * Profile, graph, amplification → ~/.unfade/ (global).
+ * Intelligence, distills, metrics → ~/.unfade/ (global for now; Sprint 14E adds per-project routing).
+ */
 function createMaterializerForRepo(
-  repoRoot: string,
+  _repoRoot: string,
   config: ReturnType<typeof loadConfig>,
 ): MaterializerDaemon {
   let lastPartialMs = 0;
   let engine: import("../intelligence/engine.js").IntelligenceEngine | null = null;
   let lastCorrelationMs = 0;
   let lastDebuggingArcMs = 0;
+  let lastIncrementalDistillMs = 0;
 
   return new MaterializerDaemon({
     intervalMs: 2000,
-    cwd: repoRoot,
     onTick: async function onTick(newRows) {
       if (newRows <= 0) return;
 
       const { CacheManager } = await import("../cache/manager.js");
-      const cache = new CacheManager(repoRoot);
+      const cache = new CacheManager();
       const db = await cache.getDb();
       if (!db) return;
 
@@ -260,7 +306,7 @@ function createMaterializerForRepo(
         // non-fatal — feature detection is additive
       }
 
-      // 12C.13: Materialize session metrics
+      // Materialize session metrics
       try {
         const { materializeSessionMetrics } = await import(
           "../intelligence/session-materializer.js"
@@ -270,26 +316,23 @@ function createMaterializerForRepo(
         // non-fatal — session materialization is additive
       }
 
+      // Global artifacts: summary, insights, snapshots → ~/.unfade/
       try {
-        const summary = writeSummary(db, repoRoot, { pricing: config.pricing ?? {} });
+        const summary = writeSummary(db, undefined, { pricing: config.pricing ?? {} });
 
         const now = Date.now();
         if (now - lastPartialMs >= PARTIAL_SNAPSHOT_INTERVAL_MS) {
           const today = new Date().toISOString().slice(0, 10);
-          writePartialSnapshot(
-            today,
-            {
-              directionDensity: summary.directionDensity24h,
-              comprehensionScore: summary.comprehensionScore,
-              eventCount: summary.eventCount24h,
-              topDomain: summary.topDomain,
-            },
-            repoRoot,
-          );
+          writePartialSnapshot(today, {
+            directionDensity: summary.directionDensity24h,
+            comprehensionScore: summary.comprehensionScore,
+            eventCount: summary.eventCount24h,
+            topDomain: summary.topDomain,
+          });
           lastPartialMs = now;
         }
 
-        appendRecentInsight(repoRoot, {
+        appendRecentInsight(undefined, {
           claim: `${newRows} new events indexed; direction ${summary.directionDensity24h}%`,
           insightType: "materializer_tick",
           severity: "info",
@@ -304,14 +347,14 @@ function createMaterializerForRepo(
         // non-fatal
       }
 
-      // 12A.5: Outcome classification (before intelligence engine)
+      // Outcome classification
       try {
         classifyAllUnclassified(db);
       } catch {
         // non-fatal — classification is additive
       }
 
-      // 12A.2: Intelligence Engine — runs all registered analyzers (10s throttle)
+      // Intelligence Engine → ~/.unfade/intelligence/ (global)
       try {
         if (!engine) {
           const { IntelligenceEngine } = await import("../intelligence/engine.js");
@@ -322,17 +365,16 @@ function createMaterializerForRepo(
           }
         }
         const results = await engine.run({
-          repoRoot,
+          repoRoot: "",
           db,
           config: config as unknown as Record<string, unknown>,
         });
 
-        // 12B.9: Fire proactive actions on intelligence update
         if (results.length > 0) {
           const { getActionRunner } = await import("../actions/index.js");
           const runner = getActionRunner();
           const actionCtx = {
-            repoRoot,
+            repoRoot: undefined as unknown as string,
             config: config as unknown as import("../../schemas/config.js").UnfadeConfig,
             trigger: "intelligence_update" as const,
           };
@@ -342,40 +384,40 @@ function createMaterializerForRepo(
         // non-fatal — intelligence is additive
       }
 
-      // 13A / UF-402: Decision durability (runs after intelligence engine, needs decisions table)
+      // Decision durability → ~/.unfade/intelligence/
       try {
         const { computeDecisionDurability, writeDecisionDurability } = await import(
           "../intelligence/decision-durability.js"
         );
         const report = computeDecisionDurability(db);
         if (report.decisions.length > 0) {
-          writeDecisionDurability(report, repoRoot);
+          writeDecisionDurability(report);
         }
       } catch {
         // non-fatal — decision durability is additive
       }
 
-      // 13B / UF-405: Cross-analyzer correlations (5 min throttle)
+      // Cross-analyzer correlations → ~/.unfade/intelligence/ (5 min throttle)
       if (Date.now() - lastCorrelationMs > 300_000) {
         try {
           const { computeCorrelations, writeCorrelations } = await import(
             "../intelligence/cross-analyzer.js"
           );
           const report = computeCorrelations({
-            repoRoot,
+            repoRoot: "",
             db,
             config: config as unknown as Record<string, unknown>,
           });
           if (report.correlations.length > 0) {
-            writeCorrelations(report, repoRoot);
+            writeCorrelations(report);
             lastCorrelationMs = Date.now();
 
-            // 13B / UF-406: Narrative synthesis (only when fresh correlations exist)
+            // Narrative synthesis
             try {
               const { synthesizeNarratives } = await import(
                 "../intelligence/narrative-synthesizer.js"
               );
-              synthesizeNarratives(repoRoot);
+              synthesizeNarratives();
             } catch {
               // non-fatal
             }
@@ -385,7 +427,7 @@ function createMaterializerForRepo(
         }
       }
 
-      // 13B / UF-407: Debugging arcs (60s throttle)
+      // Debugging arcs → ~/.unfade/intelligence/ (60s throttle)
       if (Date.now() - lastDebuggingArcMs > 60_000) {
         try {
           const { detectDebuggingArcs, writeDebuggingArcs } = await import(
@@ -393,7 +435,7 @@ function createMaterializerForRepo(
           );
           const arcs = detectDebuggingArcs(db);
           if (arcs.length > 0) {
-            writeDebuggingArcs(arcs, repoRoot);
+            writeDebuggingArcs(arcs);
           }
           lastDebuggingArcMs = Date.now();
         } catch {
@@ -401,12 +443,24 @@ function createMaterializerForRepo(
         }
       }
 
-      // 12B.9: Check weekly digest schedule
+      // Incremental distill → ~/.unfade/distills/ (global, 5 min throttle)
+      if (Date.now() - lastIncrementalDistillMs > INCREMENTAL_DISTILL_INTERVAL_MS) {
+        try {
+          const { distillIncremental } = await import("../distill/distiller.js");
+          const today = new Date().toISOString().slice(0, 10);
+          await distillIncremental(today);
+          lastIncrementalDistillMs = Date.now();
+        } catch {
+          // non-fatal — incremental distill is additive
+        }
+      }
+
+      // Weekly digest schedule check
       try {
         const { getActionRunner } = await import("../actions/index.js");
         const runner = getActionRunner();
         const actionCtx = {
-          repoRoot,
+          repoRoot: undefined as unknown as string,
           config: config as unknown as import("../../schemas/config.js").UnfadeConfig,
           trigger: "schedule_weekly" as const,
         };

@@ -49,6 +49,126 @@ export interface DistillResult {
 }
 
 /**
+ * Incremental distill — zero-cost, zero-LLM path.
+ * Runs the full pipeline (extract → link → fallback synthesis → profile → graph → amplification)
+ * using only heuristic synthesis. Populates all downstream folders (distills/, profile/, graph/,
+ * amplification/) immediately when data exists, without waiting for the scheduled LLM run.
+ *
+ * The scheduled LLM distill overwrites this idempotently with higher-quality synthesis.
+ *
+ * Returns null if zero events for the date.
+ */
+export async function distillIncremental(
+  date: string,
+  options: { cwd?: string; silent?: boolean } = {},
+): Promise<DistillResult | null> {
+  const cwd = options.cwd;
+
+  const eventCount = countEvents(date, cwd);
+  if (eventCount === 0) {
+    logger.debug("No events for date, skipping incremental distill", { date });
+    return null;
+  }
+
+  // Don't overwrite an LLM-enriched distill with a fallback one.
+  // The scheduled LLM run produces higher-quality output.
+  const existingDistill = join(getDistillsDir(cwd), `${date}.md`);
+  if (existsSync(existingDistill)) {
+    const content = readFileSync(existingDistill, "utf-8");
+    if (content.includes("Synthesized by:** llm")) {
+      logger.debug("LLM distill already exists, skipping incremental", { date });
+      return null;
+    }
+  }
+
+  // Stage 0: Read events + fuse
+  const rawEvents = readEvents(date, cwd);
+  const events = fuseSignals(rawEvents);
+
+  // Stage 1-2: Extract signals + link context (pure computation)
+  const signals = extractSignals(events, date);
+  const linked = linkContext(signals, events);
+
+  // Stage 3: Fallback synthesis only (no LLM, zero cost)
+  const result = await synthesize(linked, null, { cwd });
+
+  // Stage 3.5: Direction signals
+  const { averageHDS, classifications, toolBreakdown } = aggregateDirectionSignals(events);
+  if (classifications.length > 0) {
+    const humanDirected = classifications.filter((c) => c.classification === "human-directed");
+    result.directionSummary = {
+      averageHDS,
+      humanDirectedCount: humanDirected.length,
+      collaborativeCount: classifications.filter((c) => c.classification === "collaborative")
+        .length,
+      llmDirectedCount: classifications.filter((c) => c.classification === "llm-directed").length,
+      topHumanDirectedDecisions: humanDirected.slice(0, 3).map((c) => c.summary),
+    };
+
+    const toolEntries = Array.from(toolBreakdown.entries()).map(([tool, data]) => ({
+      tool,
+      sessionCount: data.sessions,
+      eventCount: data.events,
+    }));
+
+    if (toolEntries.length > 0) {
+      const primary = toolEntries.sort((a, b) => b.eventCount - a.eventCount)[0];
+      const directionStyle =
+        averageHDS >= 0.6
+          ? "Architectural Thinker — high direction on design"
+          : averageHDS >= 0.3
+            ? "Collaborative Builder — balanced human+AI workflow"
+            : "AI Accelerator — leveraging AI for execution speed";
+
+      result.aiCollaborationSummary = {
+        toolBreakdown: toolEntries,
+        directionStyle: `${directionStyle} (primary tool: ${primary.tool})`,
+      };
+    }
+  }
+
+  // Stages 6-12: Profile, graph, amplification, write (all zero-cost)
+  const v2Profile = updateProfileV2(result, signals, cwd);
+  writeMetricSnapshot(date, result, v2Profile, cwd);
+
+  const snapshots = readSnapshots(undefined, cwd);
+  const nudge = selectNudge(result, v2Profile, snapshots);
+  const insightSection = nudge ? `## Insight\n\n${nudge}\n` : "";
+
+  appendToDecisionsGraph(result, events, cwd);
+  updateDomainsGraph(result, cwd);
+
+  const personalizationSection = formatPersonalizationSection(v2Profile, result);
+  const { connectionsSection } = amplifyV2(date, cwd);
+  const directionSection = formatDirectionSection(result);
+  const crossPatterns = detectCrossSessionPatterns(cwd);
+  const amplifiedSection = formatAmplifiedSection(crossPatterns);
+
+  const distillPath = writeDistill(
+    date,
+    result,
+    cwd,
+    personalizationSection,
+    connectionsSection,
+    insightSection,
+    directionSection,
+    amplifiedSection,
+  );
+
+  generateDecisionRecords(result, cwd);
+
+  // Incremental distills are silent — no desktop notification for background updates.
+  // The scheduled LLM distill sends the notification when it enriches the result.
+
+  logger.debug("Incremental distill complete (fallback)", {
+    date,
+    decisions: result.decisions.length,
+  });
+
+  return { date, distill: result, path: distillPath, skipped: false };
+}
+
+/**
  * Distill a single date.
  * Full pipeline: events → signals → linked → synthesized → write → graph → profile → notify.
  * Returns null if zero events for the date (skips silently).
@@ -551,18 +671,22 @@ function formatDistillMarkdown(d: DailyDistill): string {
 }
 
 /**
- * Append decisions to .unfade/graph/decisions.jsonl (one JSON object per line).
+ * Append decisions to graph/decisions.jsonl (one JSON object per line).
  * Links each decision to the event IDs that contributed to it (evidence chain).
+ * Each record includes projectId derived from the events that sourced it.
  */
 function appendToDecisionsGraph(result: DailyDistill, events: CaptureEvent[], cwd?: string): void {
   const graphDir = getGraphDir(cwd);
   mkdirSync(graphDir, { recursive: true });
   const filePath = join(graphDir, "decisions.jsonl");
 
+  const dominantProjectId = deriveDominantProjectId(events);
+
   const lines = result.decisions.map((d) => {
     const evidenceIds = findEvidenceEventIds(d, events);
     const entry: Record<string, unknown> = {
       date: result.date,
+      projectId: d.projectId || dominantProjectId,
       decision: d.decision,
       rationale: d.rationale,
       domain: d.domain,
@@ -580,6 +704,27 @@ function appendToDecisionsGraph(result: DailyDistill, events: CaptureEvent[], cw
   if (lines.length > 0) {
     appendFileSync(filePath, `${lines.join("\n")}\n`, "utf-8");
   }
+}
+
+/**
+ * Derive the most common projectId from a set of events.
+ * Used to tag decisions when individual decision-level projectId isn't set.
+ */
+function deriveDominantProjectId(events: CaptureEvent[]): string {
+  const counts = new Map<string, number>();
+  for (const e of events) {
+    const pid = e.projectId || "";
+    if (pid) counts.set(pid, (counts.get(pid) ?? 0) + 1);
+  }
+  let maxPid = "";
+  let maxCount = 0;
+  for (const [pid, count] of counts) {
+    if (count > maxCount) {
+      maxPid = pid;
+      maxCount = count;
+    }
+  }
+  return maxPid;
 }
 
 /**

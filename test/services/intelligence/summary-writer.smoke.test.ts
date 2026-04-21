@@ -23,6 +23,7 @@ describe("summary-writer (UF-215) + token/cost wiring", () => {
     const day = new Date().toISOString().slice(0, 10);
     const line = {
       id: "550e8400-e29b-41d4-a716-446655440003",
+      projectId: "test-project-id",
       timestamp: new Date().toISOString(),
       source: "ai-session",
       type: "ai-conversation",

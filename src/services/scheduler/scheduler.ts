@@ -3,7 +3,7 @@
 // Configurable time (default 18:00 local), jitter ±5 min.
 // Skip zero-event days silently.
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Cron } from "croner";
 import type { UnfadeConfig } from "../../schemas/config.js";
@@ -125,11 +125,16 @@ export function startScheduler(config: UnfadeConfig, cwd?: string): SchedulerHan
 
 /**
  * Check if a distill for the given date already exists AND no new events have arrived since.
+ * A fallback-only distill is never considered "fresh" — the scheduled LLM run should upgrade it.
  */
 function isDistillFresh(date: string, cwd?: string): boolean {
   try {
     const distillPath = join(getDistillsDir(cwd), `${date}.md`);
     if (!existsSync(distillPath)) return false;
+
+    // A fallback distill should always be upgraded by the LLM run
+    const content = readFileSync(distillPath, "utf-8");
+    if (!content.includes("Synthesized by:** llm")) return false;
 
     const distillMtime = statSync(distillPath).mtimeMs;
 

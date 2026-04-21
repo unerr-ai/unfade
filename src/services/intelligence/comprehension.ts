@@ -22,6 +22,7 @@ interface ComprehensionInput {
 
 export interface ComprehensionScore {
   eventId: string;
+  projectId?: string;
   modDepth: number;
   specificity: number;
   rejection: number;
@@ -74,9 +75,9 @@ export function upsertComprehensionScores(
 ): void {
   for (const s of scores) {
     db.run(
-      `INSERT OR REPLACE INTO comprehension_proxy (event_id, mod_depth, specificity, rejection, score)
-       VALUES (?, ?, ?, ?, ?)`,
-      [s.eventId, s.modDepth, s.specificity, s.rejection, s.score],
+      `INSERT OR REPLACE INTO comprehension_proxy (event_id, project_id, mod_depth, specificity, rejection, score)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [s.eventId, s.projectId ?? "", s.modDepth, s.specificity, s.rejection, s.score],
     );
   }
 }
@@ -178,9 +179,9 @@ export function aggregateComprehensionByModule(db: {
       modules.push({ module, score: avgScore, eventCount: data.count });
 
       db.run(
-        `INSERT OR REPLACE INTO comprehension_by_module (module, score, event_count, updated_at)
-         VALUES (?, ?, ?, ?)`,
-        [module, avgScore, data.count, now],
+        `INSERT OR REPLACE INTO comprehension_by_module (module, project_id, score, event_count, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        [module, "", avgScore, data.count, now],
       );
     }
 

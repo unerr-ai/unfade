@@ -81,8 +81,8 @@ export function computeDirectionByFile(db: DbLike): FileDirectionEntry[] {
 
       const density = Math.round((data.totalHds / data.count) * 100);
       db.run(
-        "INSERT INTO direction_by_file (path, direction_density, event_count) VALUES (?, ?, ?)",
-        [path, density, data.count],
+        "INSERT INTO direction_by_file (path, project_id, direction_density, event_count) VALUES (?, ?, ?, ?)",
+        [path, "", density, data.count],
       );
       entries.push({ path, directionDensity: density, eventCount: data.count });
     }

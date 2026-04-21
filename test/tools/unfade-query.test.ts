@@ -32,6 +32,7 @@ function writeDistillMd(dir: string, date: string, content: string): void {
 function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: crypto.randomUUID(),
+    projectId: "test-project-id",
     timestamp: "2026-04-15T10:00:00Z",
     source: "git",
     type: "commit",

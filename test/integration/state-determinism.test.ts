@@ -17,6 +17,7 @@ const TEST_DATE = "2026-04-15";
 function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: crypto.randomUUID(),
+    projectId: "test-project-id",
     timestamp: `${TEST_DATE}T10:00:00Z`,
     source: "git",
     type: "commit",
@@ -165,12 +166,12 @@ describe("State Determinism (11C.1)", () => {
       "utf-8",
     );
 
-    // Second tick: self-healing cursor detects mismatch, reprocesses from 0 (upserts are idempotent)
+    // Second tick: cursor is valid (byteOffset matches file state before append),
+    // so only the 3 newly appended events are processed incrementally.
     const second = await materializeIncremental(cache, tempDir);
-    // All 13 events are processed (10 upserts + 3 new)
-    expect(second).toBe(13);
+    expect(second).toBe(3);
 
-    // Final state: exactly 13 unique events in DB (INSERT OR REPLACE by id)
+    // Final state: exactly 13 unique events in DB (10 original + 3 appended)
     const db = await cache.getDb();
     const result = db!.exec("SELECT COUNT(*) as cnt FROM events");
     expect(result[0].values[0][0]).toBe(13);
@@ -357,10 +358,10 @@ describe("State Determinism (11C.1)", () => {
     writeFileSync(fileA, eventsC.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
     writeEpochFile(fileA); // New epoch — different from original
 
-    // Self-healing: both files reprocessed via cursor rebuild (idempotent upserts)
+    // Self-healing: only File A is rebuilt (epoch mismatch), File B cursor is still valid
     const rebuilt = await materializeIncremental(cache, tempDir);
-    // File A (4 new events) + File B (3 upserts) = 7 processed
-    expect(rebuilt).toBe(7);
+    // File A (4 new events) = 4 processed, File B not reprocessed (cursor valid)
+    expect(rebuilt).toBe(4);
 
     // Final DB state: 3 old A (orphaned IDs) + 4 new A + 3 B = 10 total
     const db = await cache.getDb();

@@ -8,20 +8,26 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { logger } from "../../utils/logger.js";
-import { getBinDir } from "../../utils/paths.js";
+import { getBinDir, getDaemonStateDir } from "../../utils/paths.js";
 import { logBuffer } from "../logs/ring-buffer.js";
 
 const DAEMON_BINARY = process.platform === "win32" ? "unfaded.exe" : "unfaded";
 const MAX_BACKOFF_MS = 30_000;
 const STABLE_THRESHOLD_MS = 60_000;
 
+export type CaptureMode = "git-only" | "ai-global" | "full";
+
 export interface EmbeddedDaemonOptions {
   onRestart?: (attempt: number, repoRoot: string) => void;
+  projectId?: string;
+  captureMode?: CaptureMode;
 }
 
 export class EmbeddedDaemon {
   private child: ChildProcess | null = null;
   private repoRoot: string;
+  private projectId: string;
+  private captureMode: CaptureMode;
   private label: string;
   private restartCount = 0;
   private shuttingDown = false;
@@ -31,18 +37,21 @@ export class EmbeddedDaemon {
 
   constructor(repoRoot: string, options?: EmbeddedDaemonOptions) {
     this.repoRoot = repoRoot;
-    this.label = basename(repoRoot);
+    this.projectId = options?.projectId ?? basename(repoRoot);
+    this.captureMode = options?.captureMode ?? "git-only";
+    this.label = this.captureMode === "ai-global" ? "ai-global" : basename(repoRoot);
     this.onRestart = options?.onRestart;
   }
 
   /**
    * Spawn the Go daemon as a managed child process.
+   * Binary lives at ~/.unfade/bin/ (shared across all projects).
    * Returns the PID, or null if the binary doesn't exist.
    */
   start(): number | null {
     if (this.child) return this.child.pid ?? null;
 
-    const daemonPath = join(getBinDir(this.repoRoot), DAEMON_BINARY);
+    const daemonPath = join(getBinDir(), DAEMON_BINARY);
     if (!existsSync(daemonPath)) {
       logger.debug(`[capture:${this.label}] binary not found at ${daemonPath}`);
       return null;
@@ -117,7 +126,12 @@ export class EmbeddedDaemon {
   }
 
   private spawn(daemonPath: string): number | null {
-    const child = spawn(daemonPath, ["--project-dir", this.repoRoot], {
+    const args = ["--capture-mode", this.captureMode];
+    if (this.repoRoot && this.captureMode !== "ai-global") {
+      args.push("--project-dir", this.repoRoot);
+    }
+
+    const child = spawn(daemonPath, args, {
       stdio: ["ignore", "ignore", "pipe"],
     });
 

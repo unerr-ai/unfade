@@ -72,6 +72,7 @@ export function registerTools(server: McpServer): void {
     "Search across your reasoning history — distills, events, decisions",
     {
       query: z.string().describe("Search query for reasoning history"),
+      project: z.string().optional().describe("Project ID to scope query. Omit for cross-project."),
       dateRange: z
         .object({
           from: z.string().date().optional().describe("Start date (YYYY-MM-DD)"),
@@ -129,11 +130,11 @@ export function registerTools(server: McpServer): void {
     "unfade_context",
     "Get recent reasoning context — what you were working on and why",
     {
+      project: z.string().optional().describe("Project ID to scope query. Omit for cross-project."),
       scope: z
         .enum(["last_2h", "today", "this_week"])
         .default("today")
         .describe("Time scope: last_2h, today, or this_week"),
-      project: z.string().optional().describe("Filter by project name"),
     },
     (args) => {
       if (!isInitialized()) return notInitializedResponse();
@@ -176,6 +177,7 @@ export function registerTools(server: McpServer): void {
     "unfade_decisions",
     "List recent engineering decisions with rationale and trade-offs",
     {
+      project: z.string().optional().describe("Project ID to scope query. Omit for cross-project."),
       limit: z
         .number()
         .int()
@@ -349,6 +351,7 @@ export function registerTools(server: McpServer): void {
     "unfade_amplify",
     "Detect cross-temporal connections — find past decisions similar to today's reasoning",
     {
+      project: z.string().optional().describe("Project ID to scope query. Omit for cross-project."),
       date: z.string().date().describe("Date to amplify (YYYY-MM-DD)"),
     },
     (args) => {
@@ -389,6 +392,7 @@ export function registerTools(server: McpServer): void {
     "unfade_similar",
     "Search past decisions for analogous reasoning — find what you decided before about similar problems",
     {
+      project: z.string().optional().describe("Project ID to scope query. Omit for cross-project."),
       problem: z.string().describe("Problem or decision description to search for"),
       limit: z
         .number()

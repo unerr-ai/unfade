@@ -4,7 +4,7 @@
 // Protocol: one JSON line request → one JSON line response → close.
 
 import { createConnection } from "node:net";
-import { getStateDir } from "./paths.js";
+import { getDaemonStateDir, getStateDir } from "./paths.js";
 
 export interface IPCRequest {
   cmd: string;
@@ -152,6 +152,8 @@ export function queryIngestStatus(cwd?: string): Promise<IPCResponse> {
 
 /**
  * Get the socket path for the daemon IPC.
+ * In global-first mode, socket lives at ~/.unfade/state/daemons/<projectId>/daemon.sock
+ * when projectId is available, or ~/.unfade/state/daemon.sock as fallback.
  */
 function getSocketPath(cwd?: string): string {
   const stateDir = getStateDir(cwd);

@@ -12,6 +12,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -33,9 +34,11 @@ func main() {
 	var projectDir string
 	var verbose bool
 	var coordinatorMode bool
+	var captureMode string
 	flag.StringVar(&projectDir, "project-dir", "", "Path to the project root (must contain .git)")
 	flag.BoolVar(&verbose, "verbose", false, "Enable debug logging")
 	flag.BoolVar(&coordinatorMode, "coordinator", false, "Run as multi-repo coordinator (reads registry)")
+	flag.StringVar(&captureMode, "capture-mode", "git-only", "Capture mode: git-only (per-project), ai-global (single global AI watcher), full (all sources)")
 	flag.Parse()
 
 	if coordinatorMode {
@@ -102,12 +105,26 @@ func main() {
 	// 4. Start capture orchestrator.
 	eventsDir := resolveEventsDir(projectDir)
 	terminalSocket := filepath.Join(stateDir, "terminal.sock")
+	matcher := capture.NewProjectMatcher(capture.RegistryPath())
+
+	var mode capture.CaptureMode
+	switch captureMode {
+	case "ai-global":
+		mode = capture.CaptureModeAIGlobal
+	case "full":
+		mode = capture.CaptureModeFull
+	default:
+		mode = capture.CaptureModeGitOnly
+	}
+
 	orchestrator := capture.NewOrchestrator(capture.OrchestratorConfig{
 		ProjectDir:     projectDir,
 		EventsDir:      eventsDir,
 		StateDir:       stateDir,
 		Logger:         log,
 		TerminalSocket: terminalSocket,
+		Mode:           mode,
+		ProjectMatcher: matcher,
 	})
 	if projectDir != "" {
 		if err := orchestrator.Start(); err != nil {
@@ -128,7 +145,7 @@ func main() {
 	stopCh := make(chan struct{}, 1)
 
 	ipcHandler := func(req platform.IPCRequest) platform.IPCResponse {
-		return handleIPC(req, getBudget, reporter, orchestrator, stopCh)
+		return handleIPC(req, getBudget, reporter, orchestrator, stopCh, projectDir)
 	}
 
 	ipcServer := platform.NewIPCServer(socketPath, ipcHandler, log)
@@ -158,7 +175,7 @@ func main() {
 	shutdown(log, ipcServer, orchestrator, reporter, pidFile, stateDir)
 }
 
-func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, reporter *health.Reporter, orchestrator *capture.WatcherOrchestrator, stopCh chan struct{}) platform.IPCResponse {
+func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, reporter *health.Reporter, orchestrator *capture.WatcherOrchestrator, stopCh chan struct{}, projectDir string) platform.IPCResponse {
 	switch req.Cmd {
 	case "status":
 		budget := getBudget()
@@ -323,6 +340,7 @@ func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, re
 
 		event := capture.CaptureEvent{
 			ID:        fmt.Sprintf("term-%d", time.Now().UnixNano()),
+			ProjectID: resolveProjectID(projectDir),
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Source:    "terminal",
 			Type:      "command",
@@ -458,26 +476,59 @@ func runCoordinator(verbose bool) {
 	log.Info("coordinator stopped cleanly")
 }
 
-func resolveEventsDir(projectDir string) string {
-	if projectDir != "" {
-		return filepath.Join(projectDir, ".unfade", "events")
+// resolveProjectID finds the projectId for a given project directory from the registry.
+// Falls back to "unregistered:<path>" if not found in the registry.
+func resolveProjectID(projectDir string) string {
+	if projectDir == "" {
+		return ""
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "unregistered:" + projectDir
+	}
+	registryPath := filepath.Join(home, ".unfade", "state", "registry.v1.json")
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		return "unregistered:" + projectDir
+	}
+
+	type repoEntry struct {
+		ID   string `json:"id"`
+		Root string `json:"root"`
+	}
+	type registry struct {
+		Repos []repoEntry `json:"repos"`
+	}
+
+	var reg registry
+	if err := json.Unmarshal(data, &reg); err != nil {
+		return "unregistered:" + projectDir
+	}
+
+	absProject, _ := filepath.Abs(projectDir)
+	for _, repo := range reg.Repos {
+		absRoot, _ := filepath.Abs(repo.Root)
+		if absProject == absRoot {
+			return repo.ID
+		}
+	}
+	return "unregistered:" + projectDir
+}
+
+// Global-first: all paths resolve to ~/.unfade/ regardless of --project-dir.
+// --project-dir only determines which git repo to watch and what projectId to tag.
+
+func resolveEventsDir(_ string) string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".unfade", "events")
 }
 
-func resolveStateDir(projectDir string) string {
-	if projectDir != "" {
-		return filepath.Join(projectDir, ".unfade", "state")
-	}
+func resolveStateDir(_ string) string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".unfade", "state")
 }
 
-func resolveLogsDir(projectDir string) string {
-	if projectDir != "" {
-		return filepath.Join(projectDir, ".unfade", "logs")
-	}
+func resolveLogsDir(_ string) string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".unfade", "logs")
 }

@@ -4,7 +4,8 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { logger } from "../../utils/logger.js";
 import { getStateDir } from "../../utils/paths.js";
 
 const CURSOR_FILENAME = "materializer.json";
@@ -75,18 +76,41 @@ export function readEpochFile(filePath: string): string | null {
  * or if the epoch has changed (file was replaced).
  */
 export function isCursorValid(cursor: StreamCursor, filePath: string): boolean {
-  if (!existsSync(filePath)) return false;
+  const file = basename(filePath);
+  if (!existsSync(filePath)) {
+    logger.debug("Cursor validation failed: file does not exist", { file });
+    return false;
+  }
 
   try {
     // Epoch check: if cursor has an epoch AND the .epoch file exists, they must match
     if (cursor.epoch) {
       const currentEpoch = readEpochFile(filePath);
-      if (currentEpoch !== null && currentEpoch !== cursor.epoch) return false;
+      if (currentEpoch !== null && currentEpoch !== cursor.epoch) {
+        logger.debug("Cursor validation failed: epoch mismatch", {
+          file,
+          cursorEpoch: cursor.epoch,
+          fileEpoch: currentEpoch,
+        });
+        return false;
+      }
     }
 
     const content = readFileSync(filePath, "utf-8");
     const contentBytes = Buffer.byteLength(content, "utf-8");
-    if (contentBytes < cursor.byteOffset) return false;
+
+    // If the cursor claims a byte offset beyond the actual file size, the file
+    // was either truncated or the cursor was saved with an overshoot (see the
+    // phantom trailing element bug fix in materializer.ts).
+    if (contentBytes < cursor.byteOffset) {
+      logger.debug("Cursor validation failed: byteOffset exceeds file size", {
+        file,
+        contentBytes,
+        cursorByteOffset: cursor.byteOffset,
+        overshoot: cursor.byteOffset - contentBytes,
+      });
+      return false;
+    }
 
     const precedingContent = content.slice(0, cursor.byteOffset);
     const lines = precedingContent.split("\n");
@@ -100,11 +124,31 @@ export function isCursorValid(cursor: StreamCursor, filePath: string): boolean {
       }
     }
 
-    if (!lastNonEmpty && cursor.byteOffset > 0) return false;
+    if (!lastNonEmpty && cursor.byteOffset > 0) {
+      logger.debug("Cursor validation failed: no content found before byteOffset", {
+        file,
+        byteOffset: cursor.byteOffset,
+      });
+      return false;
+    }
     if (!lastNonEmpty) return true;
 
-    return hashLine(lastNonEmpty) === cursor.lastLineHash;
-  } catch {
+    const computedHash = hashLine(lastNonEmpty);
+    if (computedHash !== cursor.lastLineHash) {
+      logger.debug("Cursor validation failed: last-line hash mismatch", {
+        file,
+        expected: cursor.lastLineHash,
+        computed: computedHash,
+      });
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    logger.debug("Cursor validation failed: unexpected error", {
+      file,
+      error: String(err),
+    });
     return false;
   }
 }

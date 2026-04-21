@@ -14,6 +14,7 @@ export const DecisionSchema = z.object({
   rationale: z.string(),
   domain: z.string().optional(),
   alternativesConsidered: z.number().int().min(0).optional(),
+  projectId: z.string().optional(),
 });
 
 export const TradeOffSchema = z.object({

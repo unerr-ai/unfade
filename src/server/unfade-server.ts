@@ -3,7 +3,14 @@
 // Reads registry, delegates to RepoManager for daemon + materializer per repo,
 // starts HTTP server, polls registry for hot-adds.
 
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   printInitStep,
@@ -56,6 +63,9 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
   // Start RepoManager with all registered repos
   const repoManager = new RepoManager();
 
+  // Start single global AI capture daemon (watches ~/.claude/, Cursor, Codex, Aider)
+  repoManager.startGlobalAICapture();
+
   for (const entry of registry.repos) {
     const managed = await repoManager.addRepo(entry);
     if (managed) {
@@ -71,6 +81,10 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
 
       // First-run analysis if needed
       tryGenerateFirstRunReport(entry.root);
+
+      // First-run incremental distill: populate distills/profile/graph immediately
+      // when events exist but no distills have been generated yet.
+      triggerFirstRunDistill(entry.root);
     } else {
       printInitStep(`${entry.label}: skipped (binary not available)`);
     }
@@ -199,6 +213,49 @@ async function triggerIngestWhenReady(repoRoot: string): Promise<void> {
   } catch {
     // non-fatal
   }
+}
+
+/**
+ * On first run, if events/ has data but distills/ is empty, run incremental
+ * distill for each day with events. Non-blocking — runs in background.
+ */
+function triggerFirstRunDistill(repoRoot: string): void {
+  const distillsDir = join(repoRoot, ".unfade", "distills");
+  const eventsDir = join(repoRoot, ".unfade", "events");
+
+  // Only trigger if distills/ is empty or missing, and events/ has files
+  if (existsSync(distillsDir)) {
+    const files = readdirSync(distillsDir).filter((f) => f.endsWith(".md"));
+    if (files.length > 0) return; // Already have distills
+  }
+
+  if (!existsSync(eventsDir)) return;
+
+  // Fire and forget — run in background
+  (async () => {
+    try {
+      const eventFiles = readdirSync(eventsDir).filter((f) => f.endsWith(".jsonl"));
+      if (eventFiles.length === 0) return;
+
+      const { distillIncremental } = await import("../services/distill/distiller.js");
+
+      // Extract dates from filenames (YYYY-MM-DD.jsonl)
+      const dates = eventFiles
+        .map((f) => f.replace(".jsonl", ""))
+        .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+        .sort();
+
+      logger.debug("First-run distill: processing event days", { count: dates.length, repoRoot });
+
+      for (const date of dates) {
+        await distillIncremental(date, { cwd: repoRoot });
+      }
+
+      logger.debug("First-run distill complete", { days: dates.length });
+    } catch {
+      // non-fatal — first-run distill is best-effort
+    }
+  })();
 }
 
 function estimateProcessedEvents(repoRoot: string): number {

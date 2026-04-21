@@ -210,6 +210,116 @@ func TestCursorParseMissingTables(t *testing.T) {
 	}
 }
 
+func TestCursorScoredCommitsGetUniqueConversationIDs(t *testing.T) {
+	dbPath := createTestCursorDB(t)
+
+	p := NewCursorParser("/fake/home")
+	turns, err := p.Parse(DataSource{
+		Tool:   "cursor",
+		Path:   dbPath,
+		Format: "sqlite",
+	}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Each scored commit should produce a turn with a unique ConversationID
+	// keyed by commit hash, not branch name. This prevents all commits on
+	// the same branch from collapsing into a single CaptureEvent.
+	seenIDs := make(map[string]bool)
+	for _, turn := range turns {
+		if turn.Role != "commit" {
+			continue
+		}
+		if seenIDs[turn.ConversationID] {
+			t.Errorf("duplicate ConversationID %q — commits should have unique IDs", turn.ConversationID)
+		}
+		seenIDs[turn.ConversationID] = true
+
+		hash := turn.Metadata["commit_hash"].(string)
+		expected := "commit-" + hash
+		if turn.ConversationID != expected {
+			t.Errorf("ConversationID = %q, want %q", turn.ConversationID, expected)
+		}
+	}
+
+	if len(seenIDs) != 2 {
+		t.Errorf("expected 2 unique commit ConversationIDs, got %d", len(seenIDs))
+	}
+}
+
+func TestCursorGitFormatTimestamps(t *testing.T) {
+	dbPath := createTestCursorDBWithGitDates(t)
+
+	p := NewCursorParser("/fake/home")
+	turns, err := p.Parse(DataSource{
+		Tool:   "cursor",
+		Path:   dbPath,
+		Format: "sqlite",
+	}, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	commits := 0
+	for _, turn := range turns {
+		if turn.Role != "commit" {
+			continue
+		}
+		commits++
+		if turn.Timestamp.IsZero() {
+			t.Errorf("commit %q has zero timestamp — git-format date not parsed",
+				turn.Metadata["commit_hash"])
+		}
+	}
+
+	if commits != 2 {
+		t.Errorf("expected 2 commits, got %d", commits)
+	}
+}
+
+// createTestCursorDBWithGitDates creates a fixture DB using git-style date
+// format ("Mon Jan 2 15:04:05 2006 -0700") as Cursor actually stores them.
+func createTestCursorDBWithGitDates(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "ai-code-tracking.db")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	stmts := []string{
+		`CREATE TABLE conversation_summaries (
+			conversationId TEXT PRIMARY KEY,
+			title TEXT, tldr TEXT, overview TEXT, summaryBullets TEXT,
+			model TEXT, mode TEXT, updatedAt TEXT
+		)`,
+		`CREATE TABLE scored_commits (
+			commitHash TEXT PRIMARY KEY,
+			branchName TEXT,
+			linesAdded INTEGER, linesDeleted INTEGER,
+			tabLinesAdded INTEGER, tabLinesDeleted INTEGER,
+			composerLinesAdded INTEGER, composerLinesDeleted INTEGER,
+			humanLinesAdded INTEGER, humanLinesDeleted INTEGER,
+			v1AiPercentage REAL, v2AiPercentage REAL,
+			commitMessage TEXT, commitDate TEXT
+		)`,
+		`INSERT INTO scored_commits VALUES
+			('aaa111', 'main', 50, 10, 5, 1, 20, 5, 25, 4, 50.0, 55.0, 'Fix login', 'Wed Mar 4 14:52:36 2026 +0530'),
+			('bbb222', 'main', 30, 5, 3, 0, 10, 2, 17, 3, 40.0, 43.0, 'Add tests', 'Tue Feb 17 02:20:44 2026 +0530')`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec %q: %v", stmt[:40], err)
+		}
+	}
+	return dbPath
+}
+
 // createTestCursorDB creates a SQLite database matching Cursor's schema
 // with fixture data.
 func createTestCursorDB(t *testing.T) string {

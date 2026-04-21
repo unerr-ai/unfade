@@ -36,9 +36,17 @@ afterAll(() => {
 beforeEach(() => {
   tmpDir = makeTmpDir();
   process.chdir(tmpDir);
+  process.env.UNFADE_HOME = join(tmpDir, ".unfade");
+  mkdirSync(join(tmpDir, ".unfade", "state"), { recursive: true });
+  writeFileSync(
+    join(tmpDir, ".unfade", "state", "setup-status.json"),
+    '{"setupCompleted":true}',
+    "utf-8",
+  );
 });
 
 afterEach(() => {
+  delete process.env.UNFADE_HOME;
   process.chdir(originalCwd);
   try {
     rmSync(tmpDir, { recursive: true, force: true });

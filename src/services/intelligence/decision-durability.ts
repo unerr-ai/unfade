@@ -5,7 +5,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getProjectDataDir } from "../../utils/paths.js";
+import { getIntelligenceDir } from "../../utils/paths.js";
 import type { DbLike } from "../cache/manager.js";
 
 export interface DurabilityRecord {
@@ -103,8 +103,8 @@ export function computeDecisionDurability(db: DbLike): DurabilityReport {
 /**
  * Write durability report to intelligence directory.
  */
-export function writeDecisionDurability(report: DurabilityReport, repoRoot: string): void {
-  const dir = join(getProjectDataDir(repoRoot), "intelligence");
+export function writeDecisionDurability(report: DurabilityReport, repoRoot?: string): void {
+  const dir = getIntelligenceDir(repoRoot);
   mkdirSync(dir, { recursive: true });
   const target = join(dir, "decision-durability.json");
   const tmp = `${target}.tmp.${process.pid}`;

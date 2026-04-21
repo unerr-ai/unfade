@@ -31,6 +31,7 @@ export type McpMeta = z.infer<typeof McpMetaSchema>;
 
 export const QueryInputSchema = z.object({
   query: z.string().min(1),
+  project: z.string().optional(),
   dateRange: z
     .object({
       from: z.string().date().optional(),
@@ -104,6 +105,7 @@ export type ContextOutput = z.infer<typeof ContextOutputSchema>;
 export const DecisionsInputSchema = z.object({
   limit: z.number().int().min(1).max(50).default(10),
   domain: z.string().optional(),
+  project: z.string().optional(),
 });
 
 export type DecisionsInput = z.infer<typeof DecisionsInputSchema>;
@@ -164,6 +166,7 @@ export type ProfileOutput = z.infer<typeof ProfileOutputSchema>;
 
 export const AmplifyInputSchema = z.object({
   date: z.string().date(),
+  project: z.string().optional(),
 });
 
 export type AmplifyInput = z.infer<typeof AmplifyInputSchema>;
@@ -195,6 +198,7 @@ export type AmplifyOutput = z.infer<typeof AmplifyOutputSchema>;
 
 export const SimilarInputSchema = z.object({
   problem: z.string().min(1),
+  project: z.string().optional(),
   limit: z.number().int().min(1).max(50).default(10),
 });
 

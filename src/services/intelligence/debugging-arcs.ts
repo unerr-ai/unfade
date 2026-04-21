@@ -4,7 +4,7 @@
 
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { getProjectDataDir } from "../../utils/paths.js";
+import { getIntelligenceDir } from "../../utils/paths.js";
 import type { DbLike } from "../cache/manager.js";
 
 export interface DebuggingArc {
@@ -59,8 +59,8 @@ export function detectDebuggingArcs(db: DbLike): DebuggingArc[] {
 /**
  * Write debugging arcs to intelligence directory.
  */
-export function writeDebuggingArcs(arcs: DebuggingArc[], repoRoot: string): void {
-  const dir = join(getProjectDataDir(repoRoot), "intelligence");
+export function writeDebuggingArcs(arcs: DebuggingArc[], repoRoot?: string): void {
+  const dir = getIntelligenceDir(repoRoot);
   mkdirSync(dir, { recursive: true });
   const target = join(dir, "debugging-arcs.json");
   const tmp = `${target}.tmp.${process.pid}`;

@@ -14,13 +14,27 @@ const (
 	defaultIngestDays  = 7
 )
 
+// CaptureMode determines which sources the orchestrator activates.
+type CaptureMode string
+
+const (
+	// CaptureModeFull activates all sources (legacy, for tests).
+	CaptureModeFull CaptureMode = "full"
+	// CaptureModeGitOnly activates git + terminal only. Per-project daemon mode.
+	CaptureModeGitOnly CaptureMode = "git-only"
+	// CaptureModeAIGlobal activates AI session watchers only. Single global instance.
+	CaptureModeAIGlobal CaptureMode = "ai-global"
+)
+
 // OrchestratorConfig holds configuration for the WatcherOrchestrator.
 type OrchestratorConfig struct {
 	ProjectDir     string
 	EventsDir      string
 	StateDir       string // For ingest state persistence. Empty = ingest disabled.
 	Logger         CaptureSourceLogger
-	TerminalSocket string // Path to terminal receiver Unix socket (empty = disabled).
+	TerminalSocket string      // Path to terminal receiver Unix socket (empty = disabled).
+	Mode           CaptureMode // Capture mode: "git-only", "ai-global", or "full" (default).
+	ProjectMatcher *ProjectMatcher
 }
 
 // WatcherOrchestrator manages capture sources and routes events to a single EventWriter.
@@ -40,8 +54,15 @@ type WatcherOrchestrator struct {
 	running        bool
 }
 
-// NewOrchestrator creates a WatcherOrchestrator with git, AI session, and terminal sources.
+// NewOrchestrator creates a WatcherOrchestrator with sources based on capture mode.
+// - git-only: GitWatcher + TerminalReceiver (per-project daemon)
+// - ai-global: AISessionWatcher only (single global instance)
+// - full: all sources (legacy/testing)
 func NewOrchestrator(cfg OrchestratorConfig) *WatcherOrchestrator {
+	if cfg.Mode == "" {
+		cfg.Mode = CaptureModeFull
+	}
+
 	ingestCh := make(chan CaptureEvent, eventChannelBuffer)
 	writerCh := make(chan CaptureEvent, eventChannelBuffer)
 
@@ -50,13 +71,28 @@ func NewOrchestrator(cfg OrchestratorConfig) *WatcherOrchestrator {
 		projectPaths = append(projectPaths, cfg.ProjectDir)
 	}
 
-	sources := []CaptureSource{
-		NewGitWatcher(cfg.ProjectDir, cfg.Logger),
-		NewAISessionWatcher(cfg.Logger, projectPaths),
-	}
+	var sources []CaptureSource
 
-	if cfg.TerminalSocket != "" {
-		sources = append(sources, NewTerminalReceiver(cfg.TerminalSocket, cfg.Logger))
+	switch cfg.Mode {
+	case CaptureModeGitOnly:
+		if cfg.ProjectDir != "" {
+			sources = append(sources, NewGitWatcher(cfg.ProjectDir, cfg.Logger))
+		}
+		if cfg.TerminalSocket != "" {
+			sources = append(sources, NewTerminalReceiver(cfg.TerminalSocket, cfg.Logger))
+		}
+
+	case CaptureModeAIGlobal:
+		sources = append(sources, NewAISessionWatcher(cfg.Logger, projectPaths))
+
+	default: // CaptureModeFull
+		if cfg.ProjectDir != "" {
+			sources = append(sources, NewGitWatcher(cfg.ProjectDir, cfg.Logger))
+		}
+		sources = append(sources, NewAISessionWatcher(cfg.Logger, projectPaths))
+		if cfg.TerminalSocket != "" {
+			sources = append(sources, NewTerminalReceiver(cfg.TerminalSocket, cfg.Logger))
+		}
 	}
 
 	writer := NewEventWriter(cfg.EventsDir, writerCh, cfg.Logger)
@@ -146,6 +182,7 @@ func (o *WatcherOrchestrator) middlewareLoop() {
 					if !ok {
 						return
 					}
+					o.stampProjectID(&event)
 					o.writerCh <- event
 				default:
 					return
@@ -155,11 +192,30 @@ func (o *WatcherOrchestrator) middlewareLoop() {
 			if !ok {
 				return
 			}
+			o.stampProjectID(&event)
 			o.writerCh <- event
 			if event.Source == "terminal" {
 				o.debugDetector.ProcessEvent(event)
 			}
 		}
+	}
+}
+
+// stampProjectID sets the event's ProjectID if not already set.
+// In ai-global mode: uses the ProjectMatcher against content.project.
+// In git-only mode: uses the daemon's --project-dir resolved against registry.
+func (o *WatcherOrchestrator) stampProjectID(event *CaptureEvent) {
+	if event.ProjectID != "" {
+		return
+	}
+
+	if o.cfg.ProjectMatcher != nil && event.Content.Project != "" {
+		event.ProjectID = o.cfg.ProjectMatcher.Match(event.Content.Project)
+		return
+	}
+
+	if o.cfg.ProjectDir != "" && o.cfg.ProjectMatcher != nil {
+		event.ProjectID = o.cfg.ProjectMatcher.Match(o.cfg.ProjectDir)
 	}
 }
 

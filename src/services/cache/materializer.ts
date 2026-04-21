@@ -23,6 +23,39 @@ type DbLike = {
 };
 
 // ---------------------------------------------------------------------------
+// JSONL byte-counting helper
+// ---------------------------------------------------------------------------
+//
+// ISSUE: String.split("\n") on content ending with "\n" produces a trailing
+// empty string element (phantom line). For example:
+//
+//   "line1\nline2\n".split("\n") → ["line1", "line2", ""]
+//
+// If the loop counts this phantom element as having a newline byte (+1),
+// the cursor's byteOffset ends up 1 byte past the actual file size.
+// On the next tick, isCursorValid() sees contentBytes < cursor.byteOffset,
+// returns false, and triggers a full file rebuild — every tick, forever.
+//
+// This function clamps bytesProcessed to never exceed the actual byte length
+// of the content being processed. It also logs a warning if the clamp fires,
+// which means a byte-counting bug exists upstream that should be investigated.
+// ---------------------------------------------------------------------------
+
+function clampBytesProcessed(bytesProcessed: number, fullContent: string, file: string): number {
+  const actualBytes = Buffer.byteLength(fullContent, "utf-8");
+  if (bytesProcessed > actualBytes) {
+    logger.warn("Cursor byte overshoot detected and clamped — off-by-one guard fired", {
+      file,
+      computed: bytesProcessed,
+      actual: actualBytes,
+      overshoot: bytesProcessed - actualBytes,
+    });
+    return actualBytes;
+  }
+  return bytesProcessed;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -144,7 +177,17 @@ function materializeEventsIncremental(
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const isLastSegment = i === lines.length - 1;
-      const newlineSize = isLastSegment && !endsWithNewline ? 0 : 1;
+
+      // PHANTOM TRAILING ELEMENT GUARD
+      // When content ends with "\n", split("\n") produces a trailing "".
+      // This phantom has no corresponding byte in the file — skip it entirely
+      // to prevent byteOffset from overshooting the actual file size by 1.
+      if (isLastSegment && !line && endsWithNewline) break;
+
+      // Only the true final segment of a file NOT ending with \n lacks a trailing newline.
+      // After the phantom guard above, if we reach here on the last segment the file
+      // does not end with \n, so newlineSize = 0 is correct.
+      const newlineSize = isLastSegment ? 0 : 1;
       const rawLineLength = Buffer.byteLength(line, "utf-8") + newlineSize;
       const trimmed = line.trim();
       if (!trimmed) {
@@ -163,6 +206,10 @@ function materializeEventsIncremental(
 
       bytesProcessed += rawLineLength;
     }
+
+    // Defensive clamp: ensure byteOffset never exceeds actual file bytes.
+    // If this fires, a byte-counting bug exists above that needs investigation.
+    bytesProcessed = clampBytesProcessed(bytesProcessed, content, file);
 
     cursor.streams[streamKey] = {
       file: filePath,
@@ -201,11 +248,19 @@ function materializeDecisionsIncremental(
   let count = 0;
   let lastValidLine = "";
   let bytesProcessed = startOffset;
+  const endsWithNewline = newContent.endsWith("\n");
 
   const existingCount = getDecisionCount(db);
 
-  for (const line of lines) {
-    const rawLineLength = Buffer.byteLength(line, "utf-8") + 1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isLastSegment = i === lines.length - 1;
+
+    // PHANTOM TRAILING ELEMENT GUARD — see comment in materializeEventsIncremental
+    if (isLastSegment && !line && endsWithNewline) break;
+
+    const newlineSize = isLastSegment ? 0 : 1;
+    const rawLineLength = Buffer.byteLength(line, "utf-8") + newlineSize;
     const trimmed = line.trim();
     if (!trimmed) {
       bytesProcessed += rawLineLength;
@@ -224,6 +279,8 @@ function materializeDecisionsIncremental(
 
     bytesProcessed += rawLineLength;
   }
+
+  bytesProcessed = clampBytesProcessed(bytesProcessed, content, "decisions.jsonl");
 
   cursor.streams[streamKey] = {
     file: filePath,
@@ -255,9 +312,17 @@ function materializeMetricsIncremental(
   let count = 0;
   let lastValidLine = "";
   let bytesProcessed = startOffset;
+  const endsWithNewline = newContent.endsWith("\n");
 
-  for (const line of lines) {
-    const rawLineLength = Buffer.byteLength(line, "utf-8") + 1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isLastSegment = i === lines.length - 1;
+
+    // PHANTOM TRAILING ELEMENT GUARD — see comment in materializeEventsIncremental
+    if (isLastSegment && !line && endsWithNewline) break;
+
+    const newlineSize = isLastSegment ? 0 : 1;
+    const rawLineLength = Buffer.byteLength(line, "utf-8") + newlineSize;
     const trimmed = line.trim();
     if (!trimmed) {
       bytesProcessed += rawLineLength;
@@ -275,6 +340,8 @@ function materializeMetricsIncremental(
 
     bytesProcessed += rawLineLength;
   }
+
+  bytesProcessed = clampBytesProcessed(bytesProcessed, content, "daily.jsonl");
 
   cursor.streams[streamKey] = {
     file: filePath,
@@ -367,11 +434,14 @@ function rebuildMetrics(db: DbLike, cwd?: string): number {
 // ---------------------------------------------------------------------------
 
 function upsertEvent(db: DbLike, event: Record<string, unknown>): void {
+  const projectId =
+    (event.projectId as string) || (event.content as Record<string, unknown>)?.project || "";
   db.run(
-    `INSERT OR REPLACE INTO events (id, ts, source, type, content_summary, content_detail, git_repo, git_branch, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO events (id, project_id, ts, source, type, content_summary, content_detail, git_repo, git_branch, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       event.id,
+      projectId,
       event.timestamp,
       event.source,
       event.type,
@@ -386,10 +456,11 @@ function upsertEvent(db: DbLike, event: Record<string, unknown>): void {
 
 function upsertDecision(db: DbLike, dec: Record<string, unknown>, id: string): void {
   db.run(
-    `INSERT OR REPLACE INTO decisions (id, date, domain, description, rationale, alternatives_count, hds, direction_class)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO decisions (id, project_id, date, domain, description, rationale, alternatives_count, hds, direction_class)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
+      (dec.projectId as string) ?? "",
       dec.date,
       dec.domain ?? "",
       dec.decision ?? "",
@@ -403,10 +474,11 @@ function upsertDecision(db: DbLike, dec: Record<string, unknown>, id: string): v
 
 function upsertMetricSnapshot(db: DbLike, snap: Record<string, unknown>): void {
   db.run(
-    `INSERT OR REPLACE INTO metric_snapshots (date, rdi, dcs, aq, cwi, api_score, decisions_count, labels)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO metric_snapshots (date, project_id, rdi, dcs, aq, cwi, api_score, decisions_count, labels)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       snap.date,
+      (snap.projectId as string) ?? "",
       snap.rdi,
       snap.dcs,
       snap.aq,

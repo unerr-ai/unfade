@@ -282,6 +282,9 @@ func TestParseTimestamp(t *testing.T) {
 	}{
 		{"2026-04-17T10:00:00.000Z", false},
 		{"2026-04-17T10:00:00Z", false},
+		// Git-style timestamps used by Cursor's scored_commits table
+		{"Wed Mar 4 14:52:36 2026 +0530", false},
+		{"Tue Feb 17 02:20:44 2026 +0530", false},
 		{"invalid", true},
 		{"", true},
 	}

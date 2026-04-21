@@ -98,9 +98,9 @@ export function applyFeatureTag(
   const existing = db.exec("SELECT id FROM features WHERE id = ?", [featureId]);
   if (!existing[0] || existing[0].values.length === 0) {
     db.run(
-      `INSERT INTO features (id, name, branch, first_seen, last_seen, event_count, file_count, session_count, status)
-       VALUES (?, ?, NULL, datetime('now'), datetime('now'), 0, 0, 0, 'active')`,
-      [featureId, featureName],
+      `INSERT INTO features (id, project_id, name, branch, first_seen, last_seen, event_count, file_count, session_count, status)
+       VALUES (?, ?, ?, NULL, datetime('now'), datetime('now'), 0, 0, 0, 'active')`,
+      [featureId, "", featureName],
     );
   }
 

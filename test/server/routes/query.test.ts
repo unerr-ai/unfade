@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/server/http.js";
+import { invalidateSetupCache } from "../../../src/server/setup-state.js";
 
 let tmpDir: string;
 let originalCwd: string;
@@ -26,6 +27,7 @@ function writeEvent(dir: string, date: string, event: Record<string, unknown>): 
 function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: crypto.randomUUID(),
+    projectId: "test-project-id",
     timestamp: "2026-04-15T10:00:00Z",
     source: "git",
     type: "commit",
@@ -45,9 +47,18 @@ afterAll(() => {
 beforeEach(() => {
   tmpDir = makeTmpDir();
   process.chdir(tmpDir);
+  process.env.UNFADE_HOME = join(tmpDir, ".unfade");
+  mkdirSync(join(tmpDir, ".unfade", "state"), { recursive: true });
+  writeFileSync(
+    join(tmpDir, ".unfade", "state", "setup-status.json"),
+    '{"setupCompleted":true}',
+    "utf-8",
+  );
+  invalidateSetupCache();
 });
 
 afterEach(() => {
+  delete process.env.UNFADE_HOME;
   process.chdir(originalCwd);
   try {
     rmSync(tmpDir, { recursive: true, force: true });

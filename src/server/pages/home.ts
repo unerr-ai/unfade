@@ -18,27 +18,96 @@ export const homePage = new Hono();
 
 homePage.get("/", (c) => {
   const content = `
+    <style>
+      @keyframes pulse-glow {
+        0%, 100% { opacity: 0.4; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.05); }
+      }
+      @keyframes orbit {
+        from { transform: rotate(0deg) translateX(60px) rotate(0deg); }
+        to { transform: rotate(360deg) translateX(60px) rotate(-360deg); }
+      }
+      @keyframes fade-up {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes count-pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.08); }
+      }
+      .loader-orbit { animation: orbit 3s linear infinite; }
+      .loader-orbit:nth-child(2) { animation-delay: -1s; }
+      .loader-orbit:nth-child(3) { animation-delay: -2s; }
+      .logo-pulse { animation: pulse-glow 2.5s ease-in-out infinite; }
+      .fade-up { animation: fade-up 0.6s ease-out both; }
+      .fade-up-1 { animation-delay: 0.1s; }
+      .fade-up-2 { animation-delay: 0.25s; }
+      .fade-up-3 { animation-delay: 0.4s; }
+      .event-count-bump { animation: count-pulse 0.3s ease-out; }
+    </style>
+
     <!-- First-run / Loading state -->
-    <div id="home-loading" class="text-center py-16 text-muted">
-      <div class="font-mono text-5xl font-bold text-accent mb-4">unfade</div>
-      <p class="text-sm">Connecting to intelligence layer…</p>
+    <div id="home-loading" class="flex flex-col items-center justify-center" style="min-height:calc(100vh - 180px)">
+      <div class="relative mb-8">
+        <div class="font-mono text-6xl font-bold text-accent logo-pulse">unfade</div>
+        <div class="absolute inset-0 flex items-center justify-center" style="pointer-events:none">
+          <div class="loader-orbit w-2 h-2 rounded-full bg-cyan opacity-60"></div>
+          <div class="loader-orbit w-1.5 h-1.5 rounded-full bg-accent opacity-40"></div>
+          <div class="loader-orbit w-1 h-1 rounded-full bg-cyan opacity-30"></div>
+        </div>
+      </div>
+      <p class="text-sm text-muted fade-up fade-up-1">Connecting to intelligence layer</p>
+      <div class="flex items-center gap-1.5 mt-3 fade-up fade-up-2">
+        <span class="w-1.5 h-1.5 rounded-full bg-accent logo-pulse"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-accent logo-pulse" style="animation-delay:0.3s"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-accent logo-pulse" style="animation-delay:0.6s"></span>
+      </div>
     </div>
 
-    <!-- First-run onboarding -->
+    <!-- First-run onboarding / calibrating -->
     <div id="home-onboarding" class="hidden">
-      <div class="bg-surface border border-accent/30 rounded-lg p-8 mb-6 text-center">
-        <div class="font-heading text-2xl font-semibold mb-3">Welcome to your reasoning observatory</div>
-        <p class="text-muted text-sm mb-4 max-w-lg mx-auto">Unfade captures your AI interactions and surfaces patterns you didn't know were there. Keep working — insights appear as data accumulates.</p>
-        <div class="flex items-center justify-center gap-2 mb-4">
-          <div class="h-2 rounded-full bg-accent" id="onboard-bar" style="width:0;max-width:200px;transition:width 0.5s"></div>
-          <span class="text-xs text-muted" id="onboard-pct">0%</span>
+      <div class="flex flex-col items-center justify-center" style="min-height:calc(100vh - 180px)">
+        <div class="bg-surface border border-accent/30 rounded-lg p-10 mb-6 text-center max-w-xl w-full fade-up">
+          <div class="font-mono text-4xl font-bold text-accent mb-2">unfade</div>
+          <div class="font-heading text-2xl font-semibold mb-3 fade-up fade-up-1">Your reasoning observatory is warming up</div>
+          <p class="text-muted text-sm mb-6 max-w-md mx-auto fade-up fade-up-2">Unfade is scanning your AI sessions, git history, and terminal activity. Insights appear as data flows in.</p>
+
+          <div class="grid grid-cols-3 gap-4 mb-6 fade-up fade-up-2">
+            <div class="bg-raised rounded-lg p-4">
+              <div class="font-mono text-2xl font-bold text-cyan" id="onboard-events">0</div>
+              <div class="text-[11px] text-muted mt-1">events captured</div>
+            </div>
+            <div class="bg-raised rounded-lg p-4">
+              <div class="font-mono text-2xl font-bold text-accent" id="onboard-tools">—</div>
+              <div class="text-[11px] text-muted mt-1">tools detected</div>
+            </div>
+            <div class="bg-raised rounded-lg p-4">
+              <div class="font-mono text-2xl font-bold text-foreground" id="onboard-status">●</div>
+              <div class="text-[11px] text-muted mt-1">capture engine</div>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-center gap-3 mb-3 fade-up fade-up-3">
+            <div class="h-1.5 rounded-full bg-raised overflow-hidden" style="width:200px">
+              <div class="h-full bg-accent rounded-full transition-all duration-500" id="onboard-bar" style="width:0"></div>
+            </div>
+            <span class="text-xs text-muted font-mono" id="onboard-pct">0%</span>
+          </div>
+          <p class="text-xs text-muted fade-up fade-up-3" id="onboard-hint">Waiting for first events…</p>
         </div>
-        <p class="text-xs text-muted" id="onboard-hint">Waiting for first events…</p>
       </div>
     </div>
 
     <!-- Main content (shown when data exists) -->
     <div id="home-live" class="hidden">
+
+      <!-- Project Selector -->
+      <div id="project-selector" class="flex items-center gap-3 mb-4">
+        <label class="text-xs text-muted uppercase tracking-wider">Project</label>
+        <select id="project-filter" class="bg-surface border border-border rounded px-3 py-1.5 text-sm text-foreground font-mono" onchange="window.location.search='?project='+this.value">
+          <option value="">All projects</option>
+        </select>
+      </div>
 
       <!-- Hero Card -->
       <div class="bg-surface border border-border rounded-lg p-6 mb-6 flex items-center justify-between" style="min-height:140px">
@@ -148,6 +217,20 @@ homePage.get("/", (c) => {
       var ingestingEl=document.getElementById('home-ingesting');
       var staleEl=document.getElementById('home-stale');
 
+      // Populate project selector from registry
+      var projectFilter=document.getElementById('project-filter');
+      var currentProject=new URLSearchParams(window.location.search).get('project')||'';
+      fetch('/api/repos').then(function(r){return r.json()}).then(function(repos){
+        if(!repos||!repos.length)return;
+        repos.forEach(function(r){
+          var opt=document.createElement('option');
+          opt.value=r.id;
+          opt.textContent=r.label;
+          if(r.id===currentProject)opt.selected=true;
+          projectFilter.appendChild(opt);
+        });
+      }).catch(function(){});
+
       // 5-state machine: setup-required → ingesting → calibrating → live → stale
       var currentState='loading';
 
@@ -169,11 +252,21 @@ homePage.get("/", (c) => {
           case 'calibrating':
             onboarding.classList.remove('hidden');
             if(data){
-              var pct=Math.min(Math.round((data.eventCount24h||0)/5*100),100);
-              document.getElementById('onboard-bar').style.width=pct*2+'px';
+              var evts=data.eventCount24h||0;
+              var pct=Math.min(Math.round(evts/5*100),100);
+              document.getElementById('onboard-bar').style.width=pct+'%';
               document.getElementById('onboard-pct').textContent=pct+'%';
-              document.getElementById('onboard-hint').textContent=pct>=100?'Ready — refreshing…':(5-(data.eventCount24h||0))+' more events until first insight';
-              if(pct>=100)setTimeout(function(){location.reload();},2000);
+              var evtEl=document.getElementById('onboard-events');
+              if(evtEl.textContent!==String(evts)){evtEl.textContent=evts;evtEl.classList.remove('event-count-bump');void evtEl.offsetWidth;evtEl.classList.add('event-count-bump');}
+              if(data.toolMix&&Object.keys(data.toolMix).length>0){
+                document.getElementById('onboard-tools').textContent=Object.keys(data.toolMix).join(', ');
+              }
+              document.getElementById('onboard-status').innerHTML='<span class="text-green-400">●</span>';
+              document.getElementById('onboard-hint').textContent=pct>=100?'Ready — loading dashboard…':(5-evts)+' more events until first insight';
+              if(pct>=100)setTimeout(function(){location.reload();},1500);
+            } else {
+              document.getElementById('onboard-status').innerHTML='<span class="logo-pulse text-accent">●</span>';
+              document.getElementById('onboard-hint').textContent='Capture engine starting — keep working normally';
             }
             break;
           case 'live': live.classList.remove('hidden'); break;

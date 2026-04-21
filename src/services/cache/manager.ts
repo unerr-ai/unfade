@@ -102,6 +102,7 @@ export class CacheManager {
     db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
         ts TEXT,
         source TEXT,
         type TEXT,
@@ -111,11 +112,14 @@ export class CacheManager {
         git_branch TEXT,
         metadata JSON
       );
+      CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);
+      CREATE INDEX IF NOT EXISTS idx_events_project_ts ON events(project_id, ts);
       CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
       CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
 
       CREATE TABLE IF NOT EXISTS decisions (
         id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
         date TEXT,
         domain TEXT,
         description TEXT,
@@ -124,6 +128,8 @@ export class CacheManager {
         hds REAL,
         direction_class TEXT
       );
+      CREATE INDEX IF NOT EXISTS idx_decisions_project ON decisions(project_id);
+      CREATE INDEX IF NOT EXISTS idx_decisions_project_date ON decisions(project_id, date);
       CREATE INDEX IF NOT EXISTS idx_decisions_domain ON decisions(domain);
       CREATE INDEX IF NOT EXISTS idx_decisions_date ON decisions(date);
 
@@ -136,52 +142,63 @@ export class CacheManager {
       );
 
       CREATE TABLE IF NOT EXISTS metric_snapshots (
-        date TEXT PRIMARY KEY,
+        date TEXT NOT NULL,
+        project_id TEXT NOT NULL,
         rdi REAL,
         dcs REAL,
         aq REAL,
         cwi REAL,
         api_score REAL,
         decisions_count INTEGER,
-        labels JSON
+        labels JSON,
+        PRIMARY KEY (date, project_id)
       );
+      CREATE INDEX IF NOT EXISTS idx_metric_snapshots_project ON metric_snapshots(project_id);
 
       CREATE TABLE IF NOT EXISTS direction_windows (
         window_size TEXT NOT NULL,
         window_end TEXT NOT NULL,
+        project_id TEXT NOT NULL,
         direction_density REAL,
         event_count INTEGER,
         tool_mix JSON,
-        PRIMARY KEY (window_size, window_end)
+        PRIMARY KEY (window_size, window_end, project_id)
       );
 
       CREATE TABLE IF NOT EXISTS comprehension_proxy (
         event_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
         mod_depth REAL,
         specificity REAL,
         rejection REAL,
         score REAL
       );
+      CREATE INDEX IF NOT EXISTS idx_comprehension_project ON comprehension_proxy(project_id);
 
       CREATE TABLE IF NOT EXISTS comprehension_by_module (
-        module TEXT PRIMARY KEY,
+        module TEXT NOT NULL,
+        project_id TEXT NOT NULL,
         score REAL,
         event_count INTEGER,
-        updated_at TEXT
+        updated_at TEXT,
+        PRIMARY KEY (module, project_id)
       );
 
       CREATE TABLE IF NOT EXISTS direction_by_file (
-        path TEXT PRIMARY KEY,
+        path TEXT NOT NULL,
+        project_id TEXT NOT NULL,
         direction_density REAL,
-        event_count INTEGER
+        event_count INTEGER,
+        PRIMARY KEY (path, project_id)
       );
 
       CREATE TABLE IF NOT EXISTS token_proxy_spend (
         date TEXT NOT NULL,
         model TEXT NOT NULL,
+        project_id TEXT NOT NULL,
         count INTEGER DEFAULT 0,
         estimated_cost REAL DEFAULT 0,
-        PRIMARY KEY (date, model)
+        PRIMARY KEY (date, model, project_id)
       );
 
       CREATE TABLE IF NOT EXISTS event_insight_map (
@@ -196,6 +213,7 @@ export class CacheManager {
 
       CREATE TABLE IF NOT EXISTS features (
         id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
         name TEXT NOT NULL,
         branch TEXT,
         first_seen TEXT NOT NULL,
@@ -205,6 +223,7 @@ export class CacheManager {
         session_count INTEGER DEFAULT 0,
         status TEXT DEFAULT 'active'
       );
+      CREATE INDEX IF NOT EXISTS idx_features_project ON features(project_id);
       CREATE INDEX IF NOT EXISTS idx_features_branch ON features(branch);
       CREATE INDEX IF NOT EXISTS idx_features_status ON features(status);
 
@@ -224,6 +243,7 @@ export class CacheManager {
 
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
         start_ts TEXT,
         end_ts TEXT,
         event_count INTEGER DEFAULT 0,
@@ -236,6 +256,7 @@ export class CacheManager {
         feature_id TEXT,
         updated_at TEXT
       );
+      CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
     `);
 
     // FTS5 for full-text search

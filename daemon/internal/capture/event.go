@@ -1,7 +1,7 @@
 // FILE: daemon/internal/capture/event.go
 // CaptureEvent — Go struct mirroring src/schemas/event.ts (Zod).
 // Any changes here MUST be synchronized with the TypeScript schema.
-// The daemon writes these as JSON to .unfade/events/YYYY-MM-DD.jsonl.
+// The daemon writes these as JSON to ~/.unfade/events/YYYY-MM-DD.jsonl.
 
 package capture
 
@@ -9,6 +9,7 @@ package capture
 // Field names use camelCase JSON tags to match the TypeScript schema exactly.
 type CaptureEvent struct {
 	ID         string         `json:"id"`
+	ProjectID  string         `json:"projectId"`
 	Timestamp  string         `json:"timestamp"`
 	Source     string         `json:"source"` // git | ai-session | terminal | browser | manual | mcp-active
 	Type       string         `json:"type"`   // commit | diff | branch-switch | ...

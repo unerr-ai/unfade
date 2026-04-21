@@ -119,7 +119,7 @@ export interface BinaryPaths {
  * Strategy: existing → prebuilt npm package → build from Go source.
  * Throws if no strategy succeeds.
  */
-export function ensureBinaries(cwd: string): BinaryPaths {
+export function ensureBinaries(cwd?: string): BinaryPaths {
   const binDir = getBinDir(cwd);
   const daemonPath = join(binDir, DAEMON_BINARY);
   const sendPath = join(binDir, SEND_BINARY);
@@ -255,7 +255,7 @@ function hashBinaryFile(filePath: string): string {
 /**
  * Save the current source hash to .unfade/state/daemon.hash.
  */
-function saveSourceHash(cwd: string, hash: string): void {
+function saveSourceHash(cwd: string | undefined, hash: string): void {
   const stateDir = getStateDir(cwd);
   mkdirSync(stateDir, { recursive: true });
   writeFileSync(join(stateDir, HASH_FILE), hash, "utf-8");

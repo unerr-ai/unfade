@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: crypto.randomUUID(),
+    projectId: "test-project-id",
     timestamp: "2026-04-15T10:00:00Z",
     source: "ai-session",
     type: "ai-conversation",

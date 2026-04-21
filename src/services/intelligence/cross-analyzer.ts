@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
+import { getIntelligenceDir } from "../../utils/paths.js";
 import type { AnalyzerContext } from "./analyzers/index.js";
 
 export interface CorrelationPair {
@@ -65,8 +66,8 @@ export function computeCorrelations(ctx: AnalyzerContext): CorrelationReport {
 /**
  * Write correlation report atomically.
  */
-export function writeCorrelations(report: CorrelationReport, repoRoot: string): void {
-  const dir = join(repoRoot, ".unfade", "intelligence");
+export function writeCorrelations(report: CorrelationReport, repoRoot?: string): void {
+  const dir = getIntelligenceDir(repoRoot);
   mkdirSync(dir, { recursive: true });
   const target = join(dir, "correlation.json");
   const tmp = join(dir, `correlation.json.tmp.${process.pid}`);

@@ -319,9 +319,13 @@ func scoredCommitToTurn(hash, branch, message, date string,
 	composerAdded, composerDeleted, humanAdded, humanDeleted int,
 	v1Pct, v2Pct float64) ConversationTurn {
 
+	// Each scored commit gets its own ConversationID keyed by commit hash.
+	// Previously this was "commit-<branch>", which collapsed ALL commits on the
+	// same branch into a single CaptureEvent via TurnsToEvents' convMap grouping.
+	// A commit is a distinct unit of work and should produce its own event.
 	return ConversationTurn{
 		SessionID:      hash,
-		ConversationID: "commit-" + branch,
+		ConversationID: "commit-" + hash,
 		TurnIndex:      0,
 		TotalTurns:     1,
 		Role:           "commit",

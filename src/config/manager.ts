@@ -1,6 +1,6 @@
 // FILE: src/config/manager.ts
-// Config loading: env vars → user config (~/.unfade/config.json) → project config
-// (.unfade/config.json) → deep merge → Zod validate. Empty input → valid config.
+// Config loading: env vars → global config (~/.unfade/config.json) → project overrides
+// → deep merge → Zod validate. Global-first: ~/.unfade/config.json is the base.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -112,8 +112,8 @@ export interface LoadConfigOptions {
 }
 
 /**
- * Load config with precedence: env vars → user config → project config → defaults.
- * Higher precedence sources override lower ones.
+ * Load config with precedence: env vars → project overrides → global config → defaults.
+ * Global config (~/.unfade/config.json) is the base. Project config selectively overrides.
  * Always returns a valid UnfadeConfig (Zod-validated with defaults filled in).
  * Throws on invalid config values that cannot be coerced.
  */
@@ -121,11 +121,11 @@ export function loadConfig(options: LoadConfigOptions = {}): UnfadeConfig {
   const userDir = options.userConfigDir ?? getUserConfigDir();
   const projectDir = options.projectDataDir ?? getProjectDataDir();
 
+  const globalConfig = readConfigFile(join(userDir, CONFIG_FILENAME));
   const projectConfig = readConfigFile(join(projectDir, CONFIG_FILENAME));
-  const userConfig = readConfigFile(join(userDir, CONFIG_FILENAME));
 
-  // Merge: project overrides user
-  let merged = deepMerge(userConfig, projectConfig);
+  // Global-first: global config is the base, project config selectively overrides
+  let merged = deepMerge(globalConfig, projectConfig);
 
   // Env overrides everything
   const savedEnv = process.env;

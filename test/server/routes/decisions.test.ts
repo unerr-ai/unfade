@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../../../src/server/http.js";
+import { invalidateSetupCache } from "../../../src/server/setup-state.js";
 
 let tmpDir: string;
 let originalCwd: string;
@@ -48,9 +49,18 @@ afterAll(() => {
 beforeEach(() => {
   tmpDir = makeTmpDir();
   process.chdir(tmpDir);
+  process.env.UNFADE_HOME = join(tmpDir, ".unfade");
+  mkdirSync(join(tmpDir, ".unfade", "state"), { recursive: true });
+  writeFileSync(
+    join(tmpDir, ".unfade", "state", "setup-status.json"),
+    '{"setupCompleted":true}',
+    "utf-8",
+  );
+  invalidateSetupCache();
 });
 
 afterEach(() => {
+  delete process.env.UNFADE_HOME;
   process.chdir(originalCwd);
   try {
     rmSync(tmpDir, { recursive: true, force: true });

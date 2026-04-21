@@ -41,6 +41,7 @@ describe("distillCommand", () => {
       join(eventsDir, `${today}.jsonl`),
       `${JSON.stringify({
         id: "a0000000-0000-4000-8000-000000000001",
+        projectId: "test-project-id",
         timestamp: "2026-04-16T10:00:00Z",
         source: "git",
         type: "commit",

@@ -1,129 +1,142 @@
 // FILE: src/utils/paths.ts
-// Path resolution for ~/.unfade/ (user config) and .unfade/ (project data).
-// All paths use node:path join — no string concatenation with '/'.
+// Global-first path resolution for ~/.unfade/ (Phase 14).
+// All data lives under ~/.unfade/. Per-project artifacts live under ~/.unfade/projects/<id>/.
+// The optional override parameter routes to a test directory for isolation.
 
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 
 const UNFADE_DIR = ".unfade";
 
+// ---------------------------------------------------------------------------
+// Global Unfade home
+// ---------------------------------------------------------------------------
+
 /**
- * Walk up from `startDir` to find the nearest directory containing `.git`.
- * Returns the directory path, or null if not found.
+ * Returns the Unfade home directory.
+ * Resolution order:
+ * 1. Explicit override parameter → `join(override, '.unfade')`
+ * 2. UNFADE_HOME env var → used as-is (test isolation, like DOCKER_CONFIG)
+ * 3. Default → `~/.unfade/`
  */
-function findGitRoot(startDir: string): string | null {
-  let current = resolve(startDir);
-  const root = resolve("/");
-
-  while (current !== root) {
-    if (existsSync(join(current, ".git"))) {
-      return current;
-    }
-    const parent = resolve(current, "..");
-    if (parent === current) break;
-    current = parent;
-  }
-
-  return null;
-}
-
-// --- User-level config directory ---
-
-/** Returns `~/.unfade/` — user-level configuration and global state. */
-export function getUserConfigDir(): string {
+export function getUnfadeHome(override?: string): string {
+  if (override) return join(override, UNFADE_DIR);
+  if (process.env.UNFADE_HOME) return process.env.UNFADE_HOME;
   return join(homedir(), UNFADE_DIR);
 }
 
-// --- Project-level data directory ---
+/** Alias used by config loader — `~/.unfade/`. */
+export function getUserConfigDir(): string {
+  return getUnfadeHome();
+}
 
-/**
- * Returns `.unfade/` relative to the nearest git root.
- * Falls back to `.unfade/` relative to cwd if no git repo is found.
- */
-export function getProjectDataDir(cwd: string = process.cwd()): string {
-  const gitRoot = findGitRoot(cwd);
-  const base = gitRoot ?? cwd;
-  return join(base, UNFADE_DIR);
+// ---------------------------------------------------------------------------
+// Global data directories (all under ~/.unfade/)
+// ---------------------------------------------------------------------------
+
+/** `~/.unfade/events/` — ALL events, ALL projects, date-partitioned JSONL. */
+export function getEventsDir(override?: string): string {
+  return join(getUnfadeHome(override), "events");
+}
+
+/** `~/.unfade/cache/` — single global SQLite materialized view. */
+export function getCacheDir(override?: string): string {
+  return join(getUnfadeHome(override), "cache");
+}
+
+/** `~/.unfade/state/` — global runtime state (registry, materializer cursor, server). */
+export function getStateDir(override?: string): string {
+  return join(getUnfadeHome(override), "state");
+}
+
+/** `~/.unfade/profile/` — global reasoning model. */
+export function getProfileDir(override?: string): string {
+  return join(getUnfadeHome(override), "profile");
+}
+
+/** `~/.unfade/graph/` — global decisions and domain graph. */
+export function getGraphDir(override?: string): string {
+  return join(getUnfadeHome(override), "graph");
+}
+
+/** `~/.unfade/amplification/` — cross-project connections. */
+export function getAmplificationDir(override?: string): string {
+  return join(getUnfadeHome(override), "amplification");
+}
+
+/** `~/.unfade/metrics/` — global metric snapshots. */
+export function getMetricsDir(override?: string): string {
+  return join(getUnfadeHome(override), "metrics");
+}
+
+/** `~/.unfade/insights/` — ring-buffered LiveInsight lines. */
+export function getInsightsDir(override?: string): string {
+  return join(getUnfadeHome(override), "insights");
+}
+
+/** `~/.unfade/logs/` — server and global logs. */
+export function getLogsDir(override?: string): string {
+  return join(getUnfadeHome(override), "logs");
+}
+
+/** `~/.unfade/bin/` — shared daemon binaries (one copy for all projects). */
+export function getBinDir(override?: string): string {
+  return join(getUnfadeHome(override), "bin");
+}
+
+/** `~/.unfade/cards/` — generated Unfade Card PNG images. */
+export function getCardsDir(override?: string): string {
+  return join(getUnfadeHome(override), "cards");
+}
+
+/** `~/.unfade/site/` — generated Thinking Graph static site. */
+export function getSiteDir(override?: string): string {
+  return join(getUnfadeHome(override), "site");
+}
+
+/** `~/.unfade/distills/` — daily reasoning summaries. */
+export function getDistillsDir(override?: string): string {
+  return join(getUnfadeHome(override), "distills");
+}
+
+/** `~/.unfade/intelligence/` — global analyzer outputs. */
+export function getIntelligenceDir(override?: string): string {
+  return join(getUnfadeHome(override), "intelligence");
+}
+
+// ---------------------------------------------------------------------------
+// User-level state (convenience alias)
+// ---------------------------------------------------------------------------
+
+/** `~/.unfade/state/` — global state directory. */
+export function getUserStateDir(): string {
+  return getStateDir();
+}
+
+// ---------------------------------------------------------------------------
+// Per-project directories (under ~/.unfade/projects/<projectId>/)
+// ---------------------------------------------------------------------------
+
+/** `~/.unfade/projects/<projectId>/` — per-project derived artifacts root. */
+export function getProjectDir(projectId: string, override?: string): string {
+  return join(getUnfadeHome(override), "projects", projectId);
+}
+
+/** `~/.unfade/state/daemons/<projectId>/` — per-project daemon runtime state. */
+export function getDaemonStateDir(projectId: string, override?: string): string {
+  return join(getStateDir(override), "daemons", projectId);
 }
 
 /**
- * Repository root passed to the capture engine as `--project-dir`.
- * Must match unfaded's resolveStateDir/resolveEventsDir (Join(projectDir, ".unfade", ...)) —
- * never pass `.unfade/` itself or state lands under `.unfade/.unfade/`.
+ * Legacy shim — routes to getUnfadeHome(). Kept for callers not yet migrated.
+ */
+export function getProjectDataDir(cwd?: string): string {
+  return getUnfadeHome(cwd);
+}
+
+/**
+ * Legacy shim — returns cwd as-is. The repo root comes from the registry.
  */
 export function getDaemonProjectRoot(cwd: string = process.cwd()): string {
-  return resolve(dirname(getProjectDataDir(cwd)));
-}
-
-// --- Subdirectories of project data ---
-
-/** `.unfade/events/` — daily JSONL event files written by the Go daemon. */
-export function getEventsDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "events");
-}
-
-/** `.unfade/distills/` — daily reasoning summaries. */
-export function getDistillsDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "distills");
-}
-
-/** `.unfade/profile/` — reasoning model and preferences. */
-export function getProfileDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "profile");
-}
-
-/** `.unfade/state/` — daemon PID, socket, runtime state. */
-export function getStateDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "state");
-}
-
-/** `.unfade/insights/` — ring-buffered LiveInsight lines for dashboard/API. */
-export function getInsightsDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "insights");
-}
-
-/** `.unfade/graph/` — decisions and domain graph. */
-export function getGraphDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "graph");
-}
-
-/** `.unfade/amplification/` — connection and feedback data. */
-export function getAmplificationDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "amplification");
-}
-
-/** `.unfade/metrics/` — daily metric snapshots (append-only JSONL). */
-export function getMetricsDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "metrics");
-}
-
-/** `.unfade/cache/` — temporary computation cache. */
-export function getCacheDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "cache");
-}
-
-/** `.unfade/logs/` — daemon and service logs. */
-export function getLogsDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "logs");
-}
-
-/** `.unfade/bin/` — daemon binaries (unfaded, unfade-send). */
-export function getBinDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "bin");
-}
-
-/** `.unfade/cards/` — generated Unfade Card PNG images. */
-export function getCardsDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "cards");
-}
-
-/** `.unfade/site/` — generated Thinking Graph static site. */
-export function getSiteDir(cwd?: string): string {
-  return join(getProjectDataDir(cwd), "site");
-}
-
-/** `~/.unfade/state/` — user-level global state (repos.json, etc). */
-export function getUserStateDir(): string {
-  return join(getUserConfigDir(), "state");
+  return cwd;
 }

@@ -48,9 +48,16 @@ export function computeAndStoreWindows(db: DbLike): WindowResult[] {
       };
 
       db.run(
-        `INSERT OR REPLACE INTO direction_windows (window_size, window_end, direction_density, event_count, tool_mix)
-         VALUES (?, ?, ?, ?, ?)`,
-        [label, now, result.directionDensity, result.eventCount, JSON.stringify(result.toolMix)],
+        `INSERT OR REPLACE INTO direction_windows (window_size, window_end, project_id, direction_density, event_count, tool_mix)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          label,
+          now,
+          "",
+          result.directionDensity,
+          result.eventCount,
+          JSON.stringify(result.toolMix),
+        ],
       );
 
       pruneOldWindows(db, label);

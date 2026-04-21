@@ -51,8 +51,8 @@ export function computeTokenSpend(db: DbLike, pricingTable: Record<string, numbe
       const estimatedCost = pricePerK > 0 ? Math.round(count * pricePerK * 100) / 100 : 0;
 
       db.run(
-        "INSERT OR REPLACE INTO token_proxy_spend (date, model, count, estimated_cost) VALUES (?, ?, ?, ?)",
-        [date, model, count, estimatedCost],
+        "INSERT OR REPLACE INTO token_proxy_spend (date, model, project_id, count, estimated_cost) VALUES (?, ?, ?, ?, ?)",
+        [date, model, "", count, estimatedCost],
       );
     }
   } catch {

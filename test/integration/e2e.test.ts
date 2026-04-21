@@ -17,6 +17,7 @@ const TEST_DATE = "2026-04-15";
 function makeEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: crypto.randomUUID(),
+    projectId: "test-project-id",
     timestamp: `${TEST_DATE}T10:00:00Z`,
     source: "git",
     type: "commit",

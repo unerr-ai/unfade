@@ -2,6 +2,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { invalidateSetupCache } from "../../../src/server/setup-state.js";
 
 let tmpDir: string;
 
@@ -17,9 +18,18 @@ function makeTmpDir(): string {
 
 beforeEach(() => {
   tmpDir = makeTmpDir();
+  process.env.UNFADE_HOME = join(tmpDir, ".unfade");
+  mkdirSync(join(tmpDir, ".unfade", "state"), { recursive: true });
+  writeFileSync(
+    join(tmpDir, ".unfade", "state", "setup-status.json"),
+    '{"setupCompleted":true}',
+    "utf-8",
+  );
+  invalidateSetupCache();
 });
 
 afterEach(() => {
+  delete process.env.UNFADE_HOME;
   vi.restoreAllMocks();
   try {
     rmSync(tmpDir, { recursive: true, force: true });
@@ -47,7 +57,9 @@ describe("Profile page (GET /profile)", () => {
     expect(res.status).toBe(200);
     expect(html).toContain("<html");
     expect(
-      html.includes("Not enough data") || html.includes("No profile") || html.includes("Reasoning Fingerprint"),
+      html.includes("Not enough data") ||
+        html.includes("No profile") ||
+        html.includes("Reasoning Fingerprint"),
     ).toBe(true);
   });
 

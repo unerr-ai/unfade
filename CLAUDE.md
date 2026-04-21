@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Unfade** is an open-source CLI tool that passively captures engineering reasoning from developer workflows (git, AI sessions, terminal), distills it into queryable knowledge, and builds a compounding developer identity profile.
 
-### Server-First Architecture (Phase 5.7)
+### Global-First Architecture (Phase 14)
 
-- **`unfade` command** — Single long-running Node server. Bare `unfade` starts everything: HTTP dashboard, MCP server, materializer, and one Go capture engine per registered repo. Ctrl+C stops cleanly.
-- **Go Capture Engine** (`daemon/`) — Managed child process (not detached). One per repo. Watches git, AI sessions, and terminal. Writes events to `<repo>/.unfade/events/`
-- **`.unfade/` directory** — The communication bus. Go writes events, TypeScript reads them. Plain text, inspectable, greppable
-- **`~/.unfade/state/registry.v1.json`** — Global registry of all tracked repos. `unfade` watches all of them.
+- **`unfade` command** — Single long-running Node server. Bare `unfade` starts everything: HTTP dashboard, MCP server, single global materializer, one Go git-capture daemon per repo, and one global AI-capture daemon. Ctrl+C stops cleanly.
+- **Go Capture Engines** (`daemon/`) — Two modes: `--capture-mode=git-only` (one per repo, watches `.git/`) and `--capture-mode=ai-global` (one global instance, watches `~/.claude/`, Cursor, Codex, Aider). All write to `~/.unfade/events/`.
+- **`~/.unfade/`** — Single global home. All events, cache, intelligence, profile, graph live here. `projectId` is a dimension on every event and SQLite table. `<repo>/.unfade` is a marker file (not a directory).
+- **`~/.unfade/state/registry.v1.json`** — Global registry of all tracked repos.
 
 ### Core Value Propositions
 - **Passive reasoning capture** from git commits, AI sessions, and terminal activity
@@ -57,28 +57,34 @@ Every tool response (MCP and `--json` CLI output) wraps data in a `ToolResponse`
 { data: ..., _meta: { tool, durationMs, degraded, degradedReason, personalizationLevel } }
 ```
 
-### 4. `.unfade/` Workspace Convention
+### 4. Global-First Storage (`~/.unfade/`)
 
-- **One writer per file** — prevents corruption. Go daemon owns `events/`, TypeScript owns `distills/`, `profile/`, `graph/`
-- `~/.unfade/` — user-level global config and state
-- `.unfade/` (project-level) — relative to nearest `.git` root
-- Use `src/utils/paths.ts` functions — never hardcode paths
+- **All data lives under `~/.unfade/`** — global-first model (Phase 14). No per-project silos.
+- **`projectId` is a queryable dimension** — every event, decision, and metric is tagged with `projectId`. SQLite indexes on `project_id` for efficient per-project or cross-project queries.
+- **One writer per file** — Go daemon owns `events/`, TypeScript owns everything else.
+- **`<repo>/.unfade`** — marker file (not a directory). Contains `{ "projectId": "..." }`.
+- Use `src/utils/paths.ts` functions — never hardcode paths. Set `UNFADE_HOME` env var for test isolation.
 
 Directory structure:
 ```
-.unfade/
-├── config.json          # User config (v2)
-├── events/              # JSONL capture events (Go daemon writes)
-├── distills/            # Markdown daily distills (TypeScript writes)
-├── profile/             # reasoning_model.json (v2), personalization data
-├── state/               # Daemon PID, lock files
-├── graph/               # decisions.jsonl, domains.json
-├── cache/               # LLM response cache
-├── logs/                # Daemon logs
-├── bin/                 # Downloaded Go binaries
-├── cards/               # Generated PNG Unfade Cards
-├── site/                # Generated Thinking Graph static site
-└── amplification/       # Cross-session connections
+~/.unfade/                    # Global Unfade home (single source of truth)
+├── config.json               # User config (v2)
+├── events/                   # ALL events, ALL projects (date-partitioned JSONL)
+├── cache/unfade.db           # Global SQLite cache (project_id indexed)
+├── distills/                 # Daily reasoning summaries
+├── profile/                  # Global reasoning model (cross-project identity)
+├── graph/                    # decisions.jsonl (project-tagged), domains.json
+├── intelligence/             # Analyzer outputs (8 analyzers)
+├── amplification/            # Cross-project connections
+├── state/                    # Registry, server PID, materializer cursor
+│   ├── registry.v1.json      # All registered repos
+│   └── daemons/<id>/         # Per-project daemon PID, socket, logs
+├── insights/                 # Ring-buffered live insights
+├── metrics/                  # Daily metric snapshots
+├── bin/                      # Shared Go binaries (unfaded, unfade-send)
+├── cards/                    # Generated PNG Unfade Cards
+├── site/                     # Generated Thinking Graph
+└── logs/                     # Server + global logs
 ```
 
 ### 5. User-Facing Terminology
@@ -162,3 +168,4 @@ make clean        # Remove binaries
 - `.internal/architecture/PHASE_7_BREAKTHROUGH_INTELLIGENCE.md` — Active intelligence layer (roadmap)
 - `.internal/architecture/PHASE_7_WEB_UI_UX_ARCHITECTURE.md` — Web UI re-architecture (localhost:7654), RRVV spec
 - `.internal/architecture/PHASE_13_GAP_REMEDIATION_AND_COHERENCE.md` — U2D audit: gap analysis + remediation sprints (13A–13E)
+- `.internal/architecture/PHASE_14_GLOBAL_FIRST_STORAGE_ARCHITECTURE.md` — Global-first storage: `~/.unfade/` with `projectId` dimension (14A–14F)

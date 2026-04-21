@@ -36,6 +36,7 @@ describe("queryCommand", () => {
       join(eventsDir, `${today}.jsonl`),
       `${JSON.stringify({
         id: "a0000000-0000-4000-8000-000000000001",
+        projectId: "test-project-id",
         timestamp: new Date().toISOString(),
         source: "git",
         type: "commit",

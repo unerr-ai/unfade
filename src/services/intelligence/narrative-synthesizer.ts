@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
+import { getIntelligenceDir } from "../../utils/paths.js";
 import type { CorrelationReport } from "./cross-analyzer.js";
 import { type NarrativeSeverity, narrativeTemplates } from "./narrative-templates.js";
 
@@ -36,9 +37,9 @@ const NARRATIVE_FILE = "narratives.jsonl";
  * Produces new narrative insights where templates match.
  * Non-fatal — failures don't affect other intelligence modules.
  */
-export function synthesizeNarratives(repoRoot: string): NarrativeInsight[] {
+export function synthesizeNarratives(repoRoot?: string): NarrativeInsight[] {
   try {
-    const intelligenceDir = join(repoRoot, ".unfade", "intelligence");
+    const intelligenceDir = getIntelligenceDir(repoRoot);
 
     // Load correlation report
     const correlation = loadJsonFile<CorrelationReport>(join(intelligenceDir, "correlation.json"));

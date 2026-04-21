@@ -21,6 +21,7 @@ export interface Feature {
 
 interface EventForFeature {
   id: string;
+  projectId: string;
   ts: string;
   metadata: Record<string, unknown>;
   gitBranch: string;
@@ -45,7 +46,7 @@ export function assignEventsToFeatures(db: DbLike, newEventIds: string[]): void 
     if (assignment.isNew) {
       // Create new feature in DB
       const feature = createFeatureFromEvent(event, assignment.featureId);
-      insertFeature(db, feature);
+      insertFeature(db, feature, event.projectId);
       activeFeatures.push(feature);
     } else {
       // Update existing feature
@@ -309,31 +310,33 @@ function loadFeatureFiles(db: DbLike, featureId: string): string[] {
 function loadEvent(db: DbLike, eventId: string): EventForFeature | null {
   try {
     const result = db.exec(
-      `SELECT id, ts, metadata, git_branch, content_summary FROM events WHERE id = ?`,
+      `SELECT id, project_id, ts, metadata, git_branch, content_summary FROM events WHERE id = ?`,
       [eventId],
     );
     if (!result[0]?.values.length) return null;
     const row = result[0].values[0];
     return {
       id: row[0] as string,
-      ts: row[1] as string,
+      projectId: (row[1] as string) ?? "",
+      ts: row[2] as string,
       metadata:
-        typeof row[2] === "string"
-          ? JSON.parse(row[2])
-          : ((row[2] as Record<string, unknown>) ?? {}),
-      gitBranch: row[3] as string,
-      contentSummary: row[4] as string,
+        typeof row[3] === "string"
+          ? JSON.parse(row[3])
+          : ((row[3] as Record<string, unknown>) ?? {}),
+      gitBranch: row[4] as string,
+      contentSummary: row[5] as string,
     };
   } catch {
     return null;
   }
 }
 
-function insertFeature(db: DbLike, feature: Feature): void {
+function insertFeature(db: DbLike, feature: Feature, projectId: string = ""): void {
   db.run(
-    `INSERT OR REPLACE INTO features (id, name, branch, first_seen, last_seen, event_count, file_count, session_count, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO features (id, project_id, name, branch, first_seen, last_seen, event_count, file_count, session_count, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       feature.id,
+      projectId,
       feature.name,
       feature.branch,
       feature.firstSeen,

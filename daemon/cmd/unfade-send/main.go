@@ -132,16 +132,47 @@ func sendCommand(socketPath string, req ipcRequest, timeout time.Duration) (*ipc
 }
 
 func resolveSocketPath(projectDir string) string {
+	// Global-first: daemon sockets live at ~/.unfade/state/daemons/<projectId>/daemon.sock.
+	// If --project-dir is given, find its projectId from the registry.
+	// Otherwise, match cwd against registry entries.
 	if projectDir != "" {
-		return filepath.Join(projectDir, ".unfade", "state", "daemon.sock")
+		if id := findProjectIdForPath(projectDir); id != "" {
+			home, _ := os.UserHomeDir()
+			return filepath.Join(home, ".unfade", "state", "daemons", id, "daemon.sock")
+		}
 	}
 
 	if match := resolveFromRegistry(); match != "" {
 		return match
 	}
 
+	// Fallback: global state socket
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".unfade", "state", "daemon.sock")
+}
+
+func findProjectIdForPath(targetPath string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	registryPath := filepath.Join(home, ".unfade", "state", "registry.v1.json")
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		return ""
+	}
+	var reg registryV1
+	if err := json.Unmarshal(data, &reg); err != nil {
+		return ""
+	}
+	abs, _ := filepath.Abs(targetPath)
+	for _, repo := range reg.Repos {
+		root, _ := filepath.Abs(repo.Root)
+		if abs == root || strings.HasPrefix(abs, root+string(filepath.Separator)) {
+			return repo.ID
+		}
+	}
+	return ""
 }
 
 func resolveFromRegistry() string {
@@ -178,7 +209,7 @@ func resolveFromRegistry() string {
 	for _, repo := range reg.Repos {
 		root, _ := filepath.Abs(repo.Root)
 		if cwd == root || strings.HasPrefix(cwd, root+string(filepath.Separator)) {
-			return filepath.Join(root, ".unfade", "state", "daemon.sock")
+			return filepath.Join(home, ".unfade", "state", "daemons", repo.ID, "daemon.sock")
 		}
 	}
 

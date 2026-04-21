@@ -74,11 +74,17 @@ afterAll(() => {
 beforeEach(() => {
   tmpDir = makeTmpDir();
   process.chdir(tmpDir);
-  // Create .unfade so the command doesn't bail
-  mkdirSync(join(tmpDir, ".unfade"), { recursive: true });
+  process.env.UNFADE_HOME = join(tmpDir, ".unfade");
+  mkdirSync(join(tmpDir, ".unfade", "state"), { recursive: true });
+  writeFileSync(
+    join(tmpDir, ".unfade", "state", "setup-status.json"),
+    '{"setupCompleted":true}',
+    "utf-8",
+  );
 });
 
 afterEach(() => {
+  delete process.env.UNFADE_HOME;
   process.chdir(originalCwd);
   vi.restoreAllMocks();
   vi.resetModules();
@@ -178,9 +184,9 @@ describe("unfade publish command (UF-083)", () => {
   });
 
   it("handles missing .unfade/ directory gracefully", async () => {
-    // Isolated directory outside this repo so findGitRoot() does not resolve to workspace .git
     const isolated = mkdtempSync(join(tmpdir(), "unfade-publish-empty-"));
     mkdirSync(isolated, { recursive: true });
+    process.env.UNFADE_HOME = join(isolated, ".nonexistent-unfade");
     process.chdir(isolated);
 
     const { publishCommand } = await import("../../src/commands/publish.js");
@@ -188,6 +194,7 @@ describe("unfade publish command (UF-083)", () => {
 
     expect(process.exitCode).toBe(1);
     process.exitCode = undefined;
+    process.env.UNFADE_HOME = join(tmpDir, ".unfade");
     rmSync(isolated, { recursive: true, force: true });
   });
 });

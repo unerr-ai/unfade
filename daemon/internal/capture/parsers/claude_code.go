@@ -401,6 +401,12 @@ func parseTimestamp(s string) time.Time {
 		time.RFC3339,
 		"2006-01-02T15:04:05.000Z",
 		"2006-01-02T15:04:05Z",
+		// Git-style timestamps used by Cursor's scored_commits table.
+		// Format: "Wed Mar 4 14:52:36 2026 +0530"
+		// Without this, all Cursor commit timestamps parse as zero time,
+		// causing every commit on the same branch to collapse into a single
+		// event (since they share a ConversationID and all have zero ts).
+		"Mon Jan 2 15:04:05 2006 -0700",
 	} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t

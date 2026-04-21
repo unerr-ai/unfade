@@ -96,11 +96,12 @@ export function materializeSessionMetrics(db: DbLike): number {
 
       db.run(
         `INSERT OR REPLACE INTO sessions
-         (id, start_ts, end_ts, event_count, turn_count, outcome, estimated_cost,
+         (id, project_id, start_ts, end_ts, event_count, turn_count, outcome, estimated_cost,
           execution_phases, branch, domain, feature_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
         [
           sessionId,
+          "",
           startTs,
           endTs,
           eventCount,

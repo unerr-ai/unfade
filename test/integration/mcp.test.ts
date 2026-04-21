@@ -89,9 +89,17 @@ function spawnMcp(cwd: string): ChildProcess {
 
 beforeEach(() => {
   tmpDir = makeTmpDir();
+  process.env.UNFADE_HOME = join(tmpDir, ".unfade");
+  mkdirSync(join(tmpDir, ".unfade", "state"), { recursive: true });
+  writeFileSync(
+    join(tmpDir, ".unfade", "state", "setup-status.json"),
+    '{"setupCompleted":true}',
+    "utf-8",
+  );
 });
 
 afterEach(() => {
+  delete process.env.UNFADE_HOME;
   try {
     rmSync(tmpDir, { recursive: true, force: true });
   } catch {}
@@ -273,6 +281,7 @@ describe("MCP integration (stdio)", () => {
       join(eventsDir, `${today}.jsonl`),
       `${JSON.stringify({
         id: "b0000000-0000-4000-8000-000000000001",
+        projectId: "test-project-id",
         timestamp: new Date().toISOString(),
         source: "git",
         type: "commit",
@@ -327,7 +336,8 @@ describe("MCP integration (stdio)", () => {
   });
 
   it("returns degraded response when not initialized", async () => {
-    // tmpDir has .git but NO .unfade directory
+    const savedHome = process.env.UNFADE_HOME;
+    process.env.UNFADE_HOME = join(tmpDir, ".nonexistent-unfade");
     const proc = spawnMcp(tmpDir);
 
     try {
@@ -368,6 +378,8 @@ describe("MCP integration (stdio)", () => {
       expect(parsed._meta.degraded).toBe(true);
     } finally {
       proc.kill("SIGTERM");
+      if (savedHome) process.env.UNFADE_HOME = savedHome;
+      else delete process.env.UNFADE_HOME;
     }
   });
 });
