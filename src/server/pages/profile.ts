@@ -11,6 +11,7 @@ import { Hono } from "hono";
 import { USER_TERMS } from "../../constants/terminology.js";
 import type { ReasoningModelV2 } from "../../schemas/profile.js";
 import { getProfileDir } from "../../utils/paths.js";
+import { identityNarrative } from "../components/narrative-card.js";
 import { escapeHtml, layout } from "./layout.js";
 
 export const profilePage = new Hono();
@@ -99,34 +100,14 @@ profilePage.get("/profile", async (c) => {
 
   const ds = profile.decisionStyle;
 
-  const decisionStyleHtml = `
-    <div class="bg-surface border border-border rounded p-5 mb-4">
-      <h2 class="text-lg font-heading font-semibold mb-4">Decision Style</h2>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="bg-canvas border border-border rounded p-4 text-center">
-          <div class="font-mono text-2xl font-bold text-accent">${ds.avgAlternativesEvaluated.toFixed(1)}</div>
-          <div class="text-xs text-muted mt-1">Avg alternatives evaluated</div>
-        </div>
-        <div class="bg-canvas border border-border rounded p-4 text-center">
-          <div class="font-mono text-2xl font-bold text-accent">${ds.medianAlternativesEvaluated.toFixed(1)}</div>
-          <div class="text-xs text-muted mt-1">Median alternatives</div>
-        </div>
-        <div class="bg-canvas border border-border rounded p-4 text-center">
-          <div class="font-mono text-2xl font-bold text-accent">${Math.round(ds.aiAcceptanceRate * 100)}%</div>
-          <div class="text-xs text-muted mt-1">AI acceptance rate</div>
-        </div>
-        <div class="bg-canvas border border-border rounded p-4 text-center">
-          <div class="font-mono text-2xl font-bold text-accent">${Math.round(ds.aiModificationRate * 100)}%</div>
-          <div class="text-xs text-muted mt-1">AI modification rate</div>
-        </div>
-      </div>
-      ${
-        ds.explorationDepthMinutes.overall > 0
-          ? `<p class="text-muted text-sm mt-3">Exploration depth: ${ds.explorationDepthMinutes.overall.toFixed(0)} min average</p>`
-          : ""
-      }
-    </div>
-  `;
+  const topDomain = (profile.domainDistribution ?? []).sort((a, b) => b.frequency - a.frequency)[0]?.domain;
+  const decisionStyleHtml = identityNarrative({
+    avgAlternativesEvaluated: ds.avgAlternativesEvaluated,
+    modificationRate: Math.round(ds.aiModificationRate * 100),
+    heldRate: Math.round((1 - ds.aiAcceptanceRate) * 100),
+    totalDecisions: profile.dataPoints,
+    topDomain,
+  });
 
   const sortedDomains = [...(profile.domainDistribution ?? [])].sort(
     (a, b) => b.frequency - a.frequency,

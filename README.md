@@ -1,90 +1,83 @@
-<p align="center"><strong>Unfade</strong></p>
+<div align="center">
 
-<p align="center"><strong>See how you actually think with AI</strong> — not only what you shipped, but how you decided.</p>
+# unfade
 
-<p align="center">
-  <a href="#why-unfade">Why Unfade</a> &middot;
-  <a href="#install">Install</a> &middot;
-  <a href="#first-2-minutes">First 2 minutes</a> &middot;
-  <a href="#how-it-works">How it works</a> &middot;
-  <a href="#mcp-setup">MCP</a> &middot;
-  <a href="#commands">Commands</a> &middot;
-  <a href="#enterprise">Enterprise</a> &middot;
-  <a href="#faq">FAQ</a>
-</p>
+**See how you actually think with AI — not just what you shipped, but how you decided.**
 
-<p align="center">
-  <a href="https://github.com/unerr-ai/unfade/actions/workflows/ci.yml"><img src="https://github.com/unerr-ai/unfade/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://www.npmjs.com/package/unfade"><img src="https://img.shields.io/npm/v/unfade" alt="npm version" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node >= 20" />
-</p>
+[![CI](https://github.com/unerr-ai/unfade/actions/workflows/ci.yml/badge.svg)](https://github.com/unerr-ai/unfade/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/unfade)](https://www.npmjs.com/package/unfade)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node >= 20](https://img.shields.io/badge/node-%3E%3D20-green)
+
+[Why Unfade](#why-unfade) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [MCP Integration](#mcp-integration) · [Commands](#commands) · [FAQ](#faq)
+
+</div>
 
 ---
 
+Most tools measure **output** — lines, commits, PRs. In the AI era, output is cheap. **Reasoning is the scarce signal**: which alternatives you rejected, where you steered the model, what you accepted without full comprehension.
+
+Unfade is a local-first intelligence layer that passively captures your reasoning from git, AI sessions (Claude Code, Cursor, Codex, Aider), and terminal — then makes it queryable, shareable, and available to every tool via MCP.
+
+```
+Everything stays on your machine. JSONL and Markdown on disk. No accounts. No cloud.
+```
+
 ## Why Unfade
 
-Most tools optimize **output** (lines, commits, PRs). In the AI era, output is cheap and **reasoning** is the scarce signal: alternatives you rejected, prompts that steered the model, places where you accepted code without full comprehension.
+- **Passive capture** — zero-config hooks into git and AI sessions. No workflow changes.
+- **Living metrics** — direction density, comprehension proxy, token spend, rolling windows. Updates in real-time, not "wait until tomorrow."
+- **Cross-tool memory via MCP** — 13 tools that give every MCP client (Claude, Cursor, Windsurf, Codex) evidence-backed context about how you work.
+- **Daily distills** — end-of-day reasoning summaries: decisions, trade-offs, dead ends, domain movements.
+- **Developer identity** — a reasoning profile that compounds over time. Not commit counts — thinking patterns.
+- **Privacy you can prove** — all data is local plain text. Exports are explicit and consent-gated.
 
-Unfade is a **local-first continuous intelligence layer** over your real workflow:
-
-- **Passive capture** — git, AI sessions (Cursor, Claude Code, Codex, Aider), optional terminal.
-- **Living metrics** — direction density, comprehension proxy, token spend shape, and rolling windows update as the local server materializes events (no “wait until tomorrow’s distill” to see today).
-- **Cross-tool memory via MCP** — the same evidence-backed context for every MCP client.
-- **Privacy you can prove** — JSONL and Markdown on disk; no accounts, no vendor cloud for core data.
-
-**For builders in India and similar markets:** teams often need **DPDPA-style** assurance that sensitive prompts and repos are not exfiltrated. Unfade’s default posture is **data stays on the machine**; leadership-style exports are designed as **aggregates-first** with explicit consent paths (see `unfade export --leadership` and [ENTERPRISE.md](ENTERPRISE.md)).
-
-## Install
+## Quick Start
 
 ```bash
 npx unfade@latest
 ```
-
-## First 2 minutes
 
 ```bash
 cd your-project
 unfade
 ```
 
-That's it. Unfade initializes the project, starts the capture engine, and opens a live dashboard at **http://localhost:7654**. Your AI interaction patterns appear within seconds. Press **Ctrl+C** to stop; run `unfade` again to resume exactly where you left off.
+That's it. Unfade initializes the project, starts the capture engine, and opens a live dashboard at **http://localhost:7654**. Your AI interaction patterns appear within seconds.
 
-**Multiple repos?** Run `unfade add ~/other-project` to register more repos — they all appear in the portfolio dashboard.
+Press `Ctrl+C` to stop. Run `unfade` again to resume exactly where you left off.
 
-**Configure LLM?** Visit **http://localhost:7654/settings** or run `unfade init` for the interactive wizard.
+```bash
+# Register additional repos
+unfade add ~/other-project
+
+# Configure LLM (Ollama default, or OpenAI/Anthropic for richer distills)
+# Visit http://localhost:7654/settings or run:
+unfade init
+```
 
 ## How It Works
 
 ```
-1. You work normally.
-   Commits, AI sessions, terminal — captured in .unfade/events/*.jsonl
-
-2. The materializer + intelligence layer update continuously.
-   SQLite cache, summary.json, optional partial metrics — without blocking on LLM distills.
-
-3. End-of-day (or on demand), distillation enriches the story.
-   Markdown distills, profile updates, decision graph — same evidence, deeper narrative.
-
-4. Every MCP client gets your context.
-   Claude, Cursor, Windsurf, Codex — query decisions, profile, comprehension, similarity, and more.
+You work normally
+  │
+  ├─ Git commits ──────┐
+  ├─ AI sessions ──────┤──▶  Capture Engine (Go)  ──▶  ~/.unfade/events/*.jsonl
+  └─ Terminal ─────────┘          │
+                                  ▼
+                        Materializer (TypeScript)
+                           │            │
+                    SQLite (FTS,     DuckDB (analytics,
+                    point lookups)   time-series)
+                           │            │
+                           ▼            ▼
+                    HTTP Dashboard + MCP Server
+                    http://localhost:7654
 ```
 
-## Architecture
+**Source of truth:** append-only JSONL event files. Both databases are derived caches — fully rebuildable with `unfade doctor --rebuild-cache`.
 
-```
-Developer's Machine (Everything Local)
-+-----------------------------------------------------------------------+
-|  Git / AI / Terminal  -->  Capture engine (Go)  -->  events/*.jsonl |
-|                              |                                         |
-|                              v                                         |
-|                    Materializer + summary.json (TS server)            |
-|                              |                                         |
-|  MCP + Browser        <--  HTTP + MCP (Hono)  +  SQLite cache         |
-+-----------------------------------------------------------------------+
-```
-
-## MCP Setup
+## MCP Integration
 
 ### Claude Code
 
@@ -99,10 +92,7 @@ Add to `.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "unfade": {
-      "command": "npx",
-      "args": ["unfade", "mcp"]
-    }
+    "unfade": { "command": "npx", "args": ["unfade", "mcp"] }
   }
 }
 ```
@@ -114,59 +104,97 @@ Add to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "unfade": {
-      "command": "npx",
-      "args": ["unfade", "mcp"]
-    }
+    "unfade": { "command": "npx", "args": ["unfade", "mcp"] }
   }
 }
 ```
 
-The MCP server exposes **9 tools** (including query, context, decisions, distill, profile, amplify, similar, **comprehension**, and **log**) plus resources and prompts — all backed by your local `.unfade/` tree.
+### Available MCP Tools
+
+| Tool | What it does |
+|------|-------------|
+| `unfade_query` | Search across reasoning history |
+| `unfade_context` | Get recent reasoning context for the current task |
+| `unfade_decisions` | List recent engineering decisions with rationale |
+| `unfade_profile` | Reasoning profile — decision style, expertise, patterns |
+| `unfade_comprehension` | Per-module comprehension scores |
+| `unfade_efficiency` | AI Efficiency Score (direction density, modification rate) |
+| `unfade_costs` | Estimated AI cost attribution |
+| `unfade_coach` | Domain-specific prompt coaching suggestions |
+| `unfade_similar` | Find analogous past decisions |
+| `unfade_amplify` | Detect cross-temporal reasoning connections |
+| `unfade_distill` | Trigger on-demand distillation |
+| `unfade_log` | Log a structured reasoning event |
+| `unfade_tag` | Tag recent AI conversation events |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `unfade` | CLI entry / TUI |
-| `unfade init` | Scaffold project, daemon, optional autostart |
-| `unfade open` | Open local web UI |
-| `unfade status` | Capture + summary heartbeat (includes first-run insights when available) |
-| `unfade doctor` | Path and health diagnostics |
+| `unfade` | Start server, dashboard, capture engine |
+| `unfade init` | Interactive setup wizard |
+| `unfade add <path>` | Register another repo for tracking |
+| `unfade status` | Today's reasoning metrics and identity snapshot |
 | `unfade query <search>` | Search reasoning history |
-| `unfade distill` | Manual distillation |
-| `unfade card [--v3]` | Reasoning Card (v3 adds comprehension / cost hints from live summary) |
-| `unfade export` | Portable archive; **`--leadership`** for aggregate CSV pack + methodology |
-| `unfade publish` | Static Thinking Graph site |
-| `unfade daemon …` | Manage capture engine |
+| `unfade distill` | Manual distillation (supports `--date`, `--backfill`) |
+| `unfade history` | Query event history (`--domain`, `--feature`, `--last`) |
+| `unfade card` | Generate a Reasoning Card (`--v3` for live metrics) |
+| `unfade savings` | Estimated time/cost savings from MCP context injections |
+| `unfade doctor` | Diagnose system health (`--rebuild-cache`, `--verify-pipeline`) |
+| `unfade export` | Portable archive (`--leadership` for aggregate CSV pack) |
+| `unfade publish` | Generate static Thinking Graph site |
+| `unfade ingest` | Ingest historical AI session data |
+| `unfade prompt` | Metric badge for shell prompt integration |
+| `unfade daemon` | Capture engine management (`status`, `stop`, `restart`) |
 
-Use `--json` for machine-readable output and `--verbose` for debug logs (stderr).
+All commands support `--json` for machine-readable output and `--verbose` for debug logs.
 
-## Features
+## Intelligence Dashboard
 
-- **Continuous signals** — `summary.json`, heatmap APIs, token spend proxy, cost-per-quality hints when pricing is configured.
-- **Multi-repo** — registry + portfolio routes when multiple projects are registered.
-- **Daily distill & profile** — narrative + structured reasoning model.
-- **Unfade Cards** — shareable artifacts (v3 ties in live summary metrics).
-- **Open source** — inspect, fork, self-host.
+The web UI at `localhost:7654` provides 9 intelligence views:
 
-## Enterprise
+| View | What you learn |
+|------|---------------|
+| **Overview** | AI Efficiency Score, maturity phase, top-line metrics |
+| **Comprehension** | Per-module understanding heatmap, blind spots |
+| **Velocity** | Dual velocity (human vs AI-assisted), trend analysis |
+| **Cost** | Token spend attribution, cost-per-decision estimates |
+| **Patterns & Coach** | Recurring reasoning patterns, coaching suggestions |
+| **Autonomy** | Independence index, dependency heatmap, skill trajectory |
+| **Maturity** | 7-dimension maturity model, phase progression |
+| **Git & Expertise** | File ownership, churn analysis, AI-git correlations |
+| **Narratives** | Diagnostic summaries, prescriptions, executive view |
 
-Org features (team dashboards, SAML, optional cloud index, compliance-oriented bundles) are on the **[enterprise roadmap](ENTERPRISE.md)**. The OSS CLI remains the source of truth for capture and evidence.
+## Data Privacy
+
+Unfade's default posture is **data stays on the machine**:
+
+- All capture data lives in `~/.unfade/` as plain-text JSONL and Markdown
+- No accounts, no telemetry, no vendor cloud for core operation
+- LLM calls (for distills) go only to providers you explicitly configure
+- Leadership exports use aggregates-first design with explicit consent
+- DPDPA/GDPR-friendly: no sensitive prompt exfiltration by default
 
 ## FAQ
 
-**What LLM does it use?**  
-Ollama by default. Richer distills: configure OpenAI or Anthropic in `.unfade/config.json`. Core **live** metrics use heuristics and SQLite — LLM is enrichment, not a gate.
+**What LLM does it use?**
+Ollama by default. Configure OpenAI or Anthropic at `http://localhost:7654/settings` for richer distills. Core live metrics use heuristics and SQL — LLM is enrichment, not a gate.
 
-**Does it send my data anywhere?**  
-No for core operation. Exports are explicit; leadership mode prompts before writing aggregates.
+**Does it send my data anywhere?**
+No. Exports are explicit. Leadership mode prompts before writing aggregates.
 
-**Cost visibility?**  
-Optional `pricing` map in config feeds **token spend proxies** and **cost-per-directed-decision** style fields in `summary.json` (estimates from local metadata, not vendor billing APIs).
+**How much does it cost to run?**
+Zero for core operation. Optional LLM distills use minimal tokens (~5-10 per day with Ollama). Cloud providers cost cents/day at typical usage.
 
-**How do I contribute?**  
+**Can I use it across multiple repos?**
+Yes. `unfade add ~/path` registers repos. The dashboard shows cross-project intelligence and per-project drill-downs.
+
+**How do I contribute?**
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Enterprise
+
+Team dashboards, SAML, optional cloud index, and compliance-oriented bundles are on the [enterprise roadmap](ENTERPRISE.md). The open-source CLI remains the source of truth for capture and evidence.
 
 ## License
 

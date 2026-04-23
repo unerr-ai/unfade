@@ -180,7 +180,7 @@ describe("Profile page (GET /profile)", () => {
     const app = createApp();
     const res = await app.request("/profile");
     const html = await res.text();
-    expect(html).toContain("AI acceptance rate");
-    expect(html).toContain("AI modification rate");
+    expect(html).toContain("Modification");
+    expect(html).toContain("Held rate");
   });
 });

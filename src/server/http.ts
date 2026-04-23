@@ -51,6 +51,7 @@ import { reposRoutes } from "./routes/repos.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { setupRoutes } from "./routes/setup.js";
 import { streamRoutes } from "./routes/stream.js";
+import { substrateRoutes } from "./routes/substrate.js";
 import { summaryRoutes } from "./routes/summary.js";
 import { systemHealthRoutes } from "./routes/system-health.js";
 import { isSetupComplete } from "./setup-state.js";
@@ -194,6 +195,7 @@ export function createApp(): Hono {
   app.route("", systemHealthRoutes);
   app.route("", actionsRoutes);
   app.route("", logsRoutes);
+  app.route("", substrateRoutes);
 
   // /decisions is now a real page (Sprint 15C) — registered via decisionsPage route above
   // /portfolio and /repos/:id redirects (Phase 15 — merged into Home)

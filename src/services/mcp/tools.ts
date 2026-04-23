@@ -137,7 +137,7 @@ export function registerTools(server: McpServer): void {
         .default("today")
         .describe("Time scope: last_2h, today, or this_week"),
     },
-    (args) => {
+    async (args) => {
       if (!isInitialized()) return notInitializedResponse();
 
       try {
@@ -145,7 +145,7 @@ export function registerTools(server: McpServer): void {
           scope: args.scope ?? "today",
           project: args.project,
         });
-        const enrichedMeta = enrichMcpMeta(
+        const enrichedMeta = await enrichMcpMeta(
           result._meta ?? { tool: "unfade-context", durationMs: 0, degraded: false },
         );
         const enrichedResult = result._meta ? { ...result, _meta: enrichedMeta } : result;
@@ -509,7 +509,7 @@ export function registerTools(server: McpServer): void {
 
       try {
         const result = await getComprehension();
-        const enrichedMeta = enrichMcpMeta(result._meta);
+        const enrichedMeta = await enrichMcpMeta(result._meta);
         return {
           content: [
             {

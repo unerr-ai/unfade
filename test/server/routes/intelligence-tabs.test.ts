@@ -46,4 +46,44 @@ describe("Intelligence tab partials", () => {
     expect(html).toContain("≈ estimate");
     expect(html).toContain("/api/intelligence/costs");
   });
+
+  it("GET /intelligence/tab/autonomy returns autonomy shell with independence index (Sprint 15F)", async () => {
+    const app = createApp();
+    const res = await app.request("/intelligence/tab/autonomy");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("autonomy-gauge");
+    expect(html).toContain("autonomy-heatmap");
+    expect(html).toContain("/api/intelligence/autonomy");
+  });
+
+  it("GET /intelligence/tab/maturity returns maturity shell (Sprint 15G UF-451)", async () => {
+    const app = createApp();
+    const res = await app.request("/intelligence/tab/maturity");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("maturity-phase");
+    expect(html).toContain("maturity-radar");
+    expect(html).toContain("/api/intelligence/maturity-assessment");
+  });
+
+  it("GET /intelligence/tab/git-expertise returns git shell (Sprint 15G UF-452)", async () => {
+    const app = createApp();
+    const res = await app.request("/intelligence/tab/git-expertise");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("gitex-ownership");
+    expect(html).toContain("gitex-churn");
+    expect(html).toContain("/api/intelligence/expertise-map");
+  });
+
+  it("GET /intelligence/tab/narratives returns narratives shell (Sprint 15G UF-453)", async () => {
+    const app = createApp();
+    const res = await app.request("/intelligence/tab/narratives");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("narr-diagnostics");
+    expect(html).toContain("narr-prescriptions");
+    expect(html).toContain("/api/intelligence/narratives");
+  });
 });

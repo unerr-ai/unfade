@@ -15,6 +15,10 @@ intelligencePage.get("/intelligence", (c) => {
     { id: "velocity", label: "Velocity" },
     { id: "cost", label: "Cost" },
     { id: "patterns", label: "Patterns & Coach" },
+    { id: "autonomy", label: "Autonomy" },
+    { id: "maturity", label: "Maturity" },
+    { id: "git-expertise", label: "Git & Expertise" },
+    { id: "narratives", label: "Narratives" },
   ];
 
   const tabBarHtml = tabs
@@ -74,6 +78,17 @@ intelligencePage.get("/intelligence", (c) => {
 
       <!-- Sub-metric strip -->
       <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8" id="sub-metrics"></div>
+
+      <!-- Maturity badge (UF-454) -->
+      <div id="maturity-badge" class="hidden bg-surface border border-border rounded-lg p-4 mb-6 flex items-center gap-4">
+        <div class="font-mono text-2xl font-bold" id="maturity-badge-phase">—</div>
+        <div>
+          <div class="text-xs text-muted">Maturity</div>
+          <div class="text-sm text-foreground" id="maturity-badge-label">—</div>
+        </div>
+        <div class="flex-1"></div>
+        <div class="text-xs text-warning" id="maturity-badge-bottleneck"></div>
+      </div>
 
       <!-- Insight -->
       <div id="aes-insight" class="hidden bg-surface border border-accent/30 rounded-lg p-5 mb-6">
@@ -157,6 +172,19 @@ intelligencePage.get("/intelligence", (c) => {
           }).join('');
         }
       }).catch(function(){loading.classList.add('hidden');empty.classList.remove('hidden');});
+
+      fetch('/api/intelligence/maturity-assessment').then(function(r){return r.ok?r.json():null}).then(function(m){
+        if(!m||!m.phase)return;
+        var badge=document.getElementById('maturity-badge');
+        if(!badge)return;
+        badge.classList.remove('hidden');
+        var colors=['var(--muted)','var(--warning)','var(--cyan)','var(--success)'];
+        var c=colors[Math.max(0,Math.min(m.phase-1,3))];
+        document.getElementById('maturity-badge-phase').textContent='Phase '+m.phase;
+        document.getElementById('maturity-badge-phase').style.color=c;
+        document.getElementById('maturity-badge-label').textContent=m.phaseLabel||'';
+        if(m.bottleneck)document.getElementById('maturity-badge-bottleneck').textContent='Bottleneck: '+m.bottleneck.dimension;
+      }).catch(function(){});
     })();
     </script>
     </div><!-- end tab-content -->

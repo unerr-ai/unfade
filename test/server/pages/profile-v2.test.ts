@@ -153,13 +153,12 @@ describe("Profile page v2 (GET /profile)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
 
-    // Decision style stats
-    expect(html).toContain("Decision Style");
-    expect(html).toContain("3.2"); // avgAlternativesEvaluated
-    expect(html).toContain("3.0"); // medianAlternativesEvaluated
-    expect(html).toContain("65%"); // aiAcceptanceRate
-    expect(html).toContain("25%"); // aiModificationRate
-    expect(html).toContain("15 min"); // explorationDepthMinutes.overall
+    // Identity narrative section with KPI cards
+    expect(html).toContain("Identity narrative");
+    expect(html).toContain("3.2"); // avgAlternativesEvaluated rendered as Alternatives
+    expect(html).toContain("25%"); // modificationRate = Math.round(aiModificationRate * 100)
+    expect(html).toContain("Modification");
+    expect(html).toContain("Held rate");
   });
 
   // T-207: Domain distribution with depth badges and trend arrows

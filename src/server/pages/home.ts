@@ -130,6 +130,11 @@ homePage.get("/", async (c) => {
           </div>
         </div>
 
+        <div id="narrative-headline" class="hidden bg-accent/5 border border-accent/20 rounded-lg px-5 py-3 mb-4">
+          <div class="text-[11px] uppercase tracking-wider text-accent font-medium mb-1">AI Collaboration Posture</div>
+          <p class="text-sm text-foreground" id="narrative-headline-text"></p>
+        </div>
+
         <div class="bg-surface border border-border rounded-lg p-6 mb-8">
           <div class="text-[11px] uppercase tracking-wider text-muted font-medium mb-4">Recent narratives</div>
           <div id="dash-insights" class="text-[13px] text-muted">Loading…</div>
@@ -268,6 +273,17 @@ homePage.get("/", async (c) => {
         return true;
       }
 
+      function wireNarrativeHeadline(){
+        window.__unfade.fetch('/api/intelligence/narratives').then(function(r){return r.ok?r.json():null}).then(function(data){
+          if(!data||!data.narratives||!data.narratives.length)return;
+          var first=data.narratives[0];
+          if(!first||!first.claim)return;
+          var hl=document.getElementById('narrative-headline');
+          var ht=document.getElementById('narrative-headline-text');
+          if(hl&&ht){hl.classList.remove('hidden');ht.textContent=first.claim;}
+        }).catch(function(){});
+      }
+
       function wireInsights(){
         Promise.all([
           window.__unfade.fetch('/api/intelligence/narratives').then(function(r){return r.ok?r.json():null}).catch(function(){return null;}),
@@ -399,6 +415,7 @@ homePage.get("/", async (c) => {
         }).catch(function(){});
 
         wireInsights();
+        wireNarrativeHeadline();
 
         setTimeout(function(){
           setActDot('sse','ready');

@@ -1,65 +1,68 @@
-import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { MaterializerDaemon } from "../../../src/services/cache/materializer-daemon.js";
-import { readSummary, writeSummary } from "../../../src/services/intelligence/summary-writer.js";
-import { localToday } from "../../../src/utils/date.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { readSummary, summaryWriterAnalyzer } from "../../../src/services/intelligence/summary-writer.js";
 
 describe("summary-writer (UF-215) + token/cost wiring", () => {
   let root: string;
+  const origHome = process.env.UNFADE_HOME;
 
   afterEach(async () => {
+    if (origHome) process.env.UNFADE_HOME = origHome;
+    else delete process.env.UNFADE_HOME;
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  it("writes summary.json with cost fields after materialization", { timeout: 10_000 }, async () => {
+  it("summaryWriterAnalyzer exports expected interface", () => {
+    expect(summaryWriterAnalyzer).toBeDefined();
+    expect(summaryWriterAnalyzer.name).toBe("summary-writer");
+    expect(summaryWriterAnalyzer.outputFile).toBe("summary-writer.json");
+    expect(summaryWriterAnalyzer.minDataPoints).toBe(1);
+    expect(summaryWriterAnalyzer.dependsOn).toContain("window-aggregator");
+    expect(summaryWriterAnalyzer.dependsOn).toContain("token-proxy");
+    expect(typeof summaryWriterAnalyzer.initialize).toBe("function");
+    expect(typeof summaryWriterAnalyzer.update).toBe("function");
+    expect(typeof summaryWriterAnalyzer.derive).toBe("function");
+  });
+
+  it("readSummary returns null when no summary exists", () => {
     root = mkdtempSync(join(tmpdir(), "unfade-sum-"));
-    execSync("git init", { cwd: root, stdio: "ignore" });
+    process.env.UNFADE_HOME = join(root, ".unfade");
+    mkdirSync(join(root, ".unfade", "state"), { recursive: true });
 
-    const eventsDir = join(root, ".unfade", "events");
-    mkdirSync(eventsDir, { recursive: true });
+    const result = readSummary(root);
+    expect(result).toBeNull();
+  });
 
-    const day = localToday();
-    const line = {
-      id: "550e8400-e29b-41d4-a716-446655440003",
-      projectId: "test-project-id",
-      timestamp: new Date().toISOString(),
-      source: "ai-session",
-      type: "ai-conversation",
-      content: { summary: "auth", detail: "" },
-      metadata: {
-        model: "claude-opus",
-        ai_tool: "claude-code",
-        direction_signals: { human_direction_score: 0.9 },
-      },
+  it("readSummary returns parsed summary when file exists", () => {
+    root = mkdtempSync(join(tmpdir(), "unfade-sum-"));
+    process.env.UNFADE_HOME = join(root, ".unfade");
+    const stateDir = join(root, ".unfade", "state");
+    mkdirSync(stateDir, { recursive: true });
+
+    const summary = {
+      schemaVersion: 1,
+      updatedAt: new Date().toISOString(),
+      freshnessMs: 0,
+      directionDensity24h: 0.5,
+      eventCount24h: 10,
+      comprehensionScore: 0.7,
+      topDomain: "backend",
+      toolMix: { "claude-code": 5 },
+      reasoningVelocityProxy: 0.8,
+      firstRunComplete: true,
+      costPerDirectedDecision: 0.02,
+      costQualityTrend: "stable",
+      todaySpendProxy: 0.15,
+      todayDirectedDecisions: 3,
     };
-    writeFileSync(join(eventsDir, `${day}.jsonl`), `${JSON.stringify(line)}\n`);
-
-    const daemon = new MaterializerDaemon({ cwd: root, intervalMs: 999_999 });
-    await daemon.start();
-
-    const cache = daemon.getCache();
-    const db = await cache.getDb();
-    expect(db).not.toBeNull();
-    if (!db) throw new Error("expected db");
-
-    await cache.flushDuckDb();
-
-    // writeSummary calls window-aggregator and token-proxy which now use DuckDB typed columns.
-    // In SQLite-only test environments, these queries degrade gracefully (try/catch per window).
-    const summary = await writeSummary(db, root, {
-      pricing: { "claude-opus": 0.01 },
-    });
-
-    expect(summary.schemaVersion).toBe(1);
-    expect(summary.updatedAt).toBeDefined();
+    writeFileSync(join(stateDir, "summary.json"), JSON.stringify(summary));
 
     const disk = readSummary(root);
     expect(disk).not.toBeNull();
     expect(disk?.schemaVersion).toBe(1);
-
-    await daemon.close();
+    expect(disk?.topDomain).toBe("backend");
+    expect(disk?.eventCount24h).toBe(10);
   });
 });

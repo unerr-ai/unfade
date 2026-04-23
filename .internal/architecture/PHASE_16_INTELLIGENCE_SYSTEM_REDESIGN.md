@@ -428,14 +428,14 @@ These are prerequisite infrastructure changes that enable the Phase 16 intellige
 | Sprint 16F | 4 | **4** | 0 | 0 |
 | Sprint 16G | 2 | **2** | 0 | 0 |
 | Sprint 16H | 2 | **2** | 0 | 0 |
-| Sprint 16I | 2 | **2** | 0 | 0 |
-| Sprint 16J | 2 | **2** | 0 | 0 |
-| Sprint 16K | 2 | **2** | 0 | 0 |
-| Sprint 16L | 2 | **2** | 0 | 0 |
-| Sprint 16M | 4 | **4** | 0 | 0 |
-| Sprint 16N | 3 | **3** | 0 | 0 |
+| Sprint 16I | 4 | **4** | 0 | 0 |
+| Sprint 16J | 4 | **4** | 0 | 0 |
+| Sprint 16K | 6 | **6** | 0 | 0 |
+| Sprint 16L | 4 | **4** | 0 | 0 |
+| Sprint 16M | 6 | **6** | 0 | 0 |
+| Sprint 16N | 7 | **7** | 0 | 0 |
 
-**PHASE 16: INTELLIGENCE SYSTEM REDESIGN — COMPLETE. 64/64 tasks done.**
+**PHASE 16: INTELLIGENCE SYSTEM REDESIGN — COMPLETE. 80/80 tasks done.**
 
 The 12-stage monolithic `repo-manager.ts` tick callback has been replaced by a blazing-fast, decoupled Always-On Transmission System:
 

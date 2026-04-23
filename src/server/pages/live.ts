@@ -163,6 +163,28 @@ livePage.get("/live", (c) => {
           addEvent({source:'intelligence',type:'insight',timestamp:new Date().toISOString(),summary:i.claim||JSON.stringify(i)});
         });
       }).catch(function(){});
+
+      fetch('/api/intelligence/sessions/active').then(function(r){
+        if(!r.ok)return null;return r.json();
+      }).then(function(data){
+        if(!data||!data.sessions||!data.sessions.length)return;
+        var panel=document.createElement('div');
+        panel.className='mb-4 grid grid-cols-1 md:grid-cols-2 gap-3';
+        panel.id='session-autonomy-panel';
+        data.sessions.forEach(function(s){
+          var level=s.hds>60&&s.loopRisk==='low'?'HIGH':s.hds<30?'LOW':'MED';
+          var colors={HIGH:'bg-success/20 text-success',MED:'bg-warning/20 text-warning',LOW:'bg-error/20 text-error'};
+          var card=document.createElement('div');
+          card.className='bg-surface border border-border rounded-lg p-3 flex items-center gap-3';
+          card.innerHTML='<span class="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded font-semibold '+colors[level]+(level==='LOW'?' animate-pulse':'')+'">'+
+            '<span class="w-1.5 h-1.5 rounded-full" style="background:currentColor"></span>'+level+'</span>'+
+            '<span class="text-sm text-foreground flex-1 truncate">'+(s.sessionId||'session')+'</span>'+
+            '<span class="text-xs text-muted">'+Math.round(s.hds||0)+'% dir · '+(s.turnCount||0)+' turns</span>';
+          panel.appendChild(card);
+        });
+        var streamEl=document.getElementById('event-stream');
+        streamEl.parentNode.insertBefore(panel,streamEl);
+      }).catch(function(){});
     })();
     </script>
   `;

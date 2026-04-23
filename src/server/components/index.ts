@@ -1,13 +1,32 @@
 // Phase 15 component library — re-exports all components
 
-export type { ConfidenceBadgeProps, DataFreshnessBadgeProps } from "./badges.js";
+export type { ConfidenceBadgeProps, DataFreshnessBadgeProps, SessionAutonomyBadgeProps } from "./badges.js";
 export {
   confidenceBadge,
   dataFreshnessBadge,
   estimateBadge,
   projectBadge,
+  sessionAutonomyBadge,
   sourceBadge,
 } from "./badges.js";
+export type {
+  DependencyHeatmapEntry,
+  DependencyHeatmapProps,
+  IndependenceGaugeProps,
+  SkillTrajectoryChartProps,
+  SkillTrajectoryPoint,
+} from "./autonomy-viz.js";
+export { dependencyHeatmap, independenceGauge, skillTrajectoryChart } from "./autonomy-viz.js";
+export type {
+  IdentityNarrativeProps,
+  KnowledgeRetainedCardProps,
+  VehicleHealthSummaryProps,
+} from "./narrative-card.js";
+export {
+  identityNarrative,
+  knowledgeRetainedCard,
+  vehicleHealthSummary,
+} from "./narrative-card.js";
 export type { BarChartSvgProps, GaugeSvgProps, SparklineSvgProps } from "./charts.js";
 export { barChartSvg, gaugeSvg, heatmapCell, sparklineSvg, trendArrow } from "./charts.js";
 export type { EmptyStateProps } from "./empty-state.js";

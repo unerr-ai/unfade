@@ -12,16 +12,15 @@ describe("layout", () => {
 
   it("includes htmx script tag", () => {
     const html = layout("Test", "");
-    expect(html).toContain("https://unpkg.com/htmx.org@2.0.4");
+    expect(html).toContain("/public/js/htmx.min.js");
     expect(html).toContain("<script");
   });
 
-  it("includes dark theme CSS with expected vars", () => {
+  it("includes Tailwind CSS stylesheet", () => {
     const html = layout("Test", "");
-    expect(html).toContain("<style>");
-    expect(html).toContain("--canvas:");
-    expect(html).toContain("--foreground:");
-    expect(html).toContain("--accent:");
+    expect(html).toContain("/public/css/tailwind.css");
+    expect(html).toContain("bg-canvas");
+    expect(html).toContain("text-foreground");
   });
 
   it("includes nav bar with core routes", () => {

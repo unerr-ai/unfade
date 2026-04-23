@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe("Intelligence Hub (GET /intelligence)", () => {
-  it("renders five tab anchors/buttons with stable ids", async () => {
+  it("renders nine tab anchors/buttons with stable ids (Sprint 15G: +maturity, git-expertise, narratives)", async () => {
     const app = createApp();
     const res = await app.request("/intelligence");
     expect(res.status).toBe(200);
@@ -48,5 +48,17 @@ describe("Intelligence Hub (GET /intelligence)", () => {
     expect(html).toContain('id="tab-velocity"');
     expect(html).toContain('id="tab-cost"');
     expect(html).toContain('id="tab-patterns"');
+    expect(html).toContain('id="tab-autonomy"');
+    expect(html).toContain('id="tab-maturity"');
+    expect(html).toContain('id="tab-git-expertise"');
+    expect(html).toContain('id="tab-narratives"');
+  });
+
+  it("overview includes maturity badge placeholder (UF-454)", async () => {
+    const app = createApp();
+    const res = await app.request("/intelligence");
+    const html = await res.text();
+    expect(html).toContain('id="maturity-badge"');
+    expect(html).toContain("/api/intelligence/maturity-assessment");
   });
 });

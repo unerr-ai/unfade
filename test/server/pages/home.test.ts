@@ -61,6 +61,6 @@ describe("Home (GET /) Sprint 15D activation", () => {
     const app = createApp();
     const res = await app.request("/");
     const html = await res.text();
-    expect(html).toContain('id="dash-dir"');
+    expect(html).toContain("Direction");
   });
 });

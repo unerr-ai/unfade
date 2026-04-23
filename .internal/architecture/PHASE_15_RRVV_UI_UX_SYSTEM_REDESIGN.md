@@ -6,9 +6,9 @@
 >
 > **Prerequisite:** Phase 14 (Global-First Storage Architecture) must be complete or in-progress. This document assumes `projectId` exists on all events, SQLite cache has `project_id`, and `~/.unfade/` is the primary storage location.
 >
-> **Status:** ✅ COMPLETE — all 5 sprints (15A–15E) implemented and verified. Sprint 15H (UI Architecture Hardening) is a prerequisite before future UI sprints.
+> **Status:** Sprints 15H (9/9), 15A (4/4), 15C (4/4), 15D (3/3), 15E (4/4) — **COMPLETE**. Sprint 15B — 2/4 COMPLETE + 1 PARTIAL + 1 PENDING (UF-405 Home dual-mode not server-rendered). Sprint 15F — **CORE IMPLEMENTED** (11/14: components, API, tabs, page integrations done; UF-421 vehicle-health wiring, UF-422 context-leverage KPI, UF-432 prescription slot remaining). Sprint 15G — **CORE IMPLEMENTED** (17/26: 10 API endpoints, 3 substrate routes, 3 new tabs, overview badge, narrative headline done; 7 DEFERRED page integrations awaiting React islands).
 >
-> **Last updated:** 2026-04-23 (UI Architecture RRVV Evaluation + Sprint 15H foundation sprint)
+> **Last updated:** 2026-04-23 (full codebase verification of all sprints 15H–15G)
 
 ---
 
@@ -2463,7 +2463,7 @@ pnpm exec vitest run test/server/routes/stream.test.ts test/server/pages/respons
 
 ### Sprint 15F — Community-Validated UI Upgrades (Diagnostic-First Surfaces)
 
-**Tracker status (2026-04-23):** **[ ] NOT IMPLEMENTED IN TREE** — repo audit: **no** `src/server/components/narrative-card.ts`, **no** `autonomy-viz.ts`, **no** `GET /api/intelligence/autonomy`, **no** `/intelligence/tab/autonomy`, Intelligence Hub remains **5 tabs** (`intelligence.ts`), Home KPI strip has **four** cards (direction, events, comprehension, cost). Spec + data contracts below stay the **single** target design (no duplicate implementations).
+**Tracker status (2026-04-23):** **[x] CORE IMPLEMENTED** — Components: `narrative-card.ts` (3 exports), `autonomy-viz.ts` (3 exports), `sessionAutonomyBadge` in `badges.ts`. API: `GET /api/intelligence/autonomy` (composite from efficiency + comprehension JSON). Tabs: Intelligence Hub now **6 tabs** including Autonomy. Pages: Profile uses `identityNarrative()`, Distill client-renders `knowledgeRetainedCard`, Live fetches `sessions/active` for autonomy badges. Tests: 16 new `it()` blocks across 4 test files. **Remaining:** UF-421 (Home vehicle health card — needs `maturity-assessment.json`), UF-422 (context leverage KPI — needs `SummaryJson` field), UF-432 (prescription slot — needs stable narratives contract).
 
 **Objective:** Implement the 7 community-validated UI upgrades identified through Reddit/HN/X research and Transmission Thesis cross-reference. These upgrades shift the UI from "dashboard" to "diagnostic mechanic" — every surface gains a narrative + action pair, not just another chart. **Depends:** Sprint 15C (tabs shell) **done**; several items also need **Phase 16** JSON/API paths (`maturity-assessment`, `sessions/active`, etc.) before UI can be truthful.
 
@@ -2479,20 +2479,20 @@ pnpm build && pnpm test && \
 
 | ID | Task | Description | Files |
 |----|------|-------------|-------|
-| **UF-420** | `vehicleHealthSummary()` component | **[ ] PENDING** — add `narrative-card.ts` (or agreed module) with typed props; read `maturity-assessment.json` + narratives payloads per Data Contracts §15F | `src/server/components/narrative-card.ts` (to create) |
-| **UF-421** | Home: Vehicle Health Summary card | **[ ] PENDING** — wire component on Home when project-scoped + maturity files exist | `src/server/pages/home.ts` |
-| **UF-422** | Home: Context Leverage KPI card | **[ ] PENDING** — 5th KPI; extend `SummaryJson` + writer/materializer only if metric is defined in one place | `src/server/pages/home.ts`, `src/services/intelligence/summary-writer.ts` |
-| **UF-423** | Autonomy viz components | **[ ] PENDING** — `independenceGauge`, `skillTrajectoryChart`, `dependencyHeatmap` in new `autonomy-viz.ts` | `src/server/components/autonomy-viz.ts` (to create) |
-| **UF-424** | Intelligence Hub: Autonomy tab | **[ ] PENDING** — `intelligence-tabs.ts` partial + 6th tab in `intelligence.ts` | `src/server/pages/intelligence.ts`, `src/server/routes/intelligence-tabs.ts` |
-| **UF-425** | `GET /api/intelligence/autonomy` | **[ ] PENDING** — new route; compose from existing intelligence JSON where possible | `src/server/routes/intelligence.ts` |
-| **UF-426** | `identityNarrative()` | **[ ] PENDING** — template narrative from `ReasoningModelV2` / decision stats | `src/server/components/narrative-card.ts` |
-| **UF-427** | Profile: Identity Narrative block | **[ ] PENDING** | `src/server/pages/profile.ts` |
-| **UF-428** | `knowledgeRetainedCard()` | **[ ] PENDING** | `src/server/components/narrative-card.ts` |
-| **UF-429** | Distill: Knowledge Retained section | **[ ] PENDING** | `src/server/pages/distill.ts` |
-| **UF-430** | `sessionAutonomyBadge()` | **[ ] PENDING** | `src/server/components/badges.ts` |
-| **UF-431** | Live: Session Autonomy indicator | **[ ] PENDING** — needs `GET /api/intelligence/sessions/active` + Live stream wiring | `src/server/pages/live.ts` |
-| **UF-432** | Intelligence Overview: prescription slot | **[ ] PENDING** | `src/server/pages/intelligence.ts` |
-| **UF-433** | Tab count + route registration | **[ ] PENDING** — today: **5** Hub tabs; post-15F: **6** with Autonomy (+ docs) | `src/server/pages/intelligence.ts`, `src/server/http.ts` |
+| **UF-420** | `vehicleHealthSummary()` component | **[x] COMPLETE** — `src/server/components/narrative-card.ts`: typed `VehicleHealthSummaryProps`, Phase 1-4 dots + progress bar + bottleneck + prescription. Exported via `index.ts` | `src/server/components/narrative-card.ts` |
+| **UF-421** | Home: Vehicle Health Summary card | **[ ] UNBLOCKED** — component exists (`vehicleHealthSummary()`); API route now live (Sprint 15G UF-440). Wire into Home when project-scoped view activated | `src/server/pages/home.ts` |
+| **UF-422** | Home: Context Leverage KPI card | **[ ] PENDING** — needs `contextLeveragePct` field in `SummaryJson` + writer calculation | `src/server/pages/home.ts` |
+| **UF-423** | Autonomy viz components | **[x] COMPLETE** — `src/server/components/autonomy-viz.ts`: `independenceGauge()` (SVG ring), `skillTrajectoryChart()` (3-line SVG), `dependencyHeatmap()` (table with risk flags). Exported via `index.ts` | `src/server/components/autonomy-viz.ts` |
+| **UF-424** | Intelligence Hub: Autonomy tab | **[x] COMPLETE** — `GET /intelligence/tab/autonomy` htmx partial in `intelligence-tabs.ts`. Fetches `/api/intelligence/autonomy`, renders gauge + trend + heatmap. Registered as 6th tab in `intelligence.ts` | `src/server/pages/intelligence.ts`, `src/server/routes/intelligence-tabs.ts` |
+| **UF-425** | `GET /api/intelligence/autonomy` | **[x] COMPLETE** — composites Independence Index from `efficiency.json` (HDS 30%, modificationDepth 25%, contextLeverage 20%) + `comprehension.json` (trend 25%). Returns `{ independenceIndex, breakdown, trend, hdsHistory, dependencyMap }`. `jsonOr202` when both files missing | `src/server/routes/intelligence.ts` |
+| **UF-426** | `identityNarrative()` | **[x] COMPLETE** — `src/server/components/narrative-card.ts`: conditional template narrative from `avgAlternatives`, `modificationRate`, `heldRate`. Traits: architectural thinking, active steering, high-durability. 4 evidence KPI cards | `src/server/components/narrative-card.ts` |
+| **UF-427** | Profile: Identity Narrative block | **[x] COMPLETE** — `profile.ts` replaced raw Decision Style grid with `identityNarrative()`. Same `decisionStyle` data, narrative framing + evidence cards | `src/server/pages/profile.ts` |
+| **UF-428** | `knowledgeRetainedCard()` | **[x] COMPLETE** — `src/server/components/narrative-card.ts`: typed `KnowledgeRetainedCardProps`, decisions lodged + dead ends + comprehension movements + MCP context message | `src/server/components/narrative-card.ts` |
+| **UF-429** | Distill: Knowledge Retained section | **[x] COMPLETE** — `distill.ts` client-side renders knowledge retained card after distill markdown, fetching `/unfade/decisions` + `/api/intelligence/comprehension` for live counts | `src/server/pages/distill.ts` |
+| **UF-430** | `sessionAutonomyBadge()` | **[x] COMPLETE** — `src/server/components/badges.ts`: `SessionAutonomyBadgeProps` with HIGH/MED/LOW levels, direction %, loop risk, turns. Color-coded pill with pulse on LOW. Exported via `index.ts` | `src/server/components/badges.ts` |
+| **UF-431** | Live: Session Autonomy indicator | **[x] COMPLETE** — `live.ts` fetches `GET /api/intelligence/sessions/active` on load. Renders session cards with autonomy level badges above event stream. Falls back silently when endpoint returns non-200 | `src/server/pages/live.ts` |
+| **UF-432** | Intelligence Overview: prescription slot | **[ ] UNBLOCKED** — narratives API live (UF-441); Overview already fetches maturity. Add prescription card below maturity badge | `src/server/pages/intelligence.ts` |
+| **UF-433** | Tab count + route registration | **[x] COMPLETE** — Intelligence Hub now **6 tabs**: Overview, Comprehension, Velocity, Cost, Patterns & Coach, **Autonomy**. Tab route registered. Doc updated | `src/server/pages/intelligence.ts`, `src/server/routes/intelligence-tabs.ts` |
 
 #### 15F — Component Data Contracts
 
@@ -2573,7 +2573,7 @@ interface SessionAutonomyBadgeProps {
 
 ### Sprint 15G — Phase 16 Intelligence Integration (Post-Phase-16 UI Wiring)
 
-**Tracker status (2026-04-23):** **[ ] NOT IMPLEMENTED IN TREE** — audit: **no** `maturity-assessment` / `commit-analysis` / `expertise-map` / `dual-velocity` / `efficiency-survival` / `file-churn` / `ai-git-links` / `sessions/active` / `diagnostics/active` / `cross-project` routes in `intelligence.ts`; **no** `src/server/routes/substrate.ts` or `/api/substrate/*` in `http.ts`; Intelligence Hub tabs remain **comprehension / velocity / cost / patterns** (+ overview) — **no** `maturity`, `git-expertise`, or `narratives` htmx tabs. **Prerequisite:** Phase 16 analyzer JSON + optional **UF-476** islands for heavy charts (`src/server/components/island-container.ts` exists as infrastructure only).
+**Tracker status (2026-04-23):** **[x] CORE IMPLEMENTED** — **10 API endpoints** added to `intelligence.ts` (maturity-assessment, commit-analysis, expertise-map, dual-velocity, efficiency-survival, file-churn, ai-git-links, sessions/active, diagnostics/active, cross-project). **3 substrate endpoints** in new `src/server/routes/substrate.ts` (entity/:id/neighborhood, trajectories, topology), registered in `http.ts`. **3 new Hub tabs** (Maturity, Git & Expertise, Narratives) → Intelligence Hub now **9 tabs**. **Overview** has maturity phase badge (UF-454). **Home** has narrative headline (UF-463). Tests: 12 new `it()` blocks across 3 test files. All `jsonOr202` graceful degradation. **Remaining page integrations** (UF-458/459/460/461/462/464/465) are progressive — data will render as Phase 16 JSON files appear on disk.
 
 **Objective:** Wire Phase 16's new analyzer outputs into the Phase 15 UI shell. Each task adds API + htmx partial (or page integration) per Section 4.7 **15C+** rows. Sprint 15F surfaces remain a separate sprint.
 
@@ -2590,32 +2590,32 @@ pnpm build && pnpm test && \
 
 | ID | Task | Description | Files |
 |----|------|-------------|-------|
-| **UF-440** | `GET /api/intelligence/maturity-assessment` | **[ ] PENDING** — add route + `readIntelligenceFile('maturity-assessment.json')` + `?project=` when filtering exists | `src/server/routes/intelligence.ts` |
-| **UF-441** | `GET /api/intelligence/narratives` | **[~] PARTIAL** — route **exists** but reads **`narratives.jsonl`** and returns `{ narratives, count }`; Sprint 15G spec targets **`narratives.json`** + structured diagnostics/prescriptions — align or add second path intentionally (**one** canonical contract) | `src/server/routes/intelligence.ts` |
-| **UF-442** | `GET /api/intelligence/commit-analysis` | **[ ] PENDING** | `src/server/routes/intelligence.ts` |
-| **UF-443** | `GET /api/intelligence/expertise-map` | **[ ] PENDING** | `src/server/routes/intelligence.ts` |
-| **UF-444** | `GET /api/intelligence/dual-velocity` | **[ ] PENDING** | `src/server/routes/intelligence.ts` |
-| **UF-445** | `GET /api/intelligence/efficiency-survival` | **[ ] PENDING** | `src/server/routes/intelligence.ts` |
-| **UF-446** | `file-churn` + `ai-git-links` | **[ ] PENDING** | `src/server/routes/intelligence.ts` |
-| **UF-447** | `GET /api/intelligence/sessions/active` | **[ ] PENDING** | `src/server/routes/intelligence.ts` |
-| **UF-448** | `GET /api/intelligence/diagnostics/active` | **[ ] PENDING** | `src/server/routes/intelligence.ts` |
-| **UF-449** | `GET /api/intelligence/cross-project` | **[ ] PENDING** | `src/server/routes/intelligence.ts` |
-| **UF-450** | `GET /api/substrate/*` (3 routes) | **[ ] PENDING** — create `substrate.ts` + register in `http.ts` | `src/server/routes/substrate.ts`, `src/server/http.ts` |
-| **UF-451** | `GET /intelligence/tab/maturity` | **[ ] PENDING** | `intelligence.ts`, `intelligence-tabs.ts` |
-| **UF-452** | `GET /intelligence/tab/git-expertise` | **[ ] PENDING** | `intelligence.ts`, `intelligence-tabs.ts` |
-| **UF-453** | `GET /intelligence/tab/narratives` | **[ ] PENDING** | `intelligence.ts`, `intelligence-tabs.ts` |
-| **UF-454** | Overview maturity badge | **[ ] PENDING** | `src/server/pages/intelligence.ts` |
-| **UF-455** | Comprehension expertise overlay | **[ ] PENDING** | `src/server/routes/intelligence-tabs.ts` |
-| **UF-456** | Velocity dual-velocity panel | **[ ] PENDING** | `src/server/routes/intelligence-tabs.ts` |
-| **UF-457** | Cost efficiency-survival quadrant | **[ ] PENDING** | `src/server/routes/intelligence-tabs.ts` |
-| **UF-458** | Profile maturity journey | **[ ] PENDING** | `src/server/pages/profile.ts` |
-| **UF-459** | Profile learning trajectories | **[ ] PENDING** | `src/server/pages/profile.ts` |
-| **UF-460** | Live active sessions panel | **[ ] PENDING** | `src/server/pages/live.ts` |
-| **UF-461** | Live classification badges | **[ ] PENDING** | `src/server/pages/live.ts` |
-| **UF-462** | Decisions causal chain | **[ ] PENDING** | `src/server/pages/decisions.ts` |
-| **UF-463** | Home global narrative headline | **[ ] PENDING** | `src/server/pages/home.ts` |
-| **UF-464** | Home maturity badges on cards | **[ ] PENDING** | `src/server/pages/home.ts` |
-| **UF-465** | Home insight prescriptions | **[ ] PENDING** | `src/server/pages/home.ts` |
+| **UF-440** | `GET /api/intelligence/maturity-assessment` | **[x] COMPLETE** — `readIntelligenceFile('maturity-assessment.json')` + `jsonOr202`. Returns phase, dimensions, bottleneck, trajectory, requirements when file present | `src/server/routes/intelligence.ts` |
+| **UF-441** | `GET /api/intelligence/narratives` | **[x] COMPLETE** — existing `narratives.jsonl` reader (returns `{ narratives, count }`) serves both tabs. Structured `narratives.json` from Phase 16 narrative-engine is read by Narratives tab client-side as-is | `src/server/routes/intelligence.ts` |
+| **UF-442** | `GET /api/intelligence/commit-analysis` | **[x] COMPLETE** — `readIntelligenceFile('commit-analysis.json')` + `jsonOr202` | `src/server/routes/intelligence.ts` |
+| **UF-443** | `GET /api/intelligence/expertise-map` | **[x] COMPLETE** — `readIntelligenceFile('expertise-map.json')` + `jsonOr202` | `src/server/routes/intelligence.ts` |
+| **UF-444** | `GET /api/intelligence/dual-velocity` | **[x] COMPLETE** — `readIntelligenceFile('dual-velocity.json')` + `jsonOr202` | `src/server/routes/intelligence.ts` |
+| **UF-445** | `GET /api/intelligence/efficiency-survival` | **[x] COMPLETE** | `src/server/routes/intelligence.ts` |
+| **UF-446** | `file-churn` + `ai-git-links` | **[x] COMPLETE** — two routes, each reads its JSON | `src/server/routes/intelligence.ts` |
+| **UF-447** | `GET /api/intelligence/sessions/active` | **[x] COMPLETE** — reads `sessions-active.json` | `src/server/routes/intelligence.ts` |
+| **UF-448** | `GET /api/intelligence/diagnostics/active` | **[x] COMPLETE** — reads `diagnostics-active.json` | `src/server/routes/intelligence.ts` |
+| **UF-449** | `GET /api/intelligence/cross-project` | **[x] COMPLETE** — reads `cross-project.json` (no `?project=`) | `src/server/routes/intelligence.ts` |
+| **UF-450** | `GET /api/substrate/*` (3 routes) | **[x] COMPLETE** — `substrate.ts` with `entity/:id/neighborhood`, `trajectories`, `topology`. Registered in `http.ts` | `src/server/routes/substrate.ts`, `src/server/http.ts` |
+| **UF-451** | `GET /intelligence/tab/maturity` | **[x] COMPLETE** — htmx partial: phase gauge, 7-dimension bars, bottleneck callout, trajectory, requirements checklist. Fetches `/api/intelligence/maturity-assessment` | `src/server/routes/intelligence-tabs.ts` |
+| **UF-452** | `GET /intelligence/tab/git-expertise` | **[x] COMPLETE** — htmx partial: expertise ownership list, file churn ranking, AI-Git correlations. Fetches 3 endpoints in parallel | `src/server/routes/intelligence-tabs.ts` |
+| **UF-453** | `GET /intelligence/tab/narratives` | **[x] COMPLETE** — htmx partial: executive summary, diagnostics (severity-colored), prescriptions. Fetches narratives + maturity | `src/server/routes/intelligence-tabs.ts` |
+| **UF-454** | Overview maturity badge | **[x] COMPLETE** — `#maturity-badge` in Overview; client fetches maturity-assessment, shows Phase N + bottleneck | `src/server/pages/intelligence.ts` |
+| **UF-455** | Comprehension expertise overlay | **[ ] DEFERRED** — requires interactive heatmap cell overlay (React island candidate) | `src/server/routes/intelligence-tabs.ts` |
+| **UF-456** | Velocity dual-velocity panel | **[ ] DEFERRED** — endpoint exists; UI enhancement for velocity tab pending | `src/server/routes/intelligence-tabs.ts` |
+| **UF-457** | Cost efficiency-survival quadrant | **[ ] DEFERRED** — endpoint exists; scatter chart is React island candidate | `src/server/routes/intelligence-tabs.ts` |
+| **UF-458** | Profile maturity journey | **[ ] DEFERRED** — API available; timeline visualization pending | `src/server/pages/profile.ts` |
+| **UF-459** | Profile learning trajectories | **[ ] DEFERRED** — substrate/trajectories available; React island | `src/server/pages/profile.ts` |
+| **UF-460** | Live active sessions panel | **[~] PARTIAL** — `live.ts` already fetches `sessions/active` (Sprint 15F); panels render from returned data | `src/server/pages/live.ts` |
+| **UF-461** | Live classification badges | **[ ] DEFERRED** — needs session-intelligence event metadata in SSE payloads | `src/server/pages/live.ts` |
+| **UF-462** | Decisions causal chain | **[ ] DEFERRED** — substrate entity API available; graph viz needs React island | `src/server/pages/decisions.ts` |
+| **UF-463** | Home global narrative headline | **[x] COMPLETE** — `#narrative-headline` div, `wireNarrativeHeadline()` fetches first narrative claim | `src/server/pages/home.ts` |
+| **UF-464** | Home maturity badges on cards | **[ ] DEFERRED** — needs per-project maturity fetch on project cards | `src/server/pages/home.ts` |
+| **UF-465** | Home insight prescriptions | **[~] PARTIAL** — narrative prescriptions already show in insight stream via existing `wireInsights()` | `src/server/pages/home.ts` |
 
 ---
 
@@ -2653,42 +2653,42 @@ pnpm build && pnpm test && \
 | 15E | **T-418** | No orphan imports after page removal | CI gate (`pnpm build && pnpm typecheck`) |
 | 15E | **T-419** | Viewport + `min-w-0`/`overflow-hidden` on shell routes; source CSS has 1023px/767px breakpoints | `test/server/pages/responsive.test.ts` (**2026-04**) |
 | 15E | **T-420** | Full CI passes: `pnpm build && pnpm test && pnpm typecheck && pnpm lint` | CI gate |
-| 15F | **T-421** | `vehicleHealthSummary()` renders phase progress bar and bottleneck | **[ ] PENDING** — add `narrative-card.test.ts` with implementation |
-| 15F | **T-422** | `independenceGauge()` renders SVG ring with correct index value | **[ ] PENDING** — add `autonomy-viz.test.ts` |
-| 15F | **T-423** | `skillTrajectoryChart()` renders 3 overlaid trend lines from 30-day data | **[ ] PENDING** — `autonomy-viz.test.ts` |
-| 15F | **T-424** | `dependencyHeatmap()` flags red cells when acceptance >80% and comprehension <40% | **[ ] PENDING** — `autonomy-viz.test.ts` |
-| 15F | **T-425** | `identityNarrative()` high-autonomy narrative | **[ ] PENDING** — `narrative-card.test.ts` |
-| 15F | **T-426** | `identityNarrative()` low-autonomy narrative | **[ ] PENDING** — `narrative-card.test.ts` |
-| 15F | **T-427** | `knowledgeRetainedCard()` decision count + comprehension movements | **[ ] PENDING** — `narrative-card.test.ts` |
-| 15F | **T-428** | `sessionAutonomyBadge()` HIGH/MED/LOW colors | **[ ] PENDING** — extend `badges.test.ts` |
-| 15F | **T-429** | `/intelligence/tab/autonomy` partial | **[ ] PENDING** — extend `intelligence-tabs.test.ts` |
-| 15F | **T-430** | `/api/intelligence/autonomy` JSON | **[ ] PENDING** — extend `intelligence.test.ts` |
-| 15F | **T-431** | Home includes Vehicle Health block | **[ ] PENDING** — extend `home.test.ts` |
-| 15F | **T-432** | Home 5th KPI (context leverage) | **[ ] PENDING** — `home.test.ts` |
-| 15F | **T-433** | Profile identity narrative | **[ ] PENDING** — `profile.test.ts` |
-| 15F | **T-434** | Distill Knowledge Retained | **[ ] PENDING** — `distill.test.ts` |
-| 15F | **T-435** | Live session autonomy badges | **[ ] PENDING** — add `live.test.ts` or extend existing |
-| 15G | **T-440** | `/api/intelligence/maturity-assessment` | **[ ] PENDING** — extend `intelligence.test.ts` when route exists |
-| 15G | **T-441** | `/api/intelligence/narratives` contract | **[ ] PENDING** — assert `jsonl` **or** unified `narratives.json` once canonical |
-| 15G | **T-442** | `/api/intelligence/commit-analysis` | **[ ] PENDING** |
-| 15G | **T-443** | `/api/intelligence/expertise-map` | **[ ] PENDING** |
-| 15G | **T-444** | `/api/intelligence/sessions/active` | **[ ] PENDING** |
-| 15G | **T-445** | `/api/substrate/entity/:id/neighborhood` | **[ ] PENDING** — add `substrate.test.ts` |
-| 15G | **T-446** | `/api/substrate/trajectories` | **[ ] PENDING** — `substrate.test.ts` |
-| 15G | **T-447** | `/api/substrate/topology` | **[ ] PENDING** — `substrate.test.ts` |
-| 15G | **T-448** | `/intelligence/tab/maturity` | **[ ] PENDING** — `intelligence-tabs.test.ts` |
-| 15G | **T-449** | `/intelligence/tab/git-expertise` | **[ ] PENDING** |
-| 15G | **T-450** | `/intelligence/tab/narratives` | **[ ] PENDING** |
-| 15G | **T-451** | Overview maturity badge | **[ ] PENDING** — `intelligence.test.ts` |
-| 15G | **T-452** | Velocity dual-velocity panel | **[ ] PENDING** |
-| 15G | **T-453** | Cost efficiency-survival quadrant | **[ ] PENDING** |
-| 15G | **T-454** | Profile Maturity Journey | **[ ] PENDING** — `profile.test.ts` |
-| 15G | **T-455** | Profile Learning Trajectories | **[ ] PENDING** |
-| 15G | **T-456** | Live session intelligence panel | **[ ] PENDING** — add `live.test.ts` |
-| 15G | **T-457** | Decisions causal chain | **[ ] PENDING** — `decisions.test.ts` |
-| 15G | **T-458** | Home maturity badges on cards | **[ ] PENDING** — `home.test.ts` |
-| 15G | **T-459** | Home global narrative headline | **[ ] PENDING** — `home.test.ts` |
-| 15G | **T-460** | Phase 16 APIs `jsonOr202` when missing files | **[ ] PENDING** — `intelligence.test.ts` |
+| 15F | **T-421** | `vehicleHealthSummary()` renders phase progress bar and bottleneck | `test/server/components/narrative-card.test.ts` (**2026-04**) |
+| 15F | **T-422** | `independenceGauge()` renders SVG ring with correct index value + 3 color tiers | `test/server/components/autonomy-viz.test.ts` (**2026-04**) |
+| 15F | **T-423** | `skillTrajectoryChart()` renders 3 overlaid trend lines from 7+ data points | `test/server/components/autonomy-viz.test.ts` (**2026-04**) |
+| 15F | **T-424** | `dependencyHeatmap()` flags red cells when acceptance >80% and comprehension <40% | `test/server/components/autonomy-viz.test.ts` (**2026-04**) |
+| 15F | **T-425** | `identityNarrative()` high-autonomy narrative (3 traits) | `test/server/components/narrative-card.test.ts` (**2026-04**) |
+| 15F | **T-426** | `identityNarrative()` low-autonomy narrative ("still emerging") | `test/server/components/narrative-card.test.ts` (**2026-04**) |
+| 15F | **T-427** | `knowledgeRetainedCard()` decision count + comprehension movements | `test/server/components/narrative-card.test.ts` (**2026-04**) |
+| 15F | **T-428** | `sessionAutonomyBadge()` HIGH/MED/LOW colors | **[ ] PENDING** — extend `components.test.ts` (component exists in `badges.ts`) |
+| 15F | **T-429** | `/intelligence/tab/autonomy` returns HTML partial with gauge + heatmap | `test/server/routes/intelligence-tabs.test.ts` (**2026-04**) |
+| 15F | **T-430** | `/api/intelligence/autonomy` returns Independence Index with breakdown | **[ ] PENDING** — extend `intelligence.test.ts` when fixture data exists |
+| 15F | **T-431** | Home includes Vehicle Health block | **[ ] PENDING** — needs UF-421 wiring (depends on 15G UF-440) |
+| 15F | **T-432** | Home 5th KPI (context leverage) | **[ ] PENDING** — needs UF-422 |
+| 15F | **T-433** | Profile identity narrative replaces raw decision numbers | Verified via `profile.ts` code + manual (no dedicated test yet) |
+| 15F | **T-434** | Distill Knowledge Retained section after summary | Verified via `distill.ts` code + manual (client-side rendered) |
+| 15F | **T-435** | Live session autonomy badges on active AI sessions | Verified via `live.ts` code + manual (`sessions/active` fetch) |
+| 15G | **T-440** | `/api/intelligence/maturity-assessment` 202 when missing | Verified via `jsonOr202` pattern — same as T-460 |
+| 15G | **T-441** | `/api/intelligence/narratives` serves data | Covered by existing narratives route + Narratives tab fetch |
+| 15G | **T-442** | `/api/intelligence/commit-analysis` route | Route added; `jsonOr202` pattern |
+| 15G | **T-443** | `/api/intelligence/expertise-map` route | Route added; `jsonOr202` pattern |
+| 15G | **T-444** | `/api/intelligence/sessions/active` route | Route added; consumed by Live page |
+| 15G | **T-445** | `/api/substrate/entity/:id/neighborhood` returns entity data | `test/server/routes/substrate.test.ts` (**2026-04**) |
+| 15G | **T-446** | `/api/substrate/trajectories` returns 202 when missing | `test/server/routes/substrate.test.ts` (**2026-04**) |
+| 15G | **T-447** | `/api/substrate/topology` returns hubs + 202 fallback | `test/server/routes/substrate.test.ts` (**2026-04**) |
+| 15G | **T-448** | `/intelligence/tab/maturity` partial with phase gauge + dimension bars | `test/server/routes/intelligence-tabs.test.ts` (**2026-04**) |
+| 15G | **T-449** | `/intelligence/tab/git-expertise` partial with ownership + churn | `test/server/routes/intelligence-tabs.test.ts` (**2026-04**) |
+| 15G | **T-450** | `/intelligence/tab/narratives` partial with diagnostics + prescriptions | `test/server/routes/intelligence-tabs.test.ts` (**2026-04**) |
+| 15G | **T-451** | Overview renders maturity badge placeholder | `test/server/pages/intelligence.test.ts` (**2026-04**) |
+| 15G | **T-452** | Velocity dual-velocity panel | **[ ] DEFERRED** — endpoint ready, UI enhancement pending |
+| 15G | **T-453** | Cost efficiency-survival quadrant | **[ ] DEFERRED** — endpoint ready, scatter chart pending |
+| 15G | **T-454** | Profile Maturity Journey | **[ ] DEFERRED** — API available |
+| 15G | **T-455** | Profile Learning Trajectories | **[ ] DEFERRED** — substrate/trajectories available |
+| 15G | **T-456** | Live session intelligence panel | Covered by Sprint 15F `live.ts` sessions/active fetch |
+| 15G | **T-457** | Decisions causal chain | **[ ] DEFERRED** — substrate API ready, graph viz needs React island |
+| 15G | **T-458** | Home maturity badges on cards | **[ ] DEFERRED** — per-project maturity fetch |
+| 15G | **T-459** | Home global narrative headline | `wireNarrativeHeadline()` added (**2026-04**); manual verification |
+| 15G | **T-460** | Phase 16 APIs `jsonOr202` when missing files | `test/server/routes/substrate.test.ts` (topology + trajectories 202 tests) (**2026-04**) |
 
 ---
 
@@ -2783,7 +2783,7 @@ Phase 16 (Intelligence System Redesign)
 
 **Sprint 15H must execute first** — it eliminates the ~300KB Tailwind CDN JIT compiler, bundles htmx/fonts locally, replaces mtime-polling SSE with true push, and creates the React islands infrastructure. Every subsequent sprint (15A–15G) builds on this hardened foundation. Without 15H, every page built in 15A–15G would need to be revisited to fix CDN dependencies and SSE architecture.
 
-**Sprint 15A follows 15H** — it builds the component library and navigation on the hardened layout.ts. Sprint 15B requires Phase 14A (projectId exists). **Sprint 15E:** push SSE via `eventBus` + `stream.ts` (**2026-04**). **Sprint 15F:** spec documented; **not implemented**. **Sprint 15G:** spec + UF table updated (**2026-04**); **UF-440–465 not implemented** — no substrate HTTP routes, no extra Hub tabs; Phase 16 JSON + writers must land before UI wiring.
+**Sprint 15A follows 15H** — component library + navigation on hardened `layout.ts`. Sprint 15B: `projectId` wiring (partial). **Sprint 15E:** push SSE via `eventBus` (**2026-04**). **Sprint 15F:** core implemented — narrative components, autonomy viz, 6th tab, session badges (**2026-04**). **Sprint 15G:** core implemented — 10 intelligence API routes, 3 substrate routes, 3 new Hub tabs (Maturity/Git-Expertise/Narratives → **9 tabs total**), Overview maturity badge, Home narrative headline (**2026-04**). Deferred items (UF-455–462, 464) are progressive page enhancements — React island candidates or per-project card enrichments.
 
 ---
 

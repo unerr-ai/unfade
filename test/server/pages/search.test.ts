@@ -73,7 +73,7 @@ describe("Decisions page (GET /decisions — replaces Search)", () => {
     const app = createApp();
     const res = await app.request("/decisions");
     const html = await res.text();
-    expect(html).toContain("htmx.org");
+    expect(html).toContain("htmx.min.js");
   });
 });
 
