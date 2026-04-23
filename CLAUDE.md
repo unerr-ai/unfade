@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Context Management
+
+**NEVER read an entire document in one shot.** Architecture docs, design specs, and phase documents in `.internal/` are large (1000–4000+ lines). Reading them whole will overload context and degrade response quality.
+
+- **Read in chunks** — use `offset` + `limit` params (100–200 lines per read). Start with the table of contents or top-level summary, then drill into the specific section you need.
+- **Read only what you need** — if you need Sprint 15F status, read the Sprint 15F section, not the entire Phase 15 doc. If you need a schema, read the schema file, not the architecture doc that references it.
+- **Prefer code over docs** — the codebase is the source of truth. Read the actual `.ts`/`.go` files to verify implementation rather than trusting doc claims. Use Grep/Glob to find what you need.
+- **Don't stack large reads** — if you've already read 200+ lines of a doc in this conversation, avoid reading another large chunk unless the prior content has been compressed. Summarize findings before moving on.
+
 ## Project Overview
 
 **Unfade** is an open-source CLI tool that passively captures engineering reasoning from developer workflows (git, AI sessions, terminal), distills it into queryable knowledge, and builds a compounding developer identity profile.
