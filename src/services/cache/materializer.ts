@@ -15,12 +15,8 @@ import {
   readEpochFile,
   saveCursor,
 } from "./cursor.js";
-import type { CacheManager } from "./manager.js";
-
-type DbLike = {
-  run(sql: string, params?: unknown[]): void;
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-};
+import { KNOWN_METADATA_FIELDS } from "./duckdb-schema.js";
+import type { CacheManager, DbLike } from "./manager.js";
 
 // ---------------------------------------------------------------------------
 // JSONL byte-counting helper
@@ -61,18 +57,23 @@ function clampBytesProcessed(bytesProcessed: number, fullContent: string, file: 
 
 /**
  * Incremental materialization: only process new lines past the cursor.
+ * Writes to both SQLite (operational) and DuckDB (analytical).
  * Returns the number of new rows upserted.
  */
 export async function materializeIncremental(cache: CacheManager, cwd?: string): Promise<number> {
   const db = await cache.getDb();
   if (!db) return 0;
 
+  const duckDb = cache.analytics;
+
   const cursor = loadCursor(cwd);
   let totalNew = 0;
 
-  totalNew += materializeEventsIncremental(db, cursor, cwd);
-  totalNew += materializeDecisionsIncremental(db, cursor, cwd);
-  totalNew += materializeMetricsIncremental(db, cursor, cwd);
+  totalNew += materializeEventsIncremental(db, duckDb, cursor, cwd);
+  totalNew += await materializeDecisionsIncremental(db, duckDb, cursor, cwd);
+  totalNew += materializeMetricsIncremental(db, duckDb, cursor, cwd);
+
+  await cache.flushDuckDb();
 
   saveCursor(cursor, cwd);
   await cache.save();
@@ -86,17 +87,23 @@ export async function materializeIncremental(cache: CacheManager, cwd?: string):
 
 /**
  * Full rebuild: DELETE all rows and replay from JSONL source of truth.
- * Resets cursor. Used for repair or first-time population.
+ * Rebuilds both SQLite and DuckDB. Resets cursor.
  */
 export async function rebuildAll(cache: CacheManager, cwd?: string): Promise<number> {
   const db = await cache.getDb();
   if (!db) return 0;
 
+  const duckDb = cache.analytics;
+
+  await cache.resetDuckDbSchema();
+
   let totalRows = 0;
 
-  totalRows += rebuildEvents(db, cwd);
-  totalRows += rebuildDecisions(db, cwd);
-  totalRows += rebuildMetrics(db, cwd);
+  totalRows += rebuildEvents(db, duckDb, cwd);
+  totalRows += rebuildDecisions(db, duckDb, cwd);
+  totalRows += rebuildMetrics(db, duckDb, cwd);
+
+  await cache.flushDuckDb();
 
   const cursor: MaterializerCursor = { schemaVersion: 1, streams: {} };
   buildCursorFromCurrentState(cursor, cwd);
@@ -113,6 +120,7 @@ export async function rebuildAll(cache: CacheManager, cwd?: string): Promise<num
 
 function materializeEventsIncremental(
   db: DbLike,
+  duckDb: DbLike | null,
   cursor: MaterializerCursor,
   cwd?: string,
 ): number {
@@ -198,6 +206,7 @@ function materializeEventsIncremental(
       try {
         const event = JSON.parse(trimmed);
         upsertEvent(db, event);
+        if (duckDb) upsertEventDuck(duckDb, event);
         lastValidLine = trimmed;
         totalNew++;
       } catch {
@@ -227,11 +236,12 @@ function materializeEventsIncremental(
   return totalNew;
 }
 
-function materializeDecisionsIncremental(
-  db: DbLike,
+async function materializeDecisionsIncremental(
+  _db: DbLike,
+  duckDb: DbLike | null,
   cursor: MaterializerCursor,
   cwd?: string,
-): number {
+): Promise<number> {
   const graphDir = getGraphDir(cwd);
   const filePath = join(graphDir, "decisions.jsonl");
   if (!existsSync(filePath)) return 0;
@@ -250,7 +260,7 @@ function materializeDecisionsIncremental(
   let bytesProcessed = startOffset;
   const endsWithNewline = newContent.endsWith("\n");
 
-  const existingCount = getDecisionCount(db);
+  const existingCount = duckDb ? await getDecisionCount(duckDb) : 0;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -270,7 +280,7 @@ function materializeDecisionsIncremental(
     try {
       const dec = JSON.parse(trimmed);
       const id = `${dec.date}-${existingCount + count}`;
-      upsertDecision(db, dec, id);
+      if (duckDb) upsertDecisionDuck(duckDb, dec, id);
       lastValidLine = trimmed;
       count++;
     } catch {
@@ -292,7 +302,8 @@ function materializeDecisionsIncremental(
 }
 
 function materializeMetricsIncremental(
-  db: DbLike,
+  _db: DbLike,
+  duckDb: DbLike | null,
   cursor: MaterializerCursor,
   cwd?: string,
 ): number {
@@ -331,7 +342,7 @@ function materializeMetricsIncremental(
 
     try {
       const snap = JSON.parse(trimmed);
-      upsertMetricSnapshot(db, snap);
+      if (duckDb) upsertMetricSnapshotDuck(duckDb, snap);
       lastValidLine = trimmed;
       count++;
     } catch {
@@ -356,7 +367,7 @@ function materializeMetricsIncremental(
 // Full rebuild helpers
 // ---------------------------------------------------------------------------
 
-function rebuildEvents(db: DbLike, cwd?: string): number {
+function rebuildEvents(db: DbLike, duckDb: DbLike | null, cwd?: string): number {
   const eventsDir = getEventsDir(cwd);
   if (!existsSync(eventsDir)) return 0;
 
@@ -370,7 +381,9 @@ function rebuildEvents(db: DbLike, cwd?: string): number {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
-        upsertEvent(db, JSON.parse(trimmed));
+        const event = JSON.parse(trimmed);
+        upsertEvent(db, event);
+        if (duckDb) upsertEventDuck(duckDb, event);
         count++;
       } catch {
         // skip malformed
@@ -382,12 +395,11 @@ function rebuildEvents(db: DbLike, cwd?: string): number {
   return count;
 }
 
-function rebuildDecisions(db: DbLike, cwd?: string): number {
+function rebuildDecisions(_db: DbLike, duckDb: DbLike | null, cwd?: string): number {
   const graphDir = getGraphDir(cwd);
   const decisionsPath = join(graphDir, "decisions.jsonl");
   if (!existsSync(decisionsPath)) return 0;
 
-  db.run("DELETE FROM decisions");
   let count = 0;
   const content = readFileSync(decisionsPath, "utf-8");
 
@@ -396,7 +408,8 @@ function rebuildDecisions(db: DbLike, cwd?: string): number {
     if (!trimmed) continue;
     try {
       const dec = JSON.parse(trimmed);
-      upsertDecision(db, dec, `${dec.date}-${count}`);
+      const id = `${dec.date}-${count}`;
+      if (duckDb) upsertDecisionDuck(duckDb, dec, id);
       count++;
     } catch {
       // skip malformed
@@ -406,12 +419,11 @@ function rebuildDecisions(db: DbLike, cwd?: string): number {
   return count;
 }
 
-function rebuildMetrics(db: DbLike, cwd?: string): number {
+function rebuildMetrics(_db: DbLike, duckDb: DbLike | null, cwd?: string): number {
   const metricsDir = getMetricsDir(cwd);
   const snapshotPath = join(metricsDir, "daily.jsonl");
   if (!existsSync(snapshotPath)) return 0;
 
-  db.run("DELETE FROM metric_snapshots");
   let count = 0;
   const content = readFileSync(snapshotPath, "utf-8");
 
@@ -419,7 +431,8 @@ function rebuildMetrics(db: DbLike, cwd?: string): number {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      upsertMetricSnapshot(db, JSON.parse(trimmed));
+      const snap = JSON.parse(trimmed);
+      if (duckDb) upsertMetricSnapshotDuck(duckDb, snap);
       count++;
     } catch {
       // skip malformed
@@ -454,10 +467,178 @@ function upsertEvent(db: DbLike, event: Record<string, unknown>): void {
   );
 }
 
-function upsertDecision(db: DbLike, dec: Record<string, unknown>, id: string): void {
-  db.run(
+// SQLite upsertDecision and upsertMetricSnapshot removed — decisions and metrics
+// are now DuckDB-only (see upsertDecisionDuck / upsertMetricSnapshotDuck below).
+
+function refreshFts(db: DbLike): void {
+  try {
+    db.run("DELETE FROM events_fts");
+    db.run(
+      "INSERT INTO events_fts (content_summary, content_detail) SELECT content_summary, content_detail FROM events",
+    );
+  } catch {
+    // FTS5 might not be available
+  }
+}
+
+async function getDecisionCount(db: DbLike): Promise<number> {
+  try {
+    const result = await db.exec("SELECT COUNT(*) FROM decisions");
+    return (result[0]?.values[0]?.[0] as number) ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DuckDB typed column extraction + upsert
+// ---------------------------------------------------------------------------
+
+interface TypedEventColumns {
+  ai_tool: string | null;
+  session_id: string | null;
+  conversation_id: string | null;
+  conversation_title: string | null;
+  turn_count: number | null;
+  model_id: string | null;
+  environment: string | null;
+  prompt_count: number | null;
+  human_direction_score: number | null;
+  prompt_specificity: number | null;
+  modification_after_accept: boolean | null;
+  course_correction: boolean | null;
+  domain_injection: boolean | null;
+  alternative_evaluation: boolean | null;
+  rejection_count: number | null;
+  execution_phase: string | null;
+  outcome: string | null;
+  intent_summary: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  estimated_cost: number | null;
+  files_referenced: string[];
+  files_modified: string[];
+  metadata_extra: string;
+}
+
+function extractTypedColumns(meta: Record<string, unknown>): TypedEventColumns {
+  const signals = (meta.direction_signals ?? {}) as Record<string, unknown>;
+
+  const extra: Record<string, unknown> = {};
+  for (const key of Object.keys(meta)) {
+    if (!KNOWN_METADATA_FIELDS.has(key)) extra[key] = meta[key];
+  }
+
+  return {
+    ai_tool: (meta.ai_tool as string) ?? null,
+    session_id: (meta.session_id as string) ?? null,
+    conversation_id: (meta.conversation_id as string) ?? null,
+    conversation_title: (meta.conversation_title as string) ?? null,
+    turn_count: (meta.turn_count as number) ?? null,
+    model_id: (meta.model_id as string) ?? (meta.model as string) ?? null,
+    environment: (meta.environment as string) ?? null,
+    prompt_count: (meta.prompt_count as number) ?? null,
+    human_direction_score: (signals.human_direction_score as number) ?? null,
+    prompt_specificity: (signals.prompt_specificity as number) ?? null,
+    modification_after_accept: (signals.modification_after_accept as boolean) ?? null,
+    course_correction: (signals.course_correction as boolean) ?? null,
+    domain_injection: (signals.domain_injection as boolean) ?? null,
+    alternative_evaluation: (signals.alternative_evaluation as boolean) ?? null,
+    rejection_count: (signals.rejection_count as number) ?? null,
+    execution_phase: (meta.execution_phase as string) ?? null,
+    outcome: (meta.outcome as string) ?? null,
+    intent_summary: (meta.intent_summary as string) ?? null,
+    tokens_in: (meta.tokens_in as number) ?? null,
+    tokens_out: (meta.tokens_out as number) ?? null,
+    estimated_cost: (meta.estimated_cost as number) ?? null,
+    files_referenced: Array.isArray(meta.files_referenced) ? (meta.files_referenced as string[]) : [],
+    files_modified: Array.isArray(meta.files_modified) ? (meta.files_modified as string[]) : [],
+    metadata_extra: JSON.stringify(Object.keys(extra).length > 0 ? extra : null),
+  };
+}
+
+const DUCK_EVENT_INSERT = `INSERT OR REPLACE INTO events (
+  id, project_id, ts, source, type,
+  content_summary, content_detail, content_branch, content_project, content_files,
+  git_repo, git_branch, git_commit_hash,
+  ai_tool, session_id, conversation_id, conversation_title,
+  turn_count, model_id, environment, prompt_count,
+  human_direction_score, prompt_specificity,
+  modification_after_accept, course_correction,
+  domain_injection, alternative_evaluation, rejection_count,
+  execution_phase, outcome, intent_summary,
+  tokens_in, tokens_out, estimated_cost,
+  files_referenced, files_modified,
+  metadata_extra
+) VALUES (
+  $1, $2, $3::TIMESTAMP, $4, $5,
+  $6, $7, $8, $9, $10,
+  $11, $12, $13,
+  $14, $15, $16, $17,
+  $18, $19, $20, $21,
+  $22, $23,
+  $24, $25,
+  $26, $27, $28,
+  $29, $30, $31,
+  $32, $33, $34,
+  $35, $36,
+  $37
+)`;
+
+function upsertEventDuck(duckDb: DbLike, event: Record<string, unknown>): void {
+  const content = (event.content ?? {}) as Record<string, unknown>;
+  const git = (event.gitContext ?? {}) as Record<string, unknown>;
+  const meta = (event.metadata ?? {}) as Record<string, unknown>;
+  const typed = extractTypedColumns(meta);
+  const projectId = (event.projectId as string) || (content.project as string) || "";
+
+  const contentFiles = Array.isArray(content.files) ? content.files : [];
+
+  duckDb.run(DUCK_EVENT_INSERT, [
+    event.id,
+    projectId,
+    event.timestamp,
+    event.source,
+    event.type,
+    content.summary ?? null,
+    content.detail ?? null,
+    content.branch ?? null,
+    content.project ?? null,
+    contentFiles,
+    git.repo ?? null,
+    git.branch ?? null,
+    git.commitHash ?? null,
+    typed.ai_tool,
+    typed.session_id,
+    typed.conversation_id,
+    typed.conversation_title,
+    typed.turn_count,
+    typed.model_id,
+    typed.environment,
+    typed.prompt_count,
+    typed.human_direction_score,
+    typed.prompt_specificity,
+    typed.modification_after_accept,
+    typed.course_correction,
+    typed.domain_injection,
+    typed.alternative_evaluation,
+    typed.rejection_count,
+    typed.execution_phase,
+    typed.outcome,
+    typed.intent_summary,
+    typed.tokens_in,
+    typed.tokens_out,
+    typed.estimated_cost,
+    typed.files_referenced,
+    typed.files_modified,
+    typed.metadata_extra,
+  ]);
+}
+
+function upsertDecisionDuck(duckDb: DbLike, dec: Record<string, unknown>, id: string): void {
+  duckDb.run(
     `INSERT OR REPLACE INTO decisions (id, project_id, date, domain, description, rationale, alternatives_count, hds, direction_class)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ($1, $2, $3::DATE, $4, $5, $6, $7, $8, $9)`,
     [
       id,
       (dec.projectId as string) ?? "",
@@ -472,43 +653,27 @@ function upsertDecision(db: DbLike, dec: Record<string, unknown>, id: string): v
   );
 }
 
-function upsertMetricSnapshot(db: DbLike, snap: Record<string, unknown>): void {
-  db.run(
+function upsertMetricSnapshotDuck(duckDb: DbLike, snap: Record<string, unknown>): void {
+  duckDb.run(
     `INSERT OR REPLACE INTO metric_snapshots (date, project_id, rdi, dcs, aq, cwi, api_score, decisions_count, labels)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ($1::DATE, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       snap.date,
       (snap.projectId as string) ?? "",
-      snap.rdi,
-      snap.dcs,
-      snap.aq,
-      snap.cwi,
-      snap.apiScore,
+      snap.rdi ?? null,
+      snap.dcs ?? null,
+      snap.aq ?? null,
+      snap.cwi ?? null,
+      snap.apiScore ?? null,
       snap.decisionsCount ?? 0,
       JSON.stringify(snap.identityLabels ?? []),
     ],
   );
 }
 
-function refreshFts(db: DbLike): void {
-  try {
-    db.run("DELETE FROM events_fts");
-    db.run(
-      "INSERT INTO events_fts (content_summary, content_detail) SELECT content_summary, content_detail FROM events",
-    );
-  } catch {
-    // FTS5 might not be available
-  }
-}
-
-function getDecisionCount(db: DbLike): number {
-  try {
-    const result = db.exec("SELECT COUNT(*) FROM decisions");
-    return (result[0]?.values[0]?.[0] as number) ?? 0;
-  } catch {
-    return 0;
-  }
-}
+// ---------------------------------------------------------------------------
+// Cursor state builder
+// ---------------------------------------------------------------------------
 
 function buildCursorFromCurrentState(cursor: MaterializerCursor, cwd?: string): void {
   const eventsDir = getEventsDir(cwd);

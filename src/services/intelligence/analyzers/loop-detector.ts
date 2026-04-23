@@ -8,57 +8,46 @@ import type {
   RejectionIndex,
   StuckLoop,
 } from "../../../schemas/intelligence/rejections.js";
+import { logger } from "../../../utils/logger.js";
+import { classifyDomainFast } from "../domain-classifier.js";
+import type {
+  IncrementalAnalyzer,
+  IncrementalState,
+  NewEventBatch,
+  UpdateResult,
+} from "../incremental-state.js";
 import { contentHash, cosineSimilarity } from "../utils/text-similarity.js";
-import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./index.js";
+import type { AnalyzerContext, AnalyzerResult } from "./index.js";
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+interface LoopDetectorState {
+  output: RejectionIndex;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const SIMILARITY_THRESHOLD = 0.7;
 const STUCK_LOOP_MIN = 3;
 
-export const loopDetectorAnalyzer: Analyzer = {
-  name: "loop-detector",
-  outputFile: "rejections.idx.json",
-  minDataPoints: 5,
+// ---------------------------------------------------------------------------
+// Compute helpers — all take db (analytics) only
+// ---------------------------------------------------------------------------
 
-  async run(ctx: AnalyzerContext): Promise<AnalyzerResult> {
-    const db = ctx.db;
-    const now = new Date().toISOString();
-
-    const entries = indexLowDirectionSessions(db);
-
-    // 12C.14: Also detect intent_summary recurrence + outcome=failure chains
-    const intentLoops = detectIntentRecurrence(db);
-
-    const stuckLoops = [...detectStuckLoops(entries), ...intentLoops];
-
-    const index: RejectionIndex = {
-      entries: entries.slice(-200),
-      stuckLoops,
-      updatedAt: now,
-    };
-
-    const sourceEventIds = entries
-      .slice(0, 20)
-      .map((e) => e.eventId)
-      .filter(Boolean);
-
-    return {
-      analyzer: "loop-detector",
-      updatedAt: now,
-      data: index as unknown as Record<string, unknown>,
-      insightCount: stuckLoops.length,
-      sourceEventIds,
-    };
-  },
-};
-
-function indexLowDirectionSessions(db: AnalyzerContext["db"]): RejectionEntry[] {
+async function indexLowDirectionSessions(
+  db: AnalyzerContext["analytics"],
+): Promise<RejectionEntry[]> {
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT id, ts, content_summary, content_detail,
-             json_extract(metadata, '$.direction_signals.human_direction_score') as hds
+             human_direction_score as hds
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) < 0.3
+        AND human_direction_score < 0.3
       ORDER BY ts DESC
       LIMIT 200
     `);
@@ -69,7 +58,7 @@ function indexLowDirectionSessions(db: AnalyzerContext["db"]): RejectionEntry[] 
       const summary = (row[2] as string) ?? "";
       const detail = (row[3] as string) ?? "";
       const text = `${summary} ${detail}`;
-      const domain = classifyDomain(text);
+      const domain = classifyDomainFast(text);
 
       return {
         eventId: (row[0] as string) ?? "",
@@ -176,34 +165,33 @@ function extractApproach(text: string): string {
   return "general-approach";
 }
 
-/**
- * 12C.14: Detect loops via intent_summary recurrence + outcome=failure chains.
- * When the same intent_summary appears 3+ times with failure outcomes, flag as stuck.
- */
-function detectIntentRecurrence(db: AnalyzerContext["db"]): StuckLoop[] {
+async function detectIntentRecurrence(db: AnalyzerContext["analytics"]): Promise<StuckLoop[]> {
   try {
-    const result = db.exec(`
+    const result = await db.exec(
+      `
       SELECT
-        json_extract(metadata, '$.intent_summary') as intent,
+        intent_summary as intent,
         COUNT(*) as cnt,
         MIN(ts) as first_seen,
         MAX(ts) as last_seen,
-        SUM(CASE WHEN json_extract(metadata, '$.outcome') = 'failure' THEN 1 ELSE 0 END) as failures
+        SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) as failures
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.intent_summary') IS NOT NULL
-        AND ts >= datetime('now', '-7 days')
-      GROUP BY json_extract(metadata, '$.intent_summary')
-      HAVING cnt >= ${STUCK_LOOP_MIN} AND failures >= 2
+        AND intent_summary IS NOT NULL
+        AND ts >= now() - INTERVAL '7 days'
+      GROUP BY intent_summary
+      HAVING cnt >= $1 AND failures >= 2
       ORDER BY cnt DESC
       LIMIT 10
-    `);
+    `,
+      [STUCK_LOOP_MIN],
+    );
 
     if (!result[0]?.values.length) return [];
 
     return result[0].values.map((row) => {
       const intent = (row[0] as string) ?? "unknown";
-      const domain = classifyDomain(intent);
+      const domain = classifyDomainFast(intent);
       return {
         domain,
         approach: intent.slice(0, 100),
@@ -218,12 +206,117 @@ function detectIntentRecurrence(db: AnalyzerContext["db"]): StuckLoop[] {
   }
 }
 
-function classifyDomain(text: string): string {
-  const lower = text.toLowerCase();
-  if (/api|endpoint|route|handler/.test(lower)) return "api";
-  if (/auth|login|session/.test(lower)) return "auth";
-  if (/database|sql|query/.test(lower)) return "database";
-  if (/test|spec|mock/.test(lower)) return "testing";
-  if (/deploy|docker|ci/.test(lower)) return "infra";
-  return "general";
+// ---------------------------------------------------------------------------
+// Full computation — assembles entries + loops into a RejectionIndex
+// ---------------------------------------------------------------------------
+
+async function computeLoopIndex(db: AnalyzerContext["analytics"]): Promise<RejectionIndex> {
+  const now = new Date().toISOString();
+
+  const entries = await indexLowDirectionSessions(db);
+  const intentLoops = await detectIntentRecurrence(db);
+  const stuckLoops = [...detectStuckLoops(entries), ...intentLoops];
+
+  return {
+    entries: entries.slice(-200),
+    stuckLoops,
+    updatedAt: now,
+  };
 }
+
+// ---------------------------------------------------------------------------
+// IncrementalAnalyzer export
+// ---------------------------------------------------------------------------
+
+export const loopDetectorAnalyzer: IncrementalAnalyzer<LoopDetectorState, RejectionIndex> = {
+  name: "loop-detector",
+  outputFile: "rejections.json",
+  eventFilter: { sources: ["ai-session", "mcp-active"] },
+  minDataPoints: 5,
+
+  async initialize(ctx: AnalyzerContext): Promise<IncrementalState<LoopDetectorState>> {
+    logger.debug("loop-detector: initializing");
+    const output = await computeLoopIndex(ctx.analytics);
+    return {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: output.entries.length,
+      updatedAt: output.updatedAt,
+    };
+  },
+
+  async update(
+    state: IncrementalState<LoopDetectorState>,
+    newEvents: NewEventBatch,
+    ctx: AnalyzerContext,
+  ): Promise<UpdateResult<LoopDetectorState>> {
+    if (newEvents.events.length === 0) {
+      return { state, changed: false };
+    }
+
+    const output = await computeLoopIndex(ctx.analytics);
+    const oldLoopCount = state.value.output.stuckLoops.length;
+    const newLoopCount = output.stuckLoops.length;
+    const oldEntryCount = state.value.output.entries.length;
+    const newEntryCount = output.entries.length;
+    const changed = newLoopCount !== oldLoopCount || Math.abs(newEntryCount - oldEntryCount) > 2;
+
+    const newState: IncrementalState<LoopDetectorState> = {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: state.eventCount + newEvents.events.length,
+      updatedAt: output.updatedAt,
+    };
+
+    return {
+      state: newState,
+      changed,
+      changeMagnitude: Math.abs(newLoopCount - oldLoopCount),
+    };
+  },
+
+  derive(state: IncrementalState<LoopDetectorState>): RejectionIndex {
+    return state.value.output;
+  },
+
+  contributeEntities(state, batch) {
+    const contributions: import("../../substrate/substrate-engine.js").EntityContribution[] = [];
+    const output = state.value.output;
+    const stuckLoops =
+      (output as unknown as { stuckLoops?: Array<{ domain?: string }> }).stuckLoops ?? [];
+    const loopCount = stuckLoops.length;
+    const loopRisk = Math.min(1, loopCount * 0.2);
+
+    if (loopRisk <= 0.3) return contributions;
+
+    for (const evt of batch.events) {
+      if (!evt.sessionId || evt.source !== "ai-session") continue;
+
+      const relationships: import("../../substrate/substrate-engine.js").EntityContribution["relationships"] =
+        [];
+      if (loopRisk > 0.7) {
+        relationships.push({
+          targetEntityId: "pat-iterative-loop",
+          type: "demonstrates",
+          weight: loopRisk,
+          evidence: "loop-risk-threshold",
+        });
+      }
+
+      contributions.push({
+        entityId: `wu-${evt.sessionId}`,
+        entityType: "work-unit",
+        projectId: evt.projectId,
+        analyzerName: "loop-detector",
+        stateFragment: {
+          loopRisk,
+          loopStatus: loopRisk > 0.7 ? "stuck" : "at-risk",
+          stuckLoopCount: loopCount,
+        },
+        relationships,
+      });
+    }
+
+    return contributions;
+  },
+};

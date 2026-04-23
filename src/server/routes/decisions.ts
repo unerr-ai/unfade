@@ -10,6 +10,9 @@ export const decisionsRoutes = new Hono();
 decisionsRoutes.get("/decisions", (c) => {
   const limitStr = c.req.query("limit");
   const domain = c.req.query("domain");
+  const q = c.req.query("q");
+  const period = c.req.query("period");
+  const project = c.req.query("project");
 
   const input: Record<string, unknown> = {};
   if (limitStr) {
@@ -17,6 +20,9 @@ decisionsRoutes.get("/decisions", (c) => {
     if (!Number.isNaN(num)) input.limit = num;
   }
   if (domain) input.domain = domain;
+  if (q) input.q = q;
+  if (period === "7d" || period === "30d" || period === "90d") input.period = period;
+  if (project) input.project = project;
 
   const parsed = DecisionsInputSchema.safeParse(input);
 

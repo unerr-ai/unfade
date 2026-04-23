@@ -1,13 +1,20 @@
 // FILE: src/services/intelligence/cross-analyzer.ts
-// 11E.1/11E.10: Cross-analyzer correlation module.
-// Computes pairwise correlations between analyzer outputs. Requires Pearson r > 0.6 AND
-// temporal ordering to assert causality. Confidence decays 0.7× per week after 14 days.
+// Dynamic cross-analyzer correlation discovery.
+// After the DAG scheduler runs, any pair of analyzers that both changed in
+// this cycle have their time-series re-correlated. Replaces the 4 hardcoded
+// pairs with open-ended N² discovery. Maintains a correlation registry with
+// confidence decay for stale pairs.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getIntelligenceDir } from "../../utils/paths.js";
 import type { AnalyzerContext } from "./analyzers/index.js";
+import type { IncrementalState, UpdateResult } from "./incremental-state.js";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 export interface CorrelationPair {
   id: string;
@@ -15,7 +22,7 @@ export interface CorrelationPair {
   b: string;
   r: number;
   direction: "positive" | "negative";
-  temporalLag: number; // minutes: positive means A precedes B
+  temporalLag: number;
   confidence: number;
   computedAt: string;
   dataPoints: number;
@@ -24,48 +31,190 @@ export interface CorrelationPair {
 export interface CorrelationReport {
   correlations: CorrelationPair[];
   updatedAt: string;
+  discoveredPairs: number;
+  checkedPairs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
 const MIN_DATA_POINTS = 7;
-const MIN_R = 0.6;
+const MIN_R = 0.5;
 const DECAY_START_DAYS = 14;
 const DECAY_FACTOR_PER_WEEK = 0.7;
 const MIN_CONFIDENCE = 0.3;
 
 /**
- * Compute cross-analyzer correlations from intelligence outputs and event data.
- * Called after all 8 analyzers have produced output.
+ * Time-series query templates for each analyzer.
+ * Maps analyzer name → SQL that produces daily numeric values.
+ * Each query must return rows of (day DATE, value FLOAT).
  */
-export function computeCorrelations(ctx: AnalyzerContext): CorrelationReport {
+const ANALYZER_SERIES: Record<string, string> = {
+  efficiency: `
+    SELECT ts::DATE as day, AVG(human_direction_score) as value
+    FROM events WHERE source IN ('ai-session', 'mcp-active')
+      AND ts >= now() - INTERVAL '30 days' AND human_direction_score IS NOT NULL
+    GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
+
+  "loop-detector": `
+    SELECT ts::DATE as day,
+      SUM(CASE WHEN outcome IN ('failed', 'abandoned') THEN 1 ELSE 0 END)::FLOAT / GREATEST(COUNT(*), 1) as value
+    FROM events WHERE source IN ('ai-session', 'mcp-active')
+      AND ts >= now() - INTERVAL '30 days'
+    GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
+
+  "comprehension-radar": `
+    SELECT e.ts::DATE as day, AVG(cp.score) as value
+    FROM comprehension_proxy cp JOIN events e ON cp.event_id = e.id
+    WHERE e.ts >= now() - INTERVAL '30 days'
+    GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
+
+  "velocity-tracker": `
+    SELECT ts::DATE as day, AVG(turn_count)::FLOAT as value
+    FROM events WHERE source IN ('ai-session', 'mcp-active')
+      AND ts >= now() - INTERVAL '30 days' AND turn_count IS NOT NULL
+    GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
+
+  "cost-attribution": `
+    SELECT ts::DATE as day, SUM(COALESCE(estimated_cost, 0)) as value
+    FROM events WHERE source IN ('ai-session', 'mcp-active')
+      AND ts >= now() - INTERVAL '30 days'
+    GROUP BY day ORDER BY day`,
+
+  "prompt-patterns": `
+    SELECT ts::DATE as day, AVG(prompt_specificity) as value
+    FROM events WHERE source IN ('ai-session', 'mcp-active')
+      AND ts >= now() - INTERVAL '30 days' AND prompt_specificity IS NOT NULL
+    GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
+
+  "blind-spot-detector": `
+    SELECT ts::DATE as day,
+      SUM(CASE WHEN human_direction_score < 0.2 THEN 1 ELSE 0 END)::FLOAT / GREATEST(COUNT(*), 1) as value
+    FROM events WHERE source IN ('ai-session', 'mcp-active')
+      AND ts >= now() - INTERVAL '30 days' AND human_direction_score IS NOT NULL
+    GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
+
+  "decision-replay": `
+    SELECT date as day, COUNT(*)::FLOAT as value
+    FROM decisions WHERE date >= (now() - INTERVAL '30 days')::DATE
+    GROUP BY date ORDER BY date`,
+
+  "direction-by-file": `
+    SELECT ts::DATE as day, AVG(human_direction_score) as value
+    FROM events WHERE ts >= now() - INTERVAL '30 days' AND human_direction_score IS NOT NULL
+    GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
+
+  "window-aggregator": `
+    SELECT window_end::DATE as day, AVG(direction_density) as value
+    FROM direction_windows WHERE window_end >= now() - INTERVAL '30 days'
+    GROUP BY day ORDER BY day`,
+
+  "token-proxy": `
+    SELECT date as day, SUM(estimated_cost) as value
+    FROM token_proxy_spend WHERE date >= (now() - INTERVAL '30 days')::DATE
+    GROUP BY date ORDER BY date`,
+};
+
+// ---------------------------------------------------------------------------
+// Core discovery function (called by scheduler)
+// ---------------------------------------------------------------------------
+
+export async function discoverCorrelations(
+  changedAnalyzers: Map<string, UpdateResult<unknown>>,
+  ctx: AnalyzerContext,
+): Promise<CorrelationReport> {
   const now = new Date().toISOString();
+  const existing = loadExistingCorrelations();
+  const changedNames = [...changedAnalyzers.keys()].filter((n) => ANALYZER_SERIES[n]);
 
-  // Load existing correlations for decay
-  const existing = loadExistingCorrelations(ctx.repoRoot);
+  if (changedNames.length < 2) {
+    const decayed = applyDecay(existing.correlations, now);
+    const report: CorrelationReport = {
+      correlations: decayed,
+      updatedAt: now,
+      discoveredPairs: 0,
+      checkedPairs: 0,
+    };
+    writeCorrelations(report);
+    return report;
+  }
 
-  // Compute fresh correlations from DB time-series
+  const seriesCache = new Map<string, Map<string, number>>();
+  for (const name of changedNames) {
+    const sql = ANALYZER_SERIES[name];
+    if (!sql) continue;
+    try {
+      const result = await ctx.analytics.exec(sql);
+      if (result[0]?.values.length) {
+        const series = new Map<string, number>();
+        for (const row of result[0].values) {
+          const day = String(row[0]);
+          const val = (row[1] as number) ?? 0;
+          series.set(day, val);
+        }
+        seriesCache.set(name, series);
+      }
+    } catch {
+      // skip this analyzer
+    }
+  }
+
   const fresh: CorrelationPair[] = [];
+  let checkedPairs = 0;
+  const seriesNames = [...seriesCache.keys()];
 
-  const efficiencyLoops = correlateEfficiencyAndLoops(ctx.db, now);
-  if (efficiencyLoops) fresh.push(efficiencyLoops);
+  for (let i = 0; i < seriesNames.length; i++) {
+    for (let j = i + 1; j < seriesNames.length; j++) {
+      const nameA = seriesNames[i];
+      const nameB = seriesNames[j];
+      const seriesA = seriesCache.get(nameA)!;
+      const seriesB = seriesCache.get(nameB)!;
 
-  const comprehensionVelocity = correlateComprehensionAndVelocity(ctx.db, now);
-  if (comprehensionVelocity) fresh.push(comprehensionVelocity);
+      const { xs, ys } = alignSeries(seriesA, seriesB);
+      if (xs.length < MIN_DATA_POINTS) continue;
 
-  const costOutcomes = correlateCostAndOutcomes(ctx.db, now);
-  if (costOutcomes) fresh.push(costOutcomes);
+      checkedPairs++;
+      const r = pearson(xs, ys);
+      if (Math.abs(r) < MIN_R) continue;
 
-  const blindSpotsLoops = correlateBlindSpotsAndLoops(ctx.db, now);
-  if (blindSpotsLoops) fresh.push(blindSpotsLoops);
+      const lag = computeTemporalLag(xs, ys);
 
-  // Merge: fresh correlations replace same-id existing; apply decay to stale ones
-  const merged = mergeWithDecay(existing.correlations, fresh, now);
+      fresh.push({
+        id: pairId(nameA, nameB),
+        a: nameA,
+        b: nameB,
+        r: Math.round(r * 1000) / 1000,
+        direction: r > 0 ? "positive" : "negative",
+        temporalLag: lag,
+        confidence: Math.min(1, xs.length / 20),
+        computedAt: now,
+        dataPoints: xs.length,
+      });
+    }
+  }
 
-  return { correlations: merged, updatedAt: now };
+  const freshIds = new Set(fresh.map((c) => c.id));
+  const decayed = applyDecay(
+    existing.correlations.filter((c) => !freshIds.has(c.id)),
+    now,
+  );
+
+  const report: CorrelationReport = {
+    correlations: [...decayed, ...fresh],
+    updatedAt: now,
+    discoveredPairs: fresh.length,
+    checkedPairs,
+  };
+
+  writeCorrelations(report);
+  return report;
 }
 
-/**
- * Write correlation report atomically.
- */
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
+
 export function writeCorrelations(report: CorrelationReport, repoRoot?: string): void {
   const dir = getIntelligenceDir(repoRoot);
   mkdirSync(dir, { recursive: true });
@@ -81,49 +230,22 @@ export function writeCorrelations(report: CorrelationReport, repoRoot?: string):
   }
 }
 
-function loadExistingCorrelations(repoRoot: string): CorrelationReport {
+function loadExistingCorrelations(repoRoot?: string): CorrelationReport {
   try {
-    const path = join(repoRoot, ".unfade", "intelligence", "correlation.json");
-    if (!existsSync(path)) return { correlations: [], updatedAt: "" };
+    const dir = getIntelligenceDir(repoRoot);
+    const path = join(dir, "correlation.json");
+    if (!existsSync(path))
+      return { correlations: [], updatedAt: "", discoveredPairs: 0, checkedPairs: 0 };
     return JSON.parse(readFileSync(path, "utf-8")) as CorrelationReport;
   } catch {
-    return { correlations: [], updatedAt: "" };
+    return { correlations: [], updatedAt: "", discoveredPairs: 0, checkedPairs: 0 };
   }
 }
 
-/**
- * 11E.10: Apply confidence decay to old correlations, merge with fresh ones.
- * Remove any below MIN_CONFIDENCE threshold.
- */
-function mergeWithDecay(
-  existing: CorrelationPair[],
-  fresh: CorrelationPair[],
-  now: string,
-): CorrelationPair[] {
-  const freshIds = new Set(fresh.map((c) => c.id));
-  const decayed: CorrelationPair[] = [];
+// ---------------------------------------------------------------------------
+// Math utilities
+// ---------------------------------------------------------------------------
 
-  for (const c of existing) {
-    if (freshIds.has(c.id)) continue; // replaced by fresh
-    const ageDays = (new Date(now).getTime() - new Date(c.computedAt).getTime()) / (86400 * 1000);
-    if (ageDays <= DECAY_START_DAYS) {
-      decayed.push(c);
-    } else {
-      const weeksOverThreshold = (ageDays - DECAY_START_DAYS) / 7;
-      const newConfidence = c.confidence * DECAY_FACTOR_PER_WEEK ** weeksOverThreshold;
-      if (newConfidence >= MIN_CONFIDENCE) {
-        decayed.push({ ...c, confidence: Math.round(newConfidence * 100) / 100 });
-      }
-      // else: evicted — below threshold
-    }
-  }
-
-  return [...decayed, ...fresh];
-}
-
-/**
- * Pearson correlation between two numeric arrays.
- */
 function pearson(xs: number[], ys: number[]): number {
   const n = xs.length;
   if (n < MIN_DATA_POINTS) return 0;
@@ -147,212 +269,47 @@ function pearson(xs: number[], ys: number[]): number {
   return denom === 0 ? 0 : num / denom;
 }
 
-/**
- * efficiency ↔ loops: Are loops causing efficiency drops?
- * Group by day: average AES vs loop count.
- */
-function correlateEfficiencyAndLoops(
-  db: AnalyzerContext["db"],
-  now: string,
-): CorrelationPair | null {
-  try {
-    const result = db.exec(`
-      SELECT
-        date(e.ts) as day,
-        AVG(CAST(json_extract(e.metadata, '$.direction_signals.human_direction_score') AS REAL)) as avg_hds,
-        SUM(CASE WHEN json_extract(e.metadata, '$.outcome') = 'failed' THEN 1 ELSE 0 END) as loop_count
-      FROM events e
-      WHERE e.source IN ('ai-session', 'mcp-active')
-        AND e.ts >= datetime('now', '-30 days')
-        AND json_extract(e.metadata, '$.direction_signals.human_direction_score') IS NOT NULL
-      GROUP BY day
-      HAVING COUNT(*) >= 3
-      ORDER BY day
-    `);
-
-    if (!result[0]?.values || result[0].values.length < MIN_DATA_POINTS) return null;
-
-    const efficiencies = result[0].values.map((r) => (r[1] as number) ?? 0);
-    const loops = result[0].values.map((r) => (r[2] as number) ?? 0);
-    const r = pearson(efficiencies, loops);
-
-    if (Math.abs(r) < MIN_R) return null;
-
-    // Temporal check: do loop spikes precede efficiency drops?
-    // Use simple lag-1 cross-correlation
-    const lag = computeTemporalLag(loops, efficiencies);
-
-    return {
-      id: "efficiency-loops",
-      a: "efficiency",
-      b: "loop-detector",
-      r: Math.round(r * 1000) / 1000,
-      direction: r < 0 ? "negative" : "positive",
-      temporalLag: lag,
-      confidence: Math.min(1, result[0].values.length / 20),
-      computedAt: now,
-      dataPoints: result[0].values.length,
-    };
-  } catch {
-    return null;
+function alignSeries(
+  a: Map<string, number>,
+  b: Map<string, number>,
+): { xs: number[]; ys: number[] } {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const [day, valA] of a) {
+    const valB = b.get(day);
+    if (valB !== undefined) {
+      xs.push(valA);
+      ys.push(valB);
+    }
   }
+  return { xs, ys };
 }
 
-/**
- * comprehension ↔ velocity: Does understanding correlate with speed?
- */
-function correlateComprehensionAndVelocity(
-  db: AnalyzerContext["db"],
-  now: string,
-): CorrelationPair | null {
-  try {
-    const result = db.exec(`
-      SELECT
-        date(e.ts) as day,
-        AVG(CAST(json_extract(e.metadata, '$.direction_signals.human_direction_score') AS REAL)) as avg_comprehension,
-        AVG(CAST(json_extract(e.metadata, '$.turn_count') AS REAL)) as avg_turns
-      FROM events e
-      WHERE e.source IN ('ai-session', 'mcp-active')
-        AND e.ts >= datetime('now', '-30 days')
-        AND json_extract(e.metadata, '$.direction_signals.human_direction_score') IS NOT NULL
-        AND json_extract(e.metadata, '$.turn_count') IS NOT NULL
-      GROUP BY day
-      HAVING COUNT(*) >= 3
-      ORDER BY day
-    `);
-
-    if (!result[0]?.values || result[0].values.length < MIN_DATA_POINTS) return null;
-
-    const comprehension = result[0].values.map((r) => (r[1] as number) ?? 0);
-    // Invert turns: fewer turns = higher velocity
-    const velocity = result[0].values.map((r) => 1 / Math.max(1, (r[2] as number) ?? 1));
-    const r = pearson(comprehension, velocity);
-
-    if (Math.abs(r) < MIN_R) return null;
-
-    return {
-      id: "comprehension-velocity",
-      a: "comprehension-radar",
-      b: "velocity-tracker",
-      r: Math.round(r * 1000) / 1000,
-      direction: r > 0 ? "positive" : "negative",
-      temporalLag: 0,
-      confidence: Math.min(1, result[0].values.length / 20),
-      computedAt: now,
-      dataPoints: result[0].values.length,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * cost ↔ outcomes: Does spending more produce better outcomes?
- */
-function correlateCostAndOutcomes(db: AnalyzerContext["db"], now: string): CorrelationPair | null {
-  try {
-    const result = db.exec(`
-      SELECT
-        date(e.ts) as day,
-        COUNT(*) as session_count,
-        SUM(CASE WHEN json_extract(e.metadata, '$.outcome') = 'success' THEN 1 ELSE 0 END) as success_count
-      FROM events e
-      WHERE e.source IN ('ai-session', 'mcp-active')
-        AND e.ts >= datetime('now', '-30 days')
-        AND json_extract(e.metadata, '$.outcome') IS NOT NULL
-      GROUP BY day
-      HAVING COUNT(*) >= 2
-      ORDER BY day
-    `);
-
-    if (!result[0]?.values || result[0].values.length < MIN_DATA_POINTS) return null;
-
-    const cost = result[0].values.map((r) => (r[1] as number) ?? 0);
-    const successRate = result[0].values.map((r) => {
-      const total = (r[1] as number) ?? 1;
-      const success = (r[2] as number) ?? 0;
-      return total > 0 ? success / total : 0;
-    });
-    const r = pearson(cost, successRate);
-
-    if (Math.abs(r) < MIN_R) return null;
-
-    return {
-      id: "cost-outcomes",
-      a: "cost-attribution",
-      b: "outcome-success-rate",
-      r: Math.round(r * 1000) / 1000,
-      direction: r > 0 ? "positive" : "negative",
-      temporalLag: 0,
-      confidence: Math.min(1, result[0].values.length / 20),
-      computedAt: now,
-      dataPoints: result[0].values.length,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * blind-spots ↔ loops: Are you stuck where you're weakest?
- */
-function correlateBlindSpotsAndLoops(
-  db: AnalyzerContext["db"],
-  now: string,
-): CorrelationPair | null {
-  try {
-    // Per-module: low comprehension vs high failure rate
-    const result = db.exec(`
-      SELECT
-        COALESCE(json_extract(e.metadata, '$.domain'), 'unknown') as domain,
-        AVG(CAST(json_extract(e.metadata, '$.direction_signals.human_direction_score') AS REAL)) as avg_hds,
-        SUM(CASE WHEN json_extract(e.metadata, '$.outcome') IN ('failed', 'abandoned') THEN 1 ELSE 0 END) * 1.0 / COUNT(*) as failure_rate
-      FROM events e
-      WHERE e.source IN ('ai-session', 'mcp-active')
-        AND e.ts >= datetime('now', '-30 days')
-        AND json_extract(e.metadata, '$.direction_signals.human_direction_score') IS NOT NULL
-      GROUP BY domain
-      HAVING COUNT(*) >= 5
-      ORDER BY domain
-    `);
-
-    if (!result[0]?.values || result[0].values.length < MIN_DATA_POINTS) return null;
-
-    // Low comprehension (inverse HDS) should correlate with high failure rate
-    const blindSpotScore = result[0].values.map((r) => 1 - ((r[1] as number) ?? 0));
-    const failureRate = result[0].values.map((r) => (r[2] as number) ?? 0);
-    const r = pearson(blindSpotScore, failureRate);
-
-    if (Math.abs(r) < MIN_R) return null;
-
-    return {
-      id: "blindspots-loops",
-      a: "blind-spot-detector",
-      b: "loop-detector",
-      r: Math.round(r * 1000) / 1000,
-      direction: r > 0 ? "positive" : "negative",
-      temporalLag: 0,
-      confidence: Math.min(1, result[0].values.length / 15),
-      computedAt: now,
-      dataPoints: result[0].values.length,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Simple temporal lag estimation: check if peaks in series A
- * tend to precede peaks in series B. Returns estimated lag in minutes (positive = A leads).
- */
 function computeTemporalLag(seriesA: number[], seriesB: number[]): number {
   if (seriesA.length < 3) return 0;
-
-  // Lag-1 cross-correlation: does A[i] correlate more with B[i+1] than B[i]?
   const lag0 = pearson(seriesA.slice(0, -1), seriesB.slice(0, -1));
   const lag1 = pearson(seriesA.slice(0, -1), seriesB.slice(1));
-
-  // Each data point = 1 day, so lag1 > lag0 means ~1 day lag
-  if (lag1 > lag0 + 0.1) return 1440; // 1 day in minutes
+  if (lag1 > lag0 + 0.1) return 1440;
   return 0;
+}
+
+function applyDecay(correlations: CorrelationPair[], now: string): CorrelationPair[] {
+  const result: CorrelationPair[] = [];
+  for (const c of correlations) {
+    const ageDays = (new Date(now).getTime() - new Date(c.computedAt).getTime()) / (86400 * 1000);
+    if (ageDays <= DECAY_START_DAYS) {
+      result.push(c);
+    } else {
+      const weeksOver = (ageDays - DECAY_START_DAYS) / 7;
+      const newConf = c.confidence * DECAY_FACTOR_PER_WEEK ** weeksOver;
+      if (newConf >= MIN_CONFIDENCE) {
+        result.push({ ...c, confidence: Math.round(newConf * 100) / 100 });
+      }
+    }
+  }
+  return result;
+}
+
+function pairId(a: string, b: string): string {
+  return a < b ? `${a}↔${b}` : `${b}↔${a}`;
 }

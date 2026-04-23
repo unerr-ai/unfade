@@ -1,6 +1,7 @@
 // Phase 15 component tests — verify pure HTML rendering functions
 import { describe, expect, it } from "vitest";
 import {
+  barChartSvg,
   confidenceBadge,
   dataFreshnessBadge,
   emptyState,
@@ -10,12 +11,16 @@ import {
   heroMetricCard,
   kpiCard,
   kpiStrip,
+  navGroup,
+  navItem,
   projectBadge,
   projectCard,
   projectSelector,
+  sidebarNav,
   sourceBadge,
   sparklineSvg,
   tabBar,
+  tabPanel,
   trendArrow,
 } from "../../../src/server/components/index.js";
 import { activationSection } from "../../../src/server/components/system-reveal.js";
@@ -253,5 +258,89 @@ describe("activationSection", () => {
     expect(html).toContain("ua-dot");
     expect(html).not.toContain("fixed inset-0");
     expect(html).not.toContain("z-50");
+  });
+});
+
+describe("barChartSvg", () => {
+  it("renders bars with labels and values", () => {
+    const html = barChartSvg({
+      items: [
+        { label: "Claude", value: 80 },
+        { label: "GPT-4", value: 45 },
+      ],
+      width: 400,
+      height: 120,
+    });
+    expect(html).toContain("<svg");
+    expect(html).toContain("<rect");
+    expect(html).toContain("Claude");
+    expect(html).toContain("GPT-4");
+    expect(html).toContain("80");
+  });
+
+  it("returns empty SVG for no items", () => {
+    const html = barChartSvg({ items: [], width: 400, height: 120 });
+    expect(html).toContain("<svg");
+    expect(html).not.toContain("<rect");
+  });
+});
+
+describe("tabPanel", () => {
+  it("wraps content in animated div", () => {
+    const html = tabPanel("<p>Tab content</p>");
+    expect(html).toContain("Tab content");
+    expect(html).toContain("animate-in");
+  });
+});
+
+describe("navItem", () => {
+  it("renders link with icon and label", () => {
+    const html = navItem({ path: "/intelligence", label: "Intelligence", icon: "<svg></svg>" });
+    expect(html).toContain('href="/intelligence"');
+    expect(html).toContain("Intelligence");
+    expect(html).toContain("nav-item");
+    expect(html).toContain("nav-icon");
+  });
+
+  it("renders badge when provided", () => {
+    const html = navItem({ path: "/alerts", label: "Alerts", icon: "!", badge: 5 });
+    expect(html).toContain("5");
+    expect(html).toContain("rounded-full");
+    expect(html).toContain("bg-accent");
+  });
+});
+
+describe("navGroup", () => {
+  it("renders group label and items", () => {
+    const html = navGroup({
+      label: "Observe",
+      items: [{ path: "/", label: "Home", icon: "H" }],
+    });
+    expect(html).toContain("Observe");
+    expect(html).toContain("Home");
+  });
+
+  it("renders collapsed group with toggle", () => {
+    const html = navGroup({
+      label: "System",
+      items: [{ path: "/logs", label: "Logs", icon: "L" }],
+      collapsed: true,
+    });
+    expect(html).toContain("nav-group-collapsed");
+    expect(html).toContain("hidden");
+    expect(html).toContain("Logs");
+  });
+});
+
+describe("sidebarNav", () => {
+  it("renders multiple groups", () => {
+    const html = sidebarNav([
+      { label: "Observe", items: [{ path: "/", label: "Home", icon: "H" }] },
+      { label: "System", items: [{ path: "/logs", label: "Logs", icon: "L" }], collapsed: true },
+    ]);
+    expect(html).toContain("Observe");
+    expect(html).toContain("System");
+    expect(html).toContain("Home");
+    expect(html).toContain("Logs");
   });
 });

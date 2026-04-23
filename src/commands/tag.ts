@@ -33,14 +33,14 @@ export async function tagCommand(featureName: string, options: TagCommandOptions
       return;
     }
 
-    const eventIds = resolveTargetEvents(db, options);
+    const eventIds = await resolveTargetEvents(db, options);
     if (eventIds.length === 0) {
       logger.error("No events found to tag.");
       process.exitCode = 1;
       return;
     }
 
-    const tagged = applyFeatureTag(db, featureName.trim(), eventIds);
+    const tagged = await applyFeatureTag(db, featureName.trim(), eventIds);
     await cache.save();
 
     if (options.json) {
@@ -58,12 +58,12 @@ export async function tagCommand(featureName: string, options: TagCommandOptions
   }
 }
 
-function resolveTargetEvents(
-  db: { exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> },
+async function resolveTargetEvents(
+  db: { exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>> },
   options: TagCommandOptions,
-): string[] {
+): Promise<string[]> {
   if (options.session) {
-    const rows = db.exec(
+    const rows = await db.exec(
       "SELECT id FROM events WHERE json_extract(metadata, '$.session_id') = ? ORDER BY ts DESC",
       [options.session],
     );
@@ -72,7 +72,7 @@ function resolveTargetEvents(
   }
 
   const limit = Number.parseInt(options.last ?? "5", 10);
-  const rows = db.exec(
+  const rows = await db.exec(
     "SELECT id FROM events WHERE type = 'ai-conversation' ORDER BY ts DESC LIMIT ?",
     [limit],
   );
@@ -84,18 +84,18 @@ function resolveTargetEvents(
  * Insert feature tag bindings into event_features table with source = 'user'.
  * Creates a feature entry if it doesn't exist yet.
  */
-export function applyFeatureTag(
+export async function applyFeatureTag(
   db: {
     run(sql: string, params?: unknown[]): void;
-    exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }>;
+    exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
   },
   featureName: string,
   eventIds: string[],
-): number {
+): Promise<number> {
   // Ensure feature exists
   const featureId = `user-${featureName.replace(/\s+/g, "-").toLowerCase()}`;
 
-  const existing = db.exec("SELECT id FROM features WHERE id = ?", [featureId]);
+  const existing = await db.exec("SELECT id FROM features WHERE id = ?", [featureId]);
   if (!existing[0] || existing[0].values.length === 0) {
     db.run(
       `INSERT INTO features (id, project_id, name, branch, first_seen, last_seen, event_count, file_count, session_count, status)

@@ -28,59 +28,8 @@ import {
   iconZap,
 } from "../icons.js";
 
-const THEME_VARS = `
-:root {
-  --canvas: #0A0A0F; --substrate: #0F0F12; --surface: #18181B;
-  --raised: #1C1C22; --overlay: #27272A;
-  --foreground: #FAFAFA; --muted: rgba(250,250,250,0.6); --border-color: #27272A;
-  --accent: #8B5CF6; --accent-dim: #7C3AED; --cyan: #22D3EE;
-  --success: #10B981; --warning: #F59E0B; --error: #EF4444;
-  --live: #10B981; --stale: #F59E0B; --proxy: rgba(139,92,246,0.25);
-}
-.light {
-  --canvas: #F8F9FA; --substrate: #F4F4F5; --surface: #FFFFFF;
-  --raised: #F4F4F5; --overlay: #E4E4E7;
-  --foreground: #111118; --muted: rgba(17,17,24,0.6); --border-color: #E4E4E7;
-  --accent: #6D28D9; --accent-dim: #5B21B6; --cyan: #0891B2;
-  --success: #059669; --warning: #D97706; --error: #DC2626;
-  --live: #059669; --stale: #D97706; --proxy: rgba(109,40,217,0.15);
-}`;
-
-const BASE_CSS = `
-*, *::before, *::after { transition: background-color 0.15s, border-color 0.15s, color 0.15s; box-sizing: border-box; }
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.3); border-radius: 3px; }
-pre, pre code { background: #0F0F12 !important; color: #FAFAFA !important; }
-.sidebar { width: 240px; min-width: 240px; transition: width 0.2s, min-width 0.2s; }
-.sidebar.collapsed { width: 56px; min-width: 56px; }
-.sidebar.collapsed .nav-label, .sidebar.collapsed .brand-text, .sidebar.collapsed .divider-label { display: none; }
-.sidebar.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
-.nav-item { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px 0 12px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; position: relative; }
-.nav-item:hover { background: var(--raised); color: var(--foreground); }
-.nav-item.active { background: var(--raised); color: var(--foreground); }
-.nav-item.active::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: var(--accent); border-radius: 2px; }
-.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); display: inline-block; }
-.live-dot.stale { background: var(--stale); }
-.live-strip { height: 36px; background: var(--substrate); border-bottom: 1px solid var(--border-color); display: flex; align-items: center; padding: 0 16px; gap: 16px; font-size: 12px; color: var(--muted); }
-.drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 40; display: none; }
-.drawer-backdrop.open { display: block; }
-.evidence-drawer { position: fixed; top: 0; right: -480px; width: 480px; max-width: 90vw; height: 100vh; background: var(--surface); border-left: 1px solid var(--border-color); box-shadow: -4px 0 24px rgba(0,0,0,0.2); z-index: 50; transition: right 0.2s ease-out; overflow-y: auto; }
-.evidence-drawer.open { right: 0; }
-.badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; font-weight: 600; background: var(--accent); color: white; }
-@media (max-width: 1023px) { .sidebar { width: 56px; min-width: 56px; } .sidebar .nav-label, .sidebar .brand-text, .sidebar .divider-label { display: none; } .sidebar .nav-item { justify-content: center; padding-left: 0; padding-right: 0; } }
-@media (max-width: 767px) { .sidebar { display: none; } .sidebar.mobile-open { display: flex; position: fixed; z-index: 30; width: 240px; height: 100vh; } .mobile-menu-btn { display: flex !important; } }
-`;
-
-const TAILWIND_CONFIG = `
-tailwind.config = {
-  darkMode: 'class',
-  theme: { extend: {
-    colors: { canvas: 'var(--canvas)', substrate: 'var(--substrate)', surface: 'var(--surface)', raised: 'var(--raised)', overlay: 'var(--overlay)', foreground: 'var(--foreground)', muted: 'var(--muted)', border: 'var(--border-color)', accent: 'var(--accent)', 'accent-dim': 'var(--accent-dim)', cyan: 'var(--cyan)', success: 'var(--success)', warning: 'var(--warning)', error: 'var(--error)' },
-    fontFamily: { heading: ["'Space Grotesk'", 'sans-serif'], body: ["'Inter'", 'sans-serif'], mono: ["'JetBrains Mono'", 'monospace'] },
-    borderRadius: { DEFAULT: '8px' },
-  }},
-};`;
+// Theme vars, base CSS, and Tailwind utilities are now in src/styles/input.css
+// Pre-compiled to public/css/tailwind.css via `pnpm build:css`
 
 interface NavItem {
   path: string;
@@ -125,6 +74,8 @@ export interface LayoutOptions {
   alertCount?: number;
   /** Render minimal shell (no sidebar, no live strip) — used for setup/onboarding */
   minimal?: boolean;
+  /** Include React islands runtime (mount.js). Only needed on pages with interactive islands. */
+  islands?: boolean;
 }
 
 export function layout(title: string, content: string, options?: LayoutOptions): string {
@@ -135,16 +86,11 @@ export function layout(title: string, content: string, options?: LayoutOptions):
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)} — Unfade</title>
-  <style>${THEME_VARS}${BASE_CSS}</style>
+  <link rel="stylesheet" href="/public/css/tailwind.css">
   <script>(function(){var s=localStorage.getItem('unfade-theme');if(s==='light')document.documentElement.classList.add('light');})();</script>
   <link rel="icon" type="image/svg+xml" href="/public/icon.svg">
   <link rel="icon" type="image/png" href="/public/icon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>${TAILWIND_CONFIG}</script>
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="/public/js/htmx.min.js"></script>
 </head>
 <body class="bg-canvas text-foreground font-body antialiased m-0 p-0 flex items-center justify-center min-h-screen">
   <main class="w-full max-w-[720px] mx-auto px-6 py-8">
@@ -168,16 +114,11 @@ export function layout(title: string, content: string, options?: LayoutOptions):
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(title)} — Unfade</title>
-  <style>${THEME_VARS}${BASE_CSS}</style>
+  <link rel="stylesheet" href="/public/css/tailwind.css">
   <script>(function(){var s=localStorage.getItem('unfade-theme');if(s==='light')document.documentElement.classList.add('light');})();</script>
   <link rel="icon" type="image/svg+xml" href="/public/icon.svg">
   <link rel="icon" type="image/png" href="/public/icon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>${TAILWIND_CONFIG}</script>
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="/public/js/htmx.min.js"></script>
 </head>
 <body class="bg-canvas text-foreground font-body antialiased m-0 p-0 flex h-screen overflow-hidden">
 
@@ -275,79 +216,9 @@ export function layout(title: string, content: string, options?: LayoutOptions):
   function closeDrawer(){document.getElementById('drawer-backdrop').classList.remove('open');document.getElementById('evidence-drawer').classList.remove('open');};
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeDrawer();});
 
-  // Shared client module (Phase 15 §2.9)
-  window.__unfade = {
-    sse: null,
-    projectId: localStorage.getItem('unfade-project') || '',
-    onSummary: [],
-    onEvent: [],
-    onHealth: [],
-
-    fetch: function(path) {
-      var sep = path.includes('?') ? '&' : '?';
-      var url = this.projectId ? path + sep + 'project=' + this.projectId : path;
-      return fetch(url);
-    },
-
-    setProject: function(id) {
-      this.projectId = id;
-      localStorage.setItem('unfade-project', id);
-      window.location.search = id ? '?project=' + id : '';
-    },
-
-    initSSE: function() {
-      if (this.sse || typeof EventSource === 'undefined') return;
-      var self = this;
-      self.sse = new EventSource('/api/stream');
-      var dot = document.getElementById('live-dot');
-      var status = document.getElementById('live-status');
-      var freshness = document.getElementById('live-freshness');
-      var counts = document.getElementById('live-counts');
-      if (dot) { dot.classList.remove('stale'); }
-      if (status) { status.textContent = 'Live'; }
-
-      self.sse.addEventListener('summary', function(e) {
-        try {
-          var d = JSON.parse(e.data);
-          self.onSummary.forEach(function(cb) { cb(d); });
-          var ago = Math.round((Date.now() - new Date(d.updatedAt).getTime()) / 1000);
-          if (freshness) freshness.textContent = 'Updated ' + (ago < 60 ? ago + 's' : Math.round(ago / 60) + 'm') + ' ago';
-          if (counts) counts.textContent = 'Events (24h): ' + (d.eventCount24h || 0) + ' · Direction: ' + (d.directionDensity24h || 0) + '%';
-        } catch(err) {}
-      });
-
-      self.sse.addEventListener('event', function(e) {
-        try { var d = JSON.parse(e.data); self.onEvent.forEach(function(cb) { cb(d); }); } catch(err) {}
-      });
-
-      self.sse.addEventListener('health', function(e) {
-        try { var d = JSON.parse(e.data); self.onHealth.forEach(function(cb) { cb(d); }); } catch(err) {}
-      });
-
-      self.sse.onerror = function() {
-        if (dot) dot.classList.add('stale');
-        if (status) status.textContent = 'Reconnecting…';
-      };
-    }
-  };
-
-  // Initialize SSE + populate project selector
-  window.__unfade.initSSE();
-  (function() {
-    var sel = document.getElementById('project-filter');
-    var current = window.__unfade.projectId || new URLSearchParams(window.location.search).get('project') || '';
-    fetch('/api/repos').then(function(r) { return r.json(); }).then(function(repos) {
-      if (!repos || !repos.length) return;
-      repos.forEach(function(r) {
-        var opt = document.createElement('option');
-        opt.value = r.id;
-        opt.textContent = r.label;
-        if (r.id === current) opt.selected = true;
-        sel.appendChild(opt);
-      });
-    }).catch(function() {});
-  })();
   </script>
+  <script src="/public/js/unfade-core.js"></script>
+  ${options?.islands ? '<script src="/public/js/islands/mount.js"></script>' : ""}
 </body>
 </html>`;
 }

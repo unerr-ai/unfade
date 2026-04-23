@@ -2,7 +2,7 @@
 // Settings page (GET /settings) — capture engine status,
 // LLM provider config with awareness explainer, MCP config snippets.
 
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { USER_TERMS } from "../../constants/terminology.js";
@@ -15,15 +15,15 @@ export const settingsPage = new Hono();
 /**
  * Read current distill config from config.json for form defaults.
  */
-function readCurrentLlmConfig(): {
+async function readCurrentLlmConfig(): Promise<{
   provider: string;
   model: string;
   apiKey: string;
   apiBase: string;
-} {
+}> {
   try {
     const configPath = join(getProjectDataDir(), "config.json");
-    const raw = JSON.parse(readFileSync(configPath, "utf-8"));
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
     const distill = raw?.distill ?? {};
     return {
       provider: distill.provider ?? "none",
@@ -36,10 +36,10 @@ function readCurrentLlmConfig(): {
   }
 }
 
-settingsPage.get("/settings", (c) => {
+settingsPage.get("/settings", async (c) => {
   const profile = getProfile();
   const isHealthy = !profile._meta.degraded;
-  const llm = readCurrentLlmConfig();
+  const llm = await readCurrentLlmConfig();
 
   const statusBadge = isHealthy
     ? `<span class="inline-block px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide bg-success/15 text-success">${escapeHtml(USER_TERMS.daemonRunning)}</span>`

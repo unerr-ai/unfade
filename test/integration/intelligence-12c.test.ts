@@ -57,9 +57,9 @@ afterEach(() => {
 
 // 12C.9: Value receipt computation
 describe("12C.9: Value receipt computation", () => {
-  it("computes zero injections when no MCP events", () => {
+  it("computes zero injections when no MCP events", async () => {
     const db = createMockDb({});
-    const receipt = computeValueReceipt(db);
+    const receipt = await computeValueReceipt(db);
 
     expect(receipt.today.injections).toBe(0);
     expect(receipt.thisWeek.injections).toBe(0);
@@ -67,11 +67,11 @@ describe("12C.9: Value receipt computation", () => {
     expect(receipt.today.estimatedTokensSaved).toBe(0);
   });
 
-  it("computes savings from injection count", () => {
+  it("computes savings from injection count", async () => {
     const db = createMockDb({
       "mcp-active": { columns: ["count"], rows: [[10]] },
     });
-    const receipt = computeValueReceipt(db);
+    const receipt = await computeValueReceipt(db);
 
     expect(receipt.today.injections).toBe(10);
     expect(receipt.today.estimatedTokensSaved).toBe(20000);
@@ -135,9 +135,9 @@ describe("12C.9: Value receipt computation", () => {
 
 // 12C.10: Debugging arc detection
 describe("12C.10: Debugging arc detection", () => {
-  it("returns empty array with insufficient events", () => {
+  it("returns empty array with insufficient events", async () => {
     const db = createMockDb({});
-    const arcs = detectDebuggingArcs(db);
+    const arcs = await detectDebuggingArcs(db);
     expect(arcs).toEqual([]);
   });
 
@@ -179,9 +179,9 @@ describe("12C.11: History command output", () => {
 
 // 12C.12: Decision durability correlation
 describe("12C.12: Decision durability correlation", () => {
-  it("returns empty report with no decisions", () => {
+  it("returns empty report with no decisions", async () => {
     const db = createMockDb({});
-    const report = computeDecisionDurability(db);
+    const report = await computeDecisionDurability(db);
 
     expect(report.decisions).toEqual([]);
     expect(report.stats.totalTracked).toBe(0);
@@ -211,7 +211,7 @@ describe("12C.12: Decision durability correlation", () => {
     expect(written.stats.totalTracked).toBe(0);
   });
 
-  it("computes held rate correctly for old decisions", () => {
+  it("computes held rate correctly for old decisions", async () => {
     const oldDate = new Date(Date.now() - 14 * 86400 * 1000).toISOString().slice(0, 10);
     const db = createMockDb({
       decisions: {
@@ -224,7 +224,7 @@ describe("12C.12: Decision durability correlation", () => {
       events: { columns: ["count"], rows: [[0]] },
     });
 
-    const report = computeDecisionDurability(db);
+    const report = await computeDecisionDurability(db);
     expect(report.decisions.length).toBe(2);
     expect(report.stats.totalTracked).toBe(2);
   });

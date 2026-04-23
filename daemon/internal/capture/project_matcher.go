@@ -76,7 +76,11 @@ func (m *ProjectMatcher) Match(contentProject string) string {
 }
 
 // RegistryPath returns the default registry path at ~/.unfade/state/registry.v1.json.
+// Returns empty string if the user home directory cannot be determined.
 func RegistryPath() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
 	return filepath.Join(home, ".unfade", "state", "registry.v1.json")
 }

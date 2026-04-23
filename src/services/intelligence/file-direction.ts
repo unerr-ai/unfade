@@ -1,12 +1,16 @@
 // FILE: src/services/intelligence/file-direction.ts
-// UF-234: Direction density per file/directory.
-// Extracts file paths from event content, groups by directory, averages HDS.
-// Stored in direction_by_file table. Used by heatmap API.
+// Direction density per file/directory. Incremental: maintains running
+// per-directory HDS averages, only processes events past watermark.
+// Full reconciliation every ~150 events.
 
-type DbLike = {
-  run(sql: string, params?: unknown[]): void;
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-};
+import type { DbLike } from "../cache/manager.js";
+import type { AnalyzerContext } from "./analyzers/index.js";
+import type {
+  IncrementalAnalyzer,
+  IncrementalState,
+  NewEventBatch,
+  UpdateResult,
+} from "./incremental-state.js";
 
 export interface FileDirectionEntry {
   path: string;
@@ -14,95 +18,153 @@ export interface FileDirectionEntry {
   eventCount: number;
 }
 
+interface DirectionByFileState {
+  byDir: Record<string, { totalHds: number; count: number; avgHds: number }>;
+}
+
 const FILE_PATTERN =
   /(?:^|\s|['"`(])([a-zA-Z0-9_./-]+\/[a-zA-Z0-9_./-]+\.(?:ts|js|tsx|jsx|go|py|rs|rb|java|kt|swift|c|cpp|h|css|scss|html|vue|svelte|md))/g;
+const RECONCILIATION_INTERVAL = 150;
 
-/**
- * Extract file paths mentioned in text, return unique directory prefixes (top-2 levels).
- */
 function extractFileDirs(text: string): string[] {
   const dirs = new Set<string>();
   const pattern = new RegExp(FILE_PATTERN.source, FILE_PATTERN.flags);
-
   for (const match of text.matchAll(pattern)) {
-    const filePath = match[1];
-    const parts = filePath.split("/");
+    const parts = match[1].split("/");
     if (parts.length >= 2) {
       dirs.add(parts.slice(0, Math.min(parts.length - 1, 3)).join("/"));
     }
   }
-
-  return Array.from(dirs);
+  return [...dirs];
 }
 
-/**
- * Compute and store per-directory direction density from the events table.
- * Joins events with their direction_signals metadata.
- */
-export function computeDirectionByFile(db: DbLike): FileDirectionEntry[] {
+async function fullScan(db: DbLike): Promise<DirectionByFileState> {
+  const byDir: DirectionByFileState["byDir"] = {};
+
   try {
-    const result = db.exec(`
-      SELECT
-        content_summary,
-        content_detail,
-        json_extract(metadata, '$.direction_signals.human_direction_score') as hds
+    const result = await db.exec(`
+      SELECT content_summary, content_detail, human_direction_score as hds
       FROM events
       WHERE source IN ('ai-session', 'mcp-active', 'git')
         AND (content_detail IS NOT NULL OR content_summary IS NOT NULL)
     `);
 
-    if (!result[0]?.values.length) return [];
-
-    const dirScores = new Map<string, { totalHds: number; count: number }>();
+    if (!result[0]?.values.length) return { byDir };
 
     for (const row of result[0].values) {
-      const summary = (row[0] as string) ?? "";
-      const detail = (row[1] as string) ?? "";
-      const hds = row[2] as number | null;
-
-      const dirs = extractFileDirs(`${summary} ${detail}`);
-      if (dirs.length === 0) continue;
-
-      const score = hds ?? 0.5;
-
-      for (const dir of dirs) {
-        const entry = dirScores.get(dir) ?? { totalHds: 0, count: 0 };
-        entry.totalHds += score;
+      const text = `${(row[0] as string) ?? ""} ${(row[1] as string) ?? ""}`;
+      const hds = (row[2] as number) ?? 0.5;
+      for (const dir of extractFileDirs(text)) {
+        const entry = byDir[dir] ?? { totalHds: 0, count: 0, avgHds: 0 };
+        entry.totalHds += hds;
         entry.count++;
-        dirScores.set(dir, entry);
+        entry.avgHds = entry.totalHds / entry.count;
+        byDir[dir] = entry;
       }
     }
+  } catch {
+    // non-fatal
+  }
 
+  return { byDir };
+}
+
+function syncToDb(db: DbLike, state: DirectionByFileState): void {
+  try {
     db.run("DELETE FROM direction_by_file");
-
-    const entries: FileDirectionEntry[] = [];
-    for (const [path, data] of dirScores) {
+    for (const [path, data] of Object.entries(state.byDir)) {
       if (data.count < 2) continue;
-
-      const density = Math.round((data.totalHds / data.count) * 100);
+      const density = Math.round(data.avgHds * 100);
       db.run(
         "INSERT INTO direction_by_file (path, project_id, direction_density, event_count) VALUES (?, ?, ?, ?)",
         [path, "", density, data.count],
       );
-      entries.push({ path, directionDensity: density, eventCount: data.count });
     }
-
-    return entries.sort((a, b) => b.eventCount - a.eventCount);
   } catch {
-    return [];
+    // non-fatal
   }
 }
 
-/**
- * Read direction-by-file from DB (fast path for API).
- */
-export function readDirectionByFile(db: DbLike): FileDirectionEntry[] {
+export const directionByFileAnalyzer: IncrementalAnalyzer<
+  DirectionByFileState,
+  FileDirectionEntry[]
+> = {
+  name: "direction-by-file",
+  outputFile: "direction_by_file.json",
+  eventFilter: { sources: ["ai-session", "mcp-active", "git"] },
+  minDataPoints: 5,
+
+  async initialize(ctx): Promise<IncrementalState<DirectionByFileState>> {
+    const value = await fullScan(ctx.analytics);
+    syncToDb(ctx.analytics, value);
+    return { value, watermark: "", eventCount: 0, updatedAt: new Date().toISOString() };
+  },
+
+  async update(state, batch, ctx): Promise<UpdateResult<DirectionByFileState>> {
+    if (batch.events.length === 0) return { state, changed: false };
+
+    const needsReconciliation =
+      state.eventCount % RECONCILIATION_INTERVAL === 0 && state.eventCount > 0;
+
+    if (needsReconciliation) {
+      const value = await fullScan(ctx.analytics);
+      syncToDb(ctx.analytics, value);
+      const newState: IncrementalState<DirectionByFileState> = {
+        value,
+        watermark: batch.events[batch.events.length - 1].ts,
+        eventCount: state.eventCount + batch.events.length,
+        updatedAt: new Date().toISOString(),
+      };
+      return { state: newState, changed: true };
+    }
+
+    const byDir = { ...state.value.byDir };
+    let changed = false;
+
+    for (const evt of batch.events) {
+      const text = `${evt.contentSummary ?? ""} ${evt.contentSummary ?? ""}`;
+      const hds = evt.humanDirectionScore ?? 0.5;
+      for (const dir of extractFileDirs(text)) {
+        const entry = byDir[dir] ?? { totalHds: 0, count: 0, avgHds: 0 };
+        entry.totalHds += hds;
+        entry.count++;
+        entry.avgHds = entry.totalHds / entry.count;
+        byDir[dir] = entry;
+        changed = true;
+      }
+    }
+
+    if (changed) syncToDb(ctx.analytics, { byDir });
+
+    return {
+      state: {
+        value: { byDir },
+        watermark: batch.events[batch.events.length - 1].ts,
+        eventCount: state.eventCount + batch.events.length,
+        updatedAt: new Date().toISOString(),
+      },
+      changed,
+    };
+  },
+
+  derive(state): FileDirectionEntry[] {
+    return Object.entries(state.value.byDir)
+      .filter(([, d]) => d.count >= 2)
+      .map(([path, d]) => ({
+        path,
+        directionDensity: Math.round(d.avgHds * 100),
+        eventCount: d.count,
+      }))
+      .sort((a, b) => b.eventCount - a.eventCount);
+  },
+};
+
+export async function readDirectionByFile(db: DbLike): Promise<FileDirectionEntry[]> {
   try {
-    const result = db.exec(
+    const result = await db.exec(
       "SELECT path, direction_density, event_count FROM direction_by_file ORDER BY event_count DESC",
     );
     if (!result[0]?.values.length) return [];
-
     return result[0].values.map((row) => ({
       path: row[0] as string,
       directionDensity: row[1] as number,

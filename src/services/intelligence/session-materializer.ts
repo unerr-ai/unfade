@@ -37,29 +37,28 @@ export function ensureSessionsTable(db: DbLike): void {
  * Groups events by session_id (from metadata) and computes per-session aggregates.
  * Non-fatal: wraps all work in try/catch.
  */
-export function materializeSessionMetrics(db: DbLike): number {
+export async function materializeSessionMetrics(db: DbLike): Promise<number> {
   try {
     ensureSessionsTable(db);
 
-    // Find events with session_id that aren't yet materialized
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT
-        json_extract(metadata, '$.session_id') as session_id,
+        session_id,
         MIN(ts) as start_ts,
         MAX(ts) as end_ts,
         COUNT(*) as event_count,
-        MAX(CAST(json_extract(metadata, '$.turn_count') AS INTEGER)) as max_turns,
-        json_extract(metadata, '$.outcome') as outcome,
-        SUM(COALESCE(CAST(json_extract(metadata, '$.estimated_cost') AS REAL), 0)) as total_cost,
-        GROUP_CONCAT(DISTINCT json_extract(metadata, '$.execution_phase')) as phases,
+        MAX(turn_count) as max_turns,
+        last(outcome ORDER BY ts) as outcome,
+        SUM(COALESCE(estimated_cost, 0)) as total_cost,
+        string_agg(DISTINCT execution_phase, ',') as phases,
         MAX(git_branch) as branch,
-        MAX(json_extract(metadata, '$.domain')) as domain
+        MAX(content_project) as domain
       FROM events
-      WHERE json_extract(metadata, '$.session_id') IS NOT NULL
-        AND json_extract(metadata, '$.session_id') NOT IN (
-          SELECT id FROM sessions WHERE updated_at >= datetime('now', '-1 hour')
+      WHERE session_id IS NOT NULL
+        AND session_id NOT IN (
+          SELECT id FROM sessions WHERE updated_at >= now() - INTERVAL '1 hour'
         )
-      GROUP BY json_extract(metadata, '$.session_id')
+      GROUP BY session_id
       LIMIT 200
     `);
 
@@ -80,15 +79,15 @@ export function materializeSessionMetrics(db: DbLike): number {
       const branch = (row[8] as string) ?? null;
       const domain = (row[9] as string) ?? null;
 
-      // Look up feature_id from event_features
       let featureId: string | null = null;
       try {
-        const featureResult = db.exec(`
-          SELECT ef.feature_id FROM event_features ef
-          JOIN events e ON e.id = ef.event_id
-          WHERE json_extract(e.metadata, '$.session_id') = '${sessionId.replace(/'/g, "''")}'
-          LIMIT 1
-        `);
+        const featureResult = await db.exec(
+          `SELECT ef.feature_id FROM event_features ef
+           JOIN events e ON e.id = ef.event_id
+           WHERE e.session_id = $1
+           LIMIT 1`,
+          [sessionId],
+        );
         featureId = (featureResult[0]?.values[0]?.[0] as string) ?? null;
       } catch {
         // non-fatal
@@ -98,7 +97,7 @@ export function materializeSessionMetrics(db: DbLike): number {
         `INSERT OR REPLACE INTO sessions
          (id, project_id, start_ts, end_ts, event_count, turn_count, outcome, estimated_cost,
           execution_phases, branch, domain, feature_id, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())`,
         [
           sessionId,
           "",

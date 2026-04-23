@@ -3,7 +3,8 @@
 // GET /unfade/distill/:date — distill for specific date
 // POST /unfade/distill — trigger manual distillation
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { loadConfig } from "../../config/manager.js";
@@ -17,15 +18,15 @@ export const distillRoutes = new Hono();
 /**
  * Read a distill markdown file and return its content with metadata.
  */
-function readDistill(date: string, cwd?: string) {
+async function readDistill(date: string, cwd?: string) {
   const distillsDir = getDistillsDir(cwd);
   const filePath = join(distillsDir, `${date}.md`);
 
   if (!existsSync(filePath)) return null;
 
   try {
-    const content = readFileSync(filePath, "utf-8");
-    const mtime = statSync(filePath).mtime.toISOString();
+    const content = await readFile(filePath, "utf-8");
+    const mtime = (await stat(filePath)).mtime.toISOString();
     return { date, content, lastUpdated: mtime };
   } catch {
     return null;
@@ -51,7 +52,7 @@ function findLatestDistillDate(cwd?: string): string | null {
   }
 }
 
-distillRoutes.get("/distill/latest", (c) => {
+distillRoutes.get("/distill/latest", async (c) => {
   const start = performance.now();
   const latestDate = findLatestDistillDate();
 
@@ -68,7 +69,7 @@ distillRoutes.get("/distill/latest", (c) => {
     });
   }
 
-  const distillData = readDistill(latestDate);
+  const distillData = await readDistill(latestDate);
   return c.json({
     data: distillData,
     _meta: {
@@ -80,7 +81,7 @@ distillRoutes.get("/distill/latest", (c) => {
   });
 });
 
-distillRoutes.get("/distill/:date", (c) => {
+distillRoutes.get("/distill/:date", async (c) => {
   const start = performance.now();
   const date = c.req.param("date");
 
@@ -100,7 +101,7 @@ distillRoutes.get("/distill/:date", (c) => {
     );
   }
 
-  const distillData = readDistill(date);
+  const distillData = await readDistill(date);
   if (!distillData) {
     return c.json({
       data: null,

@@ -306,10 +306,11 @@ func conversationSummaryToTurn(convID, title, tldr, overview, bullets, model, mo
 		Content:        content,
 		Timestamp:      parseTimestamp(date),
 		Metadata: map[string]any{
-			"model":       model,
-			"model_id":    model,
-			"mode":        mode,
-			"environment": "cursor",
+			"model":              model,
+			"model_id":           model,
+			"mode":               mode,
+			"environment":        "cursor",
+			"conversation_title": title,
 		},
 	}
 }

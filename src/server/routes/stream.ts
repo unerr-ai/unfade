@@ -1,48 +1,59 @@
 // FILE: src/server/routes/stream.ts
-// UF-225: SSE endpoint — pushes summary.json updates, per-capture events, and health ticks.
-// Uses Hono's streamSSE() helper. Polls summary.json mtime every 2s for changes.
-// On connection: sends current summary + backfills recent capture events for live UI.
+// UF-473: Push-based SSE endpoint — subscribes to eventBus for real-time updates.
+// Falls back to file polling only for health ticks and initial backfill.
 
 import {
   closeSync,
   existsSync,
   openSync,
   readdirSync,
-  readFileSync,
   readSync,
   statSync,
 } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import type { BusEvent } from "../../services/event-bus.js";
+import { eventBus } from "../../services/event-bus.js";
 import { localToday } from "../../utils/date.js";
-import { getEventsDir, getIntelligenceDir, getStateDir } from "../../utils/paths.js";
+import { getEventsDir, getStateDir } from "../../utils/paths.js";
 
 export const streamRoutes = new Hono();
 
-const POLL_INTERVAL_MS = 2000;
+const HEALTH_INTERVAL_MS = 30_000;
 const EVENT_BACKFILL_LINES = 20;
 const EVENT_TAIL_CHUNK_MAX = 512 * 1024;
 
-/** Read bytes [start, endExclusive) from a file (sync). */
-function readBytesSync(path: string, start: number, endExclusive: number): Buffer {
-  const len = endExclusive - start;
-  if (len <= 0) return Buffer.alloc(0);
+/** Read last N complete JSON lines from a JSONL file (best-effort for large files). */
+function readLastJsonlLines(filePath: string, maxLines: number): unknown[] {
+  if (!existsSync(filePath)) return [];
+  const filestat = statSync(filePath);
+  if (filestat.size === 0) return [];
+  const start = Math.max(0, filestat.size - EVENT_TAIL_CHUNK_MAX);
+  const len = filestat.size - start;
   const buf = Buffer.alloc(len);
-  const fd = openSync(path, "r");
+  const fd = openSync(filePath, "r");
   try {
     readSync(fd, buf, 0, len, start);
   } finally {
     closeSync(fd);
   }
-  return buf;
+  const text = buf.toString("utf-8");
+  const lines = text.split("\n").filter((l: string) => l.trim().length > 0);
+  const tail = lines.slice(-maxLines);
+  const out: unknown[] = [];
+  for (const line of tail) {
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      /* skip corrupt */
+    }
+  }
+  return out;
 }
 
-function eventsPathForToday(): string {
-  return join(getEventsDir(), `${localToday()}.jsonl`);
-}
-
-/** Find the most recent non-empty events JSONL file (for backfill when today's file doesn't exist). */
+/** Find the most recent non-empty events JSONL file. */
 function findLatestEventsFile(): string | null {
   const dir = getEventsDir();
   if (!existsSync(dir)) return null;
@@ -57,117 +68,34 @@ function findLatestEventsFile(): string | null {
   return null;
 }
 
-/** Read last N complete JSON lines from a JSONL file (best-effort for large files). */
-function readLastJsonlLines(filePath: string, maxLines: number): unknown[] {
-  if (!existsSync(filePath)) return [];
-  const stat = statSync(filePath);
-  if (stat.size === 0) return [];
-  const start = Math.max(0, stat.size - EVENT_TAIL_CHUNK_MAX);
-  const buf = readBytesSync(filePath, start, stat.size);
-  const text = buf.toString("utf-8");
-  const lines = text.split("\n").filter((l) => l.trim().length > 0);
-  const tail = lines.slice(-maxLines);
-  const out: unknown[] = [];
-  for (const line of tail) {
-    try {
-      out.push(JSON.parse(line));
-    } catch {
-      /* skip corrupt */
-    }
-  }
-  return out;
-}
-
-interface EventTailState {
-  path: string;
-  offset: number;
-  pending: string;
-}
-
-function createEventTailState(): EventTailState {
-  return { path: "", offset: 0, pending: "" };
-}
-
-/**
- * Read newly appended complete lines from the active JSONL file.
- * Updates `state` in place; returns parsed event objects.
- */
-function drainNewEventLines(state: EventTailState): unknown[] {
-  const path = eventsPathForToday();
-  if (path !== state.path) {
-    state.path = path;
-    state.offset = 0;
-    state.pending = "";
-  }
-  if (!existsSync(path)) {
-    return [];
-  }
-  const stat = statSync(path);
-  if (stat.size < state.offset) {
-    // truncated / rotated file
-    state.offset = 0;
-    state.pending = "";
-  }
-  if (stat.size === state.offset) {
-    return [];
-  }
-  const chunk = readBytesSync(path, state.offset, stat.size);
-  state.pending += chunk.toString("utf-8");
-  const parts = state.pending.split("\n");
-  state.pending = parts.pop() ?? "";
-  const events: unknown[] = [];
-  for (const line of parts) {
-    if (!line.trim()) continue;
-    try {
-      events.push(JSON.parse(line));
-    } catch {
-      /* skip corrupt */
-    }
-  }
-  state.offset = stat.size - Buffer.byteLength(state.pending, "utf8");
-  return events;
-}
-
 streamRoutes.get("/api/stream", (c) => {
   return streamSSE(c, async (stream) => {
     let eventId = 0;
-    let lastMtimeMs = 0;
-    let lastIntelligenceMtimeMs = 0;
     let aborted = false;
-    const eventTail = createEventTailState();
 
     c.req.raw.signal.addEventListener("abort", () => {
       aborted = true;
     });
 
+    // Send current summary on connect
     const summaryPath = join(getStateDir(), "summary.json");
-
-    const readAndSend = async () => {
-      if (!existsSync(summaryPath)) return;
-
-      try {
-        const currentMtime = statSync(summaryPath).mtimeMs;
-        if (currentMtime <= lastMtimeMs) return;
-        lastMtimeMs = currentMtime;
-
-        const content = readFileSync(summaryPath, "utf-8");
+    try {
+      if (existsSync(summaryPath)) {
+        const content = await readFile(summaryPath, "utf-8");
         const summary = JSON.parse(content);
-
         await stream.writeSSE({
           data: JSON.stringify(summary),
           event: "summary",
           id: String(eventId++),
         });
-      } catch {
-        // file read race — skip this tick
       }
-    };
+    } catch {
+      // non-fatal
+    }
 
-    await readAndSend();
-
-    // Backfill recent events: try today first, fall back to most recent file
+    // Backfill recent events
     try {
-      const todayPath = eventsPathForToday();
+      const todayPath = join(getEventsDir(), `${localToday()}.jsonl`);
       const backfillPath =
         existsSync(todayPath) && statSync(todayPath).size > 0 ? todayPath : findLatestEventsFile();
       if (backfillPath) {
@@ -179,85 +107,50 @@ streamRoutes.get("/api/stream", (c) => {
           });
         }
       }
-      eventTail.path = todayPath;
-      if (existsSync(todayPath)) {
-        const st = statSync(todayPath);
-        eventTail.offset = st.size;
-        eventTail.pending = "";
-      }
     } catch {
       /* non-fatal */
     }
 
-    while (!aborted) {
-      await stream.sleep(POLL_INTERVAL_MS);
-      if (aborted) break;
-      await readAndSend();
+    // Subscribe to push events from the materializer/summary-writer
+    const busListener = async (busEvent: BusEvent) => {
+      if (aborted) return;
+      try {
+        await stream.writeSSE({
+          data: JSON.stringify(busEvent.data),
+          event: busEvent.type,
+          id: String(eventId++),
+        });
+      } catch {
+        // stream closed
+        aborted = true;
+      }
+    };
+
+    eventBus.onBus(busListener);
+
+    // Health tick on a longer interval (no polling needed for data)
+    const healthInterval = setInterval(async () => {
+      if (aborted) return;
+
+      const materializer = (globalThis as Record<string, unknown>).__unfade_materializer as
+        | { getLagMs(): number }
+        | undefined;
+
+      const repoManager = (globalThis as Record<string, unknown>).__unfade_repo_manager as
+        | {
+            getHealthStatus(): Array<{
+              daemonPid: number | null;
+              daemonRunning: boolean;
+              daemonRestartCount: number;
+              materializerLagMs: number;
+            }>;
+            size: number;
+          }
+        | undefined;
+
+      const primaryRepo = repoManager?.getHealthStatus()?.[0];
 
       try {
-        for (const ev of drainNewEventLines(eventTail)) {
-          await stream.writeSSE({
-            data: JSON.stringify(ev),
-            event: "event",
-            id: String(eventId++),
-          });
-        }
-      } catch {
-        /* non-fatal */
-      }
-
-      // 12A.11: Push intelligence updates when any analyzer output changes
-      try {
-        const intelligenceDir = getIntelligenceDir();
-        if (existsSync(intelligenceDir)) {
-          const files = readdirSync(intelligenceDir).filter((f) => f.endsWith(".json"));
-          let maxMtime = 0;
-          for (const file of files) {
-            const mtime = statSync(join(intelligenceDir, file)).mtimeMs;
-            if (mtime > maxMtime) maxMtime = mtime;
-          }
-          if (maxMtime > lastIntelligenceMtimeMs) {
-            lastIntelligenceMtimeMs = maxMtime;
-            const updated: Record<string, unknown> = {};
-            for (const file of files) {
-              try {
-                updated[file.replace(".json", "")] = JSON.parse(
-                  readFileSync(join(intelligenceDir, file), "utf-8"),
-                );
-              } catch {
-                /* skip corrupt */
-              }
-            }
-            await stream.writeSSE({
-              data: JSON.stringify(updated),
-              event: "intelligence",
-              id: String(eventId++),
-            });
-          }
-        }
-      } catch {
-        /* non-fatal */
-      }
-
-      if (eventId % 15 === 0) {
-        const materializer = (globalThis as Record<string, unknown>).__unfade_materializer as
-          | { getLagMs(): number }
-          | undefined;
-
-        const repoManager = (globalThis as Record<string, unknown>).__unfade_repo_manager as
-          | {
-              getHealthStatus(): Array<{
-                daemonPid: number | null;
-                daemonRunning: boolean;
-                daemonRestartCount: number;
-                materializerLagMs: number;
-              }>;
-              size: number;
-            }
-          | undefined;
-
-        const primaryRepo = repoManager?.getHealthStatus()?.[0];
-
         await stream.writeSSE({
           data: JSON.stringify({
             status: "ok",
@@ -271,7 +164,18 @@ streamRoutes.get("/api/stream", (c) => {
           event: "health",
           id: String(eventId++),
         });
+      } catch {
+        aborted = true;
       }
+    }, HEALTH_INTERVAL_MS);
+
+    // Keep connection alive until client disconnects
+    while (!aborted) {
+      await stream.sleep(1000);
     }
+
+    // Cleanup
+    clearInterval(healthInterval);
+    eventBus.offBus(busListener);
   });
 });

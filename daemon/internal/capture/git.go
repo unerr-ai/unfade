@@ -22,7 +22,6 @@ const (
 	gitDebounceDelay = 500 * time.Millisecond
 	gitLogFormat     = "%H|%s|%an|%ae|%aI"
 	maxDetailLen     = 2000
-	backfillDays     = 30
 )
 
 // GitWatcher watches .git/ for repository events.
@@ -346,12 +345,16 @@ func (g *GitWatcher) emit(event CaptureEvent) {
 // Backfill walks git log since the given time and emits events for each commit.
 // Blocks until complete. Events are sent on eventCh.
 func (g *GitWatcher) Backfill(since time.Time, eventCh chan<- CaptureEvent) (int, error) {
-	sinceStr := since.Format("2006-01-02")
 	repoName := filepath.Base(g.projectDir)
 
-	output := g.gitExec("log", "--format="+gitLogFormat, "--after="+sinceStr, "--reverse")
+	// Zero time = collect ALL available git history; otherwise use the boundary.
+	args := []string{"log", "--format=" + gitLogFormat, "--reverse"}
+	if !since.IsZero() {
+		args = append(args, "--after="+since.Format("2006-01-02"))
+	}
+	output := g.gitExec(args...)
 	if output == "" {
-		g.logger.Info("backfill: no commits found", map[string]any{"since": sinceStr})
+		g.logger.Info("backfill: no commits found", map[string]any{"since": since.Format(time.RFC3339)})
 		return 0, nil
 	}
 
@@ -420,7 +423,7 @@ func (g *GitWatcher) Backfill(since time.Time, eventCh chan<- CaptureEvent) (int
 		}
 	}
 
-	g.logger.Info("backfill complete", map[string]any{"commits": count, "since": sinceStr})
+	g.logger.Info("backfill complete", map[string]any{"commits": count, "since": since.Format(time.RFC3339)})
 	return count, nil
 }
 

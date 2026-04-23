@@ -11,7 +11,6 @@ import (
 
 const (
 	eventChannelBuffer = 256
-	defaultIngestDays  = 7
 )
 
 // CaptureMode determines which sources the orchestrator activates.
@@ -44,7 +43,6 @@ type WatcherOrchestrator struct {
 	writer         *EventWriter
 	ingestCh       chan CaptureEvent
 	writerCh       chan CaptureEvent
-	debugDetector  *DebuggingDetector
 	historical     *HistoricalIngestor
 	ingestState    *IngestStateManager
 	aiParsers      []parsers.AIToolParser
@@ -96,7 +94,6 @@ func NewOrchestrator(cfg OrchestratorConfig) *WatcherOrchestrator {
 	}
 
 	writer := NewEventWriter(cfg.EventsDir, writerCh, cfg.Logger)
-	debugDetector := NewDebuggingDetector(writerCh)
 
 	home, _ := os.UserHomeDir()
 	aiParsers := []parsers.AIToolParser{
@@ -117,7 +114,6 @@ func NewOrchestrator(cfg OrchestratorConfig) *WatcherOrchestrator {
 		writer:         writer,
 		ingestCh:       ingestCh,
 		writerCh:       writerCh,
-		debugDetector:  debugDetector,
 		aiParsers:      aiParsers,
 		ingestState:    ingestStateMgr,
 		middlewareDone: make(chan struct{}),
@@ -162,8 +158,18 @@ func (o *WatcherOrchestrator) Start() error {
 
 	if o.ingestState != nil {
 		state := o.ingestState.Get()
-		if state.Status != "running" && state.Status != "completed" {
-			o.startIngestLocked(time.Now().AddDate(0, 0, -defaultIngestDays))
+		switch state.Status {
+		case "running":
+			// Already in progress (likely from another process) — don't interfere.
+		case "completed":
+			// Unfade was offline since last completion — collect everything missed.
+			// Use the last completion timestamp as the new "since" boundary.
+			if completedAt, err := time.Parse(time.RFC3339, state.CompletedAt); err == nil {
+				o.startIngestLocked(completedAt)
+			}
+		default:
+			// First run ("idle") or previous failure — collect ALL available history.
+			o.startIngestLocked(time.Time{})
 		}
 	}
 
@@ -194,9 +200,6 @@ func (o *WatcherOrchestrator) middlewareLoop() {
 			}
 			o.stampProjectID(&event)
 			o.writerCh <- event
-			if event.Source == "terminal" {
-				o.debugDetector.ProcessEvent(event)
-			}
 		}
 	}
 }

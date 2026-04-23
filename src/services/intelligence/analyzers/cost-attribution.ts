@@ -1,100 +1,54 @@
 // FILE: src/services/intelligence/analyzers/cost-attribution.ts
 // UF-102: Cost Attribution Engine — converts event counts × pricing to USD estimates.
-// Groups by model, domain, branch. Computes waste ratio and context overhead proxy.
+// Groups by model, domain, branch, feature. Computes waste ratio and context overhead proxy.
 // All outputs labeled "estimated / proxy" per §0.3 trust requirement.
 
 import type { CostAttribution, CostDimension } from "../../../schemas/intelligence/costs.js";
-import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./index.js";
+import type {
+  IncrementalAnalyzer,
+  IncrementalState,
+  NewEventBatch,
+  UpdateResult,
+} from "../incremental-state.js";
+import type { AnalyzerContext } from "./index.js";
 
 const DISCLAIMER =
   "These costs are estimates based on AI event counts × configurable pricing. They are not invoices. Compare with your provider bills for calibration.";
 
-export const costAttributionAnalyzer: Analyzer = {
-  name: "cost-attribution",
-  outputFile: "costs.json",
-  minDataPoints: 3,
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 
-  async run(ctx: AnalyzerContext): Promise<AnalyzerResult> {
-    const db = ctx.db;
-    const pricing = (ctx.config.pricing ?? {}) as Record<string, number>;
-    const now = new Date().toISOString();
-
-    const byModel = computeByModel(db, pricing);
-    const byDomain = computeByDomain(db, pricing);
-    const byBranch = computeByBranch(db, pricing);
-
-    // 12C.14: Per-feature cost attribution via event_features join
-    const byFeature = computeByFeature(db, pricing);
-
-    const totalCost = byModel.reduce((s, m) => s + m.estimatedCost, 0);
-    const wasteRatio = computeWasteRatio(db);
-    const contextOverhead = computeContextOverhead(db);
-    const costPerDirected = computeCostPerDirected(db, totalCost);
-
-    // 12C.14: Waste detection — cost attributed to outcome=abandoned sessions
-    const abandonedWaste = computeAbandonedWaste(db, pricing);
-
-    const daysInPeriod = computeDaysInPeriod(db);
-    const projectedMonthlyCost =
-      daysInPeriod > 0 ? Math.round((totalCost / daysInPeriod) * 30 * 100) / 100 : null;
-
-    const costs: CostAttribution = {
-      totalEstimatedCost: Math.round(totalCost * 100) / 100,
-      period: "all-time",
-      isProxy: true,
-      byModel,
-      byDomain,
-      byBranch,
-      byFeature,
-      abandonedWaste,
-      wasteRatio,
-      contextOverhead,
-      projectedMonthlyCost,
-      costPerDirectedDecision: costPerDirected,
-      updatedAt: now,
-      disclaimer: DISCLAIMER,
-    };
-
-    const sourceEventIds = collectSourceEventIds(db);
-
-    return {
-      analyzer: "cost-attribution",
-      updatedAt: now,
-      data: costs as unknown as Record<string, unknown>,
-      insightCount: 0,
-      sourceEventIds,
-    };
-  },
-};
-
-function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
-  try {
-    const result = db.exec(`
-      SELECT id FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-      ORDER BY ts DESC
-      LIMIT 20
-    `);
-    if (!result[0]?.values.length) return [];
-    return result[0].values.map((row) => row[0] as string);
-  } catch {
-    return [];
-  }
+interface CostAttributionState {
+  output: CostAttribution;
 }
 
-function computeByModel(
-  db: AnalyzerContext["db"],
+// ---------------------------------------------------------------------------
+// Compute helpers — all take db (analytics) only
+// ---------------------------------------------------------------------------
+
+function findPrice(model: string, table: Record<string, number>): number {
+  const lower = model.toLowerCase();
+  if (table[lower] !== undefined) return table[lower];
+  for (const [key, price] of Object.entries(table)) {
+    if (lower.includes(key.toLowerCase())) return price;
+  }
+  return 0;
+}
+
+async function computeByModel(
+  db: AnalyzerContext["analytics"],
   pricing: Record<string, number>,
-): CostDimension[] {
+): Promise<CostDimension[]> {
   try {
-    const result = db.exec(`
-      SELECT COALESCE(json_extract(metadata, '$.model'), json_extract(metadata, '$.ai_tool'), 'unknown') as model,
+    const result = await db.exec(
+      `SELECT COALESCE(model_id, ai_tool, 'unknown') as model,
              COUNT(*) as cnt
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-      GROUP BY model
-      ORDER BY cnt DESC
-    `);
+       FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+       GROUP BY model
+       ORDER BY cnt DESC`,
+    );
     if (!result[0]?.values.length) return [];
 
     const total = result[0].values.reduce((s, r) => s + (r[1] as number), 0);
@@ -114,38 +68,32 @@ function computeByModel(
   }
 }
 
-function computeByDomain(
-  db: AnalyzerContext["db"],
-  pricing: Record<string, number>,
-): CostDimension[] {
+async function computeByDomain(db: AnalyzerContext["analytics"]): Promise<CostDimension[]> {
   try {
-    const result = db.exec(`
-      SELECT content_summary, COUNT(*) as cnt
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-      GROUP BY substr(content_summary, 1, 50)
-      LIMIT 20
-    `);
+    await db.exec(
+      `SELECT content_summary, COUNT(*) as cnt
+       FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+       GROUP BY substr(content_summary, 1, 50)
+       LIMIT 20`,
+    );
     return [];
   } catch {
     return [];
   }
 }
 
-function computeByBranch(
-  db: AnalyzerContext["db"],
-  pricing: Record<string, number>,
-): CostDimension[] {
+async function computeByBranch(db: AnalyzerContext["analytics"]): Promise<CostDimension[]> {
   try {
-    const result = db.exec(`
-      SELECT COALESCE(git_branch, 'unknown') as branch, COUNT(*) as cnt
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND git_branch IS NOT NULL AND git_branch != ''
-      GROUP BY branch
-      ORDER BY cnt DESC
-      LIMIT 10
-    `);
+    const result = await db.exec(
+      `SELECT COALESCE(git_branch, 'unknown') as branch, COUNT(*) as cnt
+       FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+         AND git_branch IS NOT NULL AND git_branch != ''
+       GROUP BY branch
+       ORDER BY cnt DESC
+       LIMIT 10`,
+    );
     if (!result[0]?.values.length) return [];
 
     const total = result[0].values.reduce((s, r) => s + (r[1] as number), 0);
@@ -160,16 +108,42 @@ function computeByBranch(
   }
 }
 
-function computeWasteRatio(db: AnalyzerContext["db"]): number | null {
+async function computeByFeature(db: AnalyzerContext["analytics"]): Promise<CostDimension[]> {
   try {
-    const result = db.exec(`
-      SELECT
+    const result = await db.exec(
+      `SELECT f.name as feature_name, COUNT(DISTINCT e.id) as cnt
+       FROM events e
+       JOIN event_features ef ON ef.event_id = e.id
+       JOIN features f ON f.id = ef.feature_id
+       WHERE e.source IN ('ai-session', 'mcp-active')
+       GROUP BY f.name
+       ORDER BY cnt DESC
+       LIMIT 10`,
+    );
+    if (!result[0]?.values.length) return [];
+
+    const total = result[0].values.reduce((s, r) => s + (r[1] as number), 0);
+    return result[0].values.map((row) => ({
+      key: (row[0] as string) ?? "unknown",
+      eventCount: row[1] as number,
+      estimatedCost: 0,
+      percentage: total > 0 ? Math.round(((row[1] as number) / total) * 100) : 0,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function computeWasteRatio(db: AnalyzerContext["analytics"]): Promise<number | null> {
+  try {
+    const result = await db.exec(
+      `SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) < 0.2 THEN 1 ELSE 0 END) as low_direction
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.direction_signals.human_direction_score') IS NOT NULL
-    `);
+        SUM(CASE WHEN human_direction_score < 0.2 THEN 1 ELSE 0 END) as low_direction
+       FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+         AND human_direction_score IS NOT NULL`,
+    );
     const total = (result[0]?.values[0]?.[0] as number) ?? 0;
     const low = (result[0]?.values[0]?.[1] as number) ?? 0;
     if (total < 5) return null;
@@ -179,14 +153,14 @@ function computeWasteRatio(db: AnalyzerContext["db"]): number | null {
   }
 }
 
-function computeContextOverhead(db: AnalyzerContext["db"]): number | null {
+async function computeContextOverhead(db: AnalyzerContext["analytics"]): Promise<number | null> {
   try {
-    const result = db.exec(`
-      SELECT AVG(CAST(json_extract(metadata, '$.direction_signals.prompt_specificity') AS REAL)) as avg_spec
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.direction_signals.prompt_specificity') IS NOT NULL
-    `);
+    const result = await db.exec(
+      `SELECT AVG(prompt_specificity) as avg_spec
+       FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+         AND prompt_specificity IS NOT NULL`,
+    );
     const avg = (result[0]?.values[0]?.[0] as number) ?? 0;
     return Math.round((1 - avg) * 100) / 100;
   } catch {
@@ -194,13 +168,16 @@ function computeContextOverhead(db: AnalyzerContext["db"]): number | null {
   }
 }
 
-function computeCostPerDirected(db: AnalyzerContext["db"], totalCost: number): number | null {
+async function computeCostPerDirected(
+  db: AnalyzerContext["analytics"],
+  totalCost: number,
+): Promise<number | null> {
   try {
-    const result = db.exec(`
-      SELECT COUNT(*) FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) >= 0.5
-    `);
+    const result = await db.exec(
+      `SELECT COUNT(*) FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+         AND human_direction_score >= 0.5`,
+    );
     const directed = (result[0]?.values[0]?.[0] as number) ?? 0;
     if (directed === 0 || totalCost === 0) return null;
     return Math.round((totalCost / directed) * 100) / 100;
@@ -209,11 +186,11 @@ function computeCostPerDirected(db: AnalyzerContext["db"], totalCost: number): n
   }
 }
 
-function computeDaysInPeriod(db: AnalyzerContext["db"]): number {
+async function computeDaysInPeriod(db: AnalyzerContext["analytics"]): Promise<number> {
   try {
-    const result = db.exec(`
-      SELECT MIN(ts), MAX(ts) FROM events WHERE source IN ('ai-session', 'mcp-active')
-    `);
+    const result = await db.exec(
+      `SELECT MIN(ts), MAX(ts) FROM events WHERE source IN ('ai-session', 'mcp-active')`,
+    );
     const min = result[0]?.values[0]?.[0] as string;
     const max = result[0]?.values[0]?.[1] as string;
     if (!min || !max) return 0;
@@ -226,55 +203,20 @@ function computeDaysInPeriod(db: AnalyzerContext["db"]): number {
   }
 }
 
-/**
- * 12C.14: Per-feature cost attribution via event_features join.
- */
-function computeByFeature(
-  db: AnalyzerContext["db"],
+async function computeAbandonedWaste(
+  db: AnalyzerContext["analytics"],
   pricing: Record<string, number>,
-): CostDimension[] {
+): Promise<{ eventCount: number; estimatedCost: number }> {
   try {
-    const result = db.exec(`
-      SELECT f.name as feature_name, COUNT(DISTINCT e.id) as cnt
-      FROM events e
-      JOIN event_features ef ON ef.event_id = e.id
-      JOIN features f ON f.id = ef.feature_id
-      WHERE e.source IN ('ai-session', 'mcp-active')
-      GROUP BY f.name
-      ORDER BY cnt DESC
-      LIMIT 10
-    `);
-    if (!result[0]?.values.length) return [];
-
-    const total = result[0].values.reduce((s, r) => s + (r[1] as number), 0);
-    return result[0].values.map((row) => ({
-      key: (row[0] as string) ?? "unknown",
-      eventCount: row[1] as number,
-      estimatedCost: 0,
-      percentage: total > 0 ? Math.round(((row[1] as number) / total) * 100) : 0,
-    }));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * 12C.14: Waste detection — cost attributed to outcome=abandoned sessions.
- */
-function computeAbandonedWaste(
-  db: AnalyzerContext["db"],
-  pricing: Record<string, number>,
-): { eventCount: number; estimatedCost: number } {
-  try {
-    const result = db.exec(`
-      SELECT
-        COALESCE(json_extract(metadata, '$.model'), json_extract(metadata, '$.ai_tool'), 'unknown') as model,
+    const result = await db.exec(
+      `SELECT
+        COALESCE(model_id, ai_tool, 'unknown') as model,
         COUNT(*) as cnt
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.outcome') = 'abandoned'
-      GROUP BY model
-    `);
+       FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+         AND outcome = 'abandoned'
+       GROUP BY model`,
+    );
     if (!result[0]?.values.length) return { eventCount: 0, estimatedCost: 0 };
 
     let totalEvents = 0;
@@ -291,11 +233,98 @@ function computeAbandonedWaste(
   }
 }
 
-function findPrice(model: string, table: Record<string, number>): number {
-  const lower = model.toLowerCase();
-  if (table[lower] !== undefined) return table[lower];
-  for (const [key, price] of Object.entries(table)) {
-    if (lower.includes(key.toLowerCase())) return price;
-  }
-  return 0;
+// ---------------------------------------------------------------------------
+// Full computation — assembles a CostAttribution output
+// ---------------------------------------------------------------------------
+
+async function computeCosts(
+  db: AnalyzerContext["analytics"],
+  pricing: Record<string, number>,
+): Promise<CostAttribution> {
+  const now = new Date().toISOString();
+
+  const byModel = await computeByModel(db, pricing);
+  const byDomain = await computeByDomain(db);
+  const byBranch = await computeByBranch(db);
+  const byFeature = await computeByFeature(db);
+
+  const totalCost = byModel.reduce((s, m) => s + m.estimatedCost, 0);
+  const wasteRatio = await computeWasteRatio(db);
+  const contextOverhead = await computeContextOverhead(db);
+  const costPerDirected = await computeCostPerDirected(db, totalCost);
+  const abandonedWaste = await computeAbandonedWaste(db, pricing);
+
+  const daysInPeriod = await computeDaysInPeriod(db);
+  const projectedMonthlyCost =
+    daysInPeriod > 0 ? Math.round((totalCost / daysInPeriod) * 30 * 100) / 100 : null;
+
+  return {
+    totalEstimatedCost: Math.round(totalCost * 100) / 100,
+    period: "all-time",
+    isProxy: true,
+    byModel,
+    byDomain,
+    byBranch,
+    byFeature,
+    abandonedWaste,
+    wasteRatio,
+    contextOverhead,
+    projectedMonthlyCost,
+    costPerDirectedDecision: costPerDirected,
+    updatedAt: now,
+    disclaimer: DISCLAIMER,
+  };
 }
+
+// ---------------------------------------------------------------------------
+// IncrementalAnalyzer export
+// ---------------------------------------------------------------------------
+
+export const costAttributionAnalyzer: IncrementalAnalyzer<CostAttributionState, CostAttribution> = {
+  name: "cost-attribution",
+  outputFile: "cost-attribution.json",
+  eventFilter: { sources: ["ai-session", "mcp-active"] },
+  minDataPoints: 5,
+
+  async initialize(ctx: AnalyzerContext): Promise<IncrementalState<CostAttributionState>> {
+    const pricing = (ctx.config.pricing ?? {}) as Record<string, number>;
+    const output = await computeCosts(ctx.analytics, pricing);
+    return {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: 0,
+      updatedAt: output.updatedAt,
+    };
+  },
+
+  async update(
+    state: IncrementalState<CostAttributionState>,
+    newEvents: NewEventBatch,
+    ctx: AnalyzerContext,
+  ): Promise<UpdateResult<CostAttributionState>> {
+    if (newEvents.events.length === 0) {
+      return { state, changed: false };
+    }
+
+    const pricing = (ctx.config.pricing ?? {}) as Record<string, number>;
+    const output = await computeCosts(ctx.analytics, pricing);
+    const oldCost = state.value.output.totalEstimatedCost;
+    const newCost = output.totalEstimatedCost;
+    const changed = Math.abs(newCost - oldCost) > 0.01;
+
+    return {
+      state: {
+        value: { output },
+        watermark: output.updatedAt,
+        eventCount: state.eventCount + newEvents.events.length,
+        updatedAt: output.updatedAt,
+      },
+      changed,
+      changeMagnitude: changed ? Math.abs(newCost - oldCost) : 0,
+    };
+  },
+
+  derive(state: IncrementalState<CostAttributionState>): CostAttribution {
+    return state.value.output;
+  },
+};

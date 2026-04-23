@@ -111,7 +111,115 @@ program
 program
   .command("doctor")
   .description("Diagnose paths, processes, and registry health")
-  .action(async () => {
+  .option("--rebuild-cache", "Drop and rebuild both SQLite and DuckDB caches from JSONL source")
+  .option("--rebuild-intelligence", "Clear and re-initialize all intelligence analyzer states")
+  .option("--verify-pipeline", "Run end-to-end verification of the intelligence pipeline")
+  .option("--rebuild-graph", "Drop and rebuild the CozoDB intelligence graph from DuckDB")
+  .action(async (opts) => {
+    if (opts.rebuildCache) {
+      const { CacheManager } = await import("../services/cache/manager.js");
+      const { rebuildAll } = await import("../services/cache/materializer.js");
+      const cache = new CacheManager();
+      const rows = await rebuildAll(cache);
+      await cache.flushDuckDb();
+      await cache.close();
+      process.stderr.write(`Rebuilt ${rows} rows into both SQLite + DuckDB caches.\n`);
+      return;
+    }
+    if (opts.rebuildIntelligence) {
+      const { CacheManager } = await import("../services/cache/manager.js");
+      const { coldStartIntelligence } = await import("../services/intelligence/cold-start.js");
+      const cache = new CacheManager();
+      const db = await cache.getDb();
+      const analyticsDb = cache.analytics ?? db;
+      if (!db || !analyticsDb) {
+        process.stderr.write("Cache not available — run `unfade doctor --rebuild-cache` first.\n");
+        process.exitCode = 1;
+        return;
+      }
+      const result = await coldStartIntelligence(analyticsDb, db);
+      await cache.close();
+      process.stderr.write(
+        `Intelligence rebuilt: ${result.analyzersInitialized} analyzers initialized, ` +
+          `${result.stateFilesWritten} state files, ${result.durationMs}ms\n`,
+      );
+      if (result.processingResult) {
+        process.stderr.write(
+          `  Processing: ${result.processingResult.nodesProcessed} nodes, ` +
+            `${result.processingResult.totalEventsInBatch} events\n`,
+        );
+      }
+      return;
+    }
+    if (opts.verifyPipeline) {
+      const { CacheManager } = await import("../services/cache/manager.js");
+      const { verifyPipeline } = await import("../services/intelligence/pipeline-verify.js");
+      const cache = new CacheManager();
+      const db = await cache.getDb();
+      const analyticsDb = cache.analytics ?? db;
+      if (!db || !analyticsDb) {
+        process.stderr.write("Cache not available — run `unfade doctor --rebuild-cache` first.\n");
+        process.exitCode = 1;
+        return;
+      }
+      const result = await verifyPipeline(analyticsDb, db);
+      process.stderr.write(`\n${result.summary}\n\n`);
+      for (const check of result.checks) {
+        const icon = check.passed ? "✓" : check.severity === "critical" ? "✗" : "⚠";
+        process.stderr.write(`  ${icon} [${check.layer}] ${check.name}: ${check.detail}\n`);
+      }
+      process.stderr.write("\n");
+      await cache.close();
+      if (!result.passed) process.exitCode = 1;
+      return;
+    }
+    if (opts.rebuildGraph) {
+      const { CacheManager } = await import("../services/cache/manager.js");
+      const { CozoManager } = await import("../services/substrate/cozo-manager.js");
+      const { SubstrateEngine } = await import("../services/substrate/substrate-engine.js");
+      const { buildAllContributions } = await import("../services/substrate/entity-mapper.js");
+      const { ALL_COZO_SCHEMA, ALL_COZO_INDEXES } = await import("../services/substrate/schema.js");
+      const cache = new CacheManager();
+      const analyticsDb = cache.analytics ?? (await cache.getDb());
+      if (!analyticsDb) {
+        process.stderr.write("Cache not available — run `unfade doctor --rebuild-cache` first.\n");
+        process.exitCode = 1;
+        return;
+      }
+      const startMs = Date.now();
+      process.stderr.write("Rebuilding intelligence graph...\n");
+      await CozoManager.close();
+      const graphDb = await CozoManager.getInstance();
+      for (const stmt of ALL_COZO_SCHEMA) {
+        try {
+          await graphDb.run(stmt.replace(":create", ":replace"));
+        } catch {
+          /* recreate */
+        }
+      }
+      for (const stmt of ALL_COZO_INDEXES) {
+        try {
+          await graphDb.run(stmt);
+        } catch {
+          /* already exists */
+        }
+      }
+      const substrate = new SubstrateEngine(graphDb);
+      const contributions = await buildAllContributions(analyticsDb, "");
+      const upserted = await substrate.ingest(contributions);
+      const propagation = await substrate.propagate();
+      const counts = await substrate.entityCounts();
+      await cache.close();
+      const elapsed = Date.now() - startMs;
+      process.stderr.write(
+        `Graph rebuilt: ${upserted} entities, ${Object.values(counts).reduce((s, v) => s + v, 0)} active, ` +
+          `${propagation.patternsPromoted} patterns promoted, ${elapsed}ms\n`,
+      );
+      for (const [type, count] of Object.entries(counts)) {
+        process.stderr.write(`  ${type}: ${count}\n`);
+      }
+      return;
+    }
     const { doctorCommand } = await import("../commands/doctor.js");
     await doctorCommand();
   });

@@ -3,86 +3,35 @@
 // Detects statistically significant trends using the trend utility.
 
 import type { DomainVelocity, Velocity } from "../../../schemas/intelligence/velocity.js";
+import { logger } from "../../../utils/logger.js";
+import { classifyDomainFast } from "../domain-classifier.js";
+import type {
+  IncrementalAnalyzer,
+  IncrementalState,
+  NewEventBatch,
+  UpdateResult,
+} from "../incremental-state.js";
 import { detectTrend } from "../utils/trend.js";
-import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./index.js";
+import type { AnalyzerContext, AnalyzerResult } from "./index.js";
 
-export const velocityTrackerAnalyzer: Analyzer = {
-  name: "velocity-tracker",
-  outputFile: "velocity.json",
-  minDataPoints: 10,
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 
-  async run(ctx: AnalyzerContext): Promise<AnalyzerResult> {
-    const db = ctx.db;
-    const now = new Date().toISOString();
+interface VelocityState {
+  output: Velocity;
+}
 
-    const domainTurns = computeDomainTurns(db);
-    const byDomain: Record<string, DomainVelocity> = {};
-    const allCurrentTurns: number[] = [];
-    const allPreviousTurns: number[] = [];
-    let totalDataPoints = 0;
+// ---------------------------------------------------------------------------
+// Compute helpers — all take db (analytics) only
+// ---------------------------------------------------------------------------
 
-    for (const [domain, weeks] of domainTurns) {
-      if (weeks.length < 2) continue;
-
-      const mid = Math.floor(weeks.length / 2);
-      const recent = weeks.slice(mid);
-      const older = weeks.slice(0, mid);
-
-      const currentAvg = mean(recent);
-      const previousAvg = mean(older);
-      const change =
-        previousAvg > 0 ? Math.round(((currentAvg - previousAvg) / previousAvg) * 100) : 0;
-
-      const trendResult = detectTrend(weeks);
-
-      byDomain[domain] = {
-        currentTurnsToAcceptance: Math.round(currentAvg * 10) / 10,
-        previousTurnsToAcceptance: Math.round(previousAvg * 10) / 10,
-        velocityChange: change,
-        dataPoints: weeks.length,
-        trend: trendResult?.direction ?? "stable",
-      };
-
-      allCurrentTurns.push(currentAvg);
-      allPreviousTurns.push(previousAvg);
-      totalDataPoints += weeks.length;
-    }
-
-    const overallCurrent = mean(allCurrentTurns);
-    const overallPrevious = mean(allPreviousTurns);
-    const overallChange =
-      overallPrevious > 0 ? ((overallCurrent - overallPrevious) / overallPrevious) * 100 : 0;
-
-    let overallTrend: "accelerating" | "stable" | "decelerating" = "stable";
-    if (overallChange < -10) overallTrend = "accelerating";
-    else if (overallChange > 10) overallTrend = "decelerating";
-
-    const velocity: Velocity = {
-      byDomain,
-      overallTrend,
-      overallMagnitude: Math.round(overallChange),
-      dataPoints: totalDataPoints,
-      updatedAt: now,
-    };
-
-    const sourceEventIds = collectSourceEventIds(db);
-
-    return {
-      analyzer: "velocity-tracker",
-      updatedAt: now,
-      data: velocity as unknown as Record<string, unknown>,
-      insightCount: Object.values(byDomain).filter((v) => v.trend !== "stable").length,
-      sourceEventIds,
-    };
-  },
-};
-
-function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
+async function collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT id FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.turn_count') IS NOT NULL
+        AND turn_count IS NOT NULL
       ORDER BY ts DESC
       LIMIT 20
     `);
@@ -93,18 +42,20 @@ function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
   }
 }
 
-function computeDomainTurns(db: AnalyzerContext["db"]): Map<string, number[]> {
+async function computeDomainTurns(
+  db: AnalyzerContext["analytics"],
+): Promise<Map<string, number[]>> {
   const domainWeeks = new Map<string, Map<string, number[]>>();
 
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT
         content_summary,
-        CAST(json_extract(metadata, '$.turn_count') AS INTEGER) as turns,
-        substr(ts, 1, 10) as date
+        turn_count as turns,
+        ts::DATE as date
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.turn_count') IS NOT NULL
+        AND turn_count IS NOT NULL
       ORDER BY ts
     `);
 
@@ -116,7 +67,7 @@ function computeDomainTurns(db: AnalyzerContext["db"]): Map<string, number[]> {
       const date = (row[2] as string) ?? "";
       if (turns <= 0 || !date) continue;
 
-      const domain = classifyDomain(summary);
+      const domain = classifyDomainFast(summary);
       const weekKey = getWeekKey(date);
 
       if (!domainWeeks.has(domain)) domainWeeks.set(domain, new Map());
@@ -128,7 +79,7 @@ function computeDomainTurns(db: AnalyzerContext["db"]): Map<string, number[]> {
     return new Map();
   }
 
-  const result = new Map<string, number[]>();
+  const output = new Map<string, number[]>();
   for (const [domain, weeks] of domainWeeks) {
     const weeklyAverages: number[] = [];
     const sortedWeeks = [...weeks.entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -136,11 +87,11 @@ function computeDomainTurns(db: AnalyzerContext["db"]): Map<string, number[]> {
       weeklyAverages.push(mean(turns));
     }
     if (weeklyAverages.length >= 2) {
-      result.set(domain, weeklyAverages);
+      output.set(domain, weeklyAverages);
     }
   }
 
-  return result;
+  return output;
 }
 
 function getWeekKey(date: string): string {
@@ -157,13 +108,116 @@ function mean(values: number[]): number {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
-function classifyDomain(text: string): string {
-  const lower = text.toLowerCase();
-  if (/api|endpoint|route|handler/.test(lower)) return "api";
-  if (/auth|login|session/.test(lower)) return "auth";
-  if (/database|sql|query/.test(lower)) return "database";
-  if (/test|spec|mock/.test(lower)) return "testing";
-  if (/deploy|docker|ci/.test(lower)) return "infra";
-  if (/css|style|layout/.test(lower)) return "css";
-  return "general";
+// ---------------------------------------------------------------------------
+// Full computation — assembles domain velocity data into a Velocity output
+// ---------------------------------------------------------------------------
+
+async function computeVelocity(db: AnalyzerContext["analytics"]): Promise<Velocity> {
+  const now = new Date().toISOString();
+
+  const domainTurns = await computeDomainTurns(db);
+  const byDomain: Record<string, DomainVelocity> = {};
+  const allCurrentTurns: number[] = [];
+  const allPreviousTurns: number[] = [];
+  let totalDataPoints = 0;
+
+  for (const [domain, weeks] of domainTurns) {
+    if (weeks.length < 2) continue;
+
+    const mid = Math.floor(weeks.length / 2);
+    const recent = weeks.slice(mid);
+    const older = weeks.slice(0, mid);
+
+    const currentAvg = mean(recent);
+    const previousAvg = mean(older);
+    const change =
+      previousAvg > 0 ? Math.round(((currentAvg - previousAvg) / previousAvg) * 100) : 0;
+
+    const trendResult = detectTrend(weeks);
+
+    byDomain[domain] = {
+      currentTurnsToAcceptance: Math.round(currentAvg * 10) / 10,
+      previousTurnsToAcceptance: Math.round(previousAvg * 10) / 10,
+      velocityChange: change,
+      dataPoints: weeks.length,
+      trend: trendResult?.direction ?? "stable",
+    };
+
+    allCurrentTurns.push(currentAvg);
+    allPreviousTurns.push(previousAvg);
+    totalDataPoints += weeks.length;
+  }
+
+  const overallCurrent = mean(allCurrentTurns);
+  const overallPrevious = mean(allPreviousTurns);
+  const overallChange =
+    overallPrevious > 0 ? ((overallCurrent - overallPrevious) / overallPrevious) * 100 : 0;
+
+  let overallTrend: "accelerating" | "stable" | "decelerating" = "stable";
+  if (overallChange < -10) overallTrend = "accelerating";
+  else if (overallChange > 10) overallTrend = "decelerating";
+
+  return {
+    byDomain,
+    overallTrend,
+    overallMagnitude: Math.round(overallChange),
+    dataPoints: totalDataPoints,
+    updatedAt: now,
+  };
 }
+
+// ---------------------------------------------------------------------------
+// IncrementalAnalyzer export
+// ---------------------------------------------------------------------------
+
+export const velocityTrackerAnalyzer: IncrementalAnalyzer<VelocityState, Velocity> = {
+  name: "velocity-tracker",
+  outputFile: "velocity.json",
+  eventFilter: { sources: ["ai-session", "mcp-active"], requireFields: ["turnCount"] },
+  minDataPoints: 10,
+
+  async initialize(ctx: AnalyzerContext): Promise<IncrementalState<VelocityState>> {
+    logger.debug("velocity-tracker: initializing");
+    const output = await computeVelocity(ctx.analytics);
+    return {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: output.dataPoints,
+      updatedAt: output.updatedAt,
+    };
+  },
+
+  async update(
+    state: IncrementalState<VelocityState>,
+    newEvents: NewEventBatch,
+    ctx: AnalyzerContext,
+  ): Promise<UpdateResult<VelocityState>> {
+    if (newEvents.events.length === 0) {
+      return { state, changed: false };
+    }
+
+    const output = await computeVelocity(ctx.analytics);
+    const oldMagnitude = state.value.output.overallMagnitude;
+    const newMagnitude = output.overallMagnitude;
+    const oldTrend = state.value.output.overallTrend;
+    const newTrend = output.overallTrend;
+    const changed = oldTrend !== newTrend || Math.abs(newMagnitude - oldMagnitude) > 5;
+
+    const newState: IncrementalState<VelocityState> = {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: state.eventCount + newEvents.events.length,
+      updatedAt: output.updatedAt,
+    };
+
+    return {
+      state: newState,
+      changed,
+      changeMagnitude: Math.abs(newMagnitude - oldMagnitude),
+    };
+  },
+
+  derive(state: IncrementalState<VelocityState>): Velocity {
+    return state.value.output;
+  },
+};

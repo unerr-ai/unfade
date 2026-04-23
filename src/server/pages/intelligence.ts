@@ -23,7 +23,11 @@ intelligencePage.get("/intelligence", (c) => {
         t.id === activeTab
           ? "border-accent text-foreground"
           : "border-transparent text-muted hover:text-foreground hover:border-border";
-      return `<button class="px-4 py-2 text-sm font-medium border-b-2 transition-colors ${active}"
+      const tabIdAttr = ` id="tab-${t.id}"`;
+      if (t.id === "overview") {
+        return `<a href="/intelligence?tab=overview"${tabIdAttr} class="px-4 py-2 text-sm font-medium border-b-2 transition-colors no-underline inline-block ${active}">Overview</a>`;
+      }
+      return `<button type="button"${tabIdAttr} class="px-4 py-2 text-sm font-medium border-b-2 transition-colors ${active}"
       hx-get="/intelligence/tab/${t.id}" hx-target="#tab-content" hx-push-url="/intelligence?tab=${t.id}">${t.label}</button>`;
     })
     .join("\n");
@@ -93,7 +97,8 @@ intelligencePage.get("/intelligence", (c) => {
       var subNames={directionDensity:'Direction',tokenEfficiency:'Token Eff.',iterationRatio:'Iteration',contextLeverage:'Context',modificationDepth:'Modification'};
       var subWeights={directionDensity:'30%',tokenEfficiency:'20%',iterationRatio:'20%',contextLeverage:'15%',modificationDepth:'15%'};
 
-      fetch('/api/intelligence/efficiency').then(function(r){
+      var effPath='/api/intelligence/efficiency';
+      (window.__unfade&&typeof window.__unfade.fetch==='function'?window.__unfade.fetch(effPath):fetch(effPath)).then(function(r){
         if(r.status===202||r.status===204)return null;
         return r.json();
       }).then(function(data){

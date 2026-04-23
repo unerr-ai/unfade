@@ -18,6 +18,7 @@ pnpm-lock.yaml!
 *.d.ts
 *.d.ts.map
 tsconfig.tsbuildinfo
+public/css/tailwind.css
 
 # --- Prebuilt daemon binaries (CI / local build-daemon; not committed) ---
 packages/*/bin/

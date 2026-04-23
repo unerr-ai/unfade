@@ -138,6 +138,20 @@ function getLastUpdated(distillsDir: string, graphDir: string): string | null {
   return latest ? latest.toISOString() : null;
 }
 
+function startDateForPeriod(period: "7d" | "30d" | "90d"): Date {
+  const d = new Date();
+  const days = period === "7d" ? 7 : period === "30d" ? 30 : 90;
+  d.setDate(d.getDate() - days);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function parseDecisionDate(dateStr: string): Date | null {
+  const t = Date.parse(`${dateStr}T12:00:00`);
+  if (Number.isNaN(t)) return null;
+  return new Date(t);
+}
+
 /**
  * Retrieve recent decisions with optional domain filter.
  * Reads from graph/decisions.jsonl if available, falls back to
@@ -176,6 +190,24 @@ export function getDecisions(input: DecisionsInput, cwd?: string): DecisionsOutp
     const domain = input.domain.toLowerCase();
     decisions = decisions.filter((d) => d.domain?.toLowerCase() === domain);
   }
+
+  if (input.period) {
+    const start = startDateForPeriod(input.period);
+    decisions = decisions.filter((d) => {
+      const parsed = parseDecisionDate(d.date);
+      return parsed != null && parsed >= start;
+    });
+  }
+
+  if (input.q?.trim()) {
+    const needle = input.q.trim().toLowerCase();
+    decisions = decisions.filter(
+      (d) =>
+        d.decision.toLowerCase().includes(needle) || d.rationale.toLowerCase().includes(needle),
+    );
+  }
+
+  // `project` reserved for future per-project distill paths; global-first uses ~/.unfade/distills.
 
   const total = decisions.length;
   decisions = decisions.slice(0, input.limit);

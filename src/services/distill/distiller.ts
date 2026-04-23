@@ -276,18 +276,22 @@ export async function distill(
   try {
     const { CacheManager } = await import("../cache/manager.js");
     const cache = new CacheManager(cwd);
-    const db = await cache.getDb();
-    if (db) {
+    await cache.getDb();
+    const analyticsDb = cache.analytics;
+    if (analyticsDb) {
       const { computeValueReceipt, formatValueReceiptSection } = await import(
         "../intelligence/value-receipt.js"
       );
-      const receipt = computeValueReceipt(db, config.pricing as Record<string, number> | undefined);
+      const receipt = await computeValueReceipt(
+        analyticsDb,
+        config.pricing as Record<string, number> | undefined,
+      );
       valueReceiptSection = formatValueReceiptSection(receipt);
 
       const { detectDebuggingArcs, formatDebuggingArcsSection } = await import(
         "../intelligence/debugging-arcs.js"
       );
-      const arcs = detectDebuggingArcs(db);
+      const arcs = await detectDebuggingArcs(analyticsDb);
       debuggingArcsSection = formatDebuggingArcsSection(arcs);
     }
   } catch {

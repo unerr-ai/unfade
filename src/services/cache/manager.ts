@@ -1,29 +1,56 @@
 // FILE: src/services/cache/manager.ts
-// SQLite cache backed by better-sqlite3 (native).
-// The cache is a materialized read-only view over the JSONL source of truth.
-// Exposes a compatible db interface: { run, exec } for all existing consumers.
+// Dual-database cache: SQLite (operational/FTS) + DuckDB (analytical/columnar).
+// The materializer writes to both. Intelligence reads DuckDB. MCP/FTS reads SQLite.
+// Both are materialized views over the JSONL source of truth.
 
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { logger } from "../../utils/logger.js";
 import { getCacheDir } from "../../utils/paths.js";
+import { ALL_DUCKDB_DDL, ALL_DUCKDB_TABLES } from "./duckdb-schema.js";
 
-const DB_FILENAME = "unfade.db";
+const SQLITE_FILENAME = "unfade.db";
+const DUCKDB_FILENAME = "unfade.duckdb";
 
 export interface DbLike {
   run(sql: string, params?: unknown[]): void;
-  exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }>;
+  exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
 }
 
+type DuckDBInstance = {
+  connect(): Promise<DuckDBConnection>;
+  closeSync(): void;
+};
+
+type DuckDBConnection = {
+  run(sql: string, values?: unknown[]): Promise<unknown>;
+  runAndReadAll(sql: string, values?: unknown[]): Promise<DuckDBResultReader>;
+  closeSync(): void;
+};
+
+type DuckDBResultReader = {
+  columnCount: number;
+  currentRowCount: number;
+  columnName(i: number): string;
+  columnNames(): string[];
+  value(col: number, row: number): unknown;
+  getRowObjectsJson(): Array<Record<string, unknown>>;
+};
+
 /**
- * CacheManager provides a lazy-initialized SQLite cache backed by better-sqlite3.
- * The cache is a materialized read-only view over the JSONL source of truth.
- * Failures are graceful — all methods return null/empty instead of throwing.
+ * CacheManager provides dual-database access:
+ * - SQLite (better-sqlite3) for FTS, point lookups, lineage
+ * - DuckDB for columnar analytics, time-series, intelligence queries
+ *
+ * Both are lazy-initialized. The materializer writes to both.
  */
 export class CacheManager {
-  private db: DbLike | null = null;
-  private rawDb: InstanceType<typeof Database> | null = null;
+  private sqliteDb: DbLike | null = null;
+  private rawSqlite: InstanceType<typeof Database> | null = null;
+  private duckInstance: DuckDBInstance | null = null;
+  private duckConn: DuckDBConnection | null = null;
+  private analyticsDb: DbLike | null = null;
   private initPromise: Promise<DbLike | null> | null = null;
   private cwd?: string;
 
@@ -31,14 +58,24 @@ export class CacheManager {
     this.cwd = cwd;
   }
 
+  /** Get the SQLite operational handle (backward compat — same as .operational). */
   async getDb(): Promise<DbLike | null> {
-    if (this.db) return this.db;
+    if (this.sqliteDb) return this.sqliteDb;
     if (this.initPromise) return this.initPromise;
-
     this.initPromise = this.initialize();
-    this.db = await this.initPromise;
+    this.sqliteDb = await this.initPromise;
     this.initPromise = null;
-    return this.db;
+    return this.sqliteDb;
+  }
+
+  /** SQLite handle for FTS, point lookups, lineage writes. */
+  get operational(): DbLike | null {
+    return this.sqliteDb;
+  }
+
+  /** DuckDB handle for analytics, time-series, intelligence queries. */
+  get analytics(): DbLike | null {
+    return this.analyticsDb;
   }
 
   private async initialize(): Promise<DbLike | null> {
@@ -46,59 +83,163 @@ export class CacheManager {
       const cacheDir = getCacheDir(this.cwd);
       mkdirSync(cacheDir, { recursive: true });
 
-      const dbPath = join(cacheDir, DB_FILENAME);
-      const raw = new Database(dbPath);
+      const sqliteWrapper = this.initSqlite(cacheDir);
+      await this.initDuckDb(cacheDir);
 
-      // Enable WAL mode for better concurrent read performance
-      raw.pragma("journal_mode = WAL");
-      raw.pragma("synchronous = NORMAL");
-
-      this.rawDb = raw;
-      this.createSchema(raw);
-
-      // Wrap better-sqlite3 in the DbLike interface for backward compat
-      const wrapper: DbLike = {
-        run(sql: string, params?: unknown[]): void {
-          if (params && params.length > 0) {
-            raw.prepare(sql).run(...params);
-          } else {
-            raw.exec(sql);
-          }
-        },
-        exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> {
-          try {
-            const stmt = raw.prepare(sql);
-            const rows = (params && params.length > 0 ? stmt.all(...params) : stmt.all()) as Record<
-              string,
-              unknown
-            >[];
-            if (rows.length === 0) {
-              // Return columns from the statement
-              const columns = stmt.columns().map((c) => c.name);
-              return [{ columns, values: [] }];
-            }
-            const columns = Object.keys(rows[0]);
-            const values = rows.map((row) => columns.map((col) => row[col]));
-            return [{ columns, values }];
-          } catch {
-            // For statements that don't return rows (CREATE, INSERT, etc.)
-            raw.exec(sql);
-            return [];
-          }
-        },
-      };
-
-      logger.debug("SQLite cache initialized (better-sqlite3)", { path: dbPath });
-      return wrapper;
+      return sqliteWrapper;
     } catch (err) {
-      logger.warn("SQLite cache unavailable", {
+      logger.warn("Cache initialization failed", {
         error: err instanceof Error ? err.message : String(err),
       });
       return null;
     }
   }
 
-  private createSchema(db: InstanceType<typeof Database>): void {
+  private initSqlite(cacheDir: string): DbLike {
+    const dbPath = join(cacheDir, SQLITE_FILENAME);
+    const raw = new Database(dbPath);
+    raw.pragma("journal_mode = WAL");
+    raw.pragma("synchronous = NORMAL");
+    this.rawSqlite = raw;
+    this.createSqliteSchema(raw);
+
+    const wrapper: DbLike = {
+      run(sql: string, params?: unknown[]): void {
+        if (params && params.length > 0) {
+          raw.prepare(sql).run(...params);
+        } else {
+          raw.exec(sql);
+        }
+      },
+      exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> {
+        try {
+          const stmt = raw.prepare(sql);
+          const rows = (params && params.length > 0 ? stmt.all(...params) : stmt.all()) as Record<
+            string,
+            unknown
+          >[];
+          if (rows.length === 0) {
+            const columns = stmt.columns().map((c) => c.name);
+            return [{ columns, values: [] }];
+          }
+          const columns = Object.keys(rows[0]);
+          const values = rows.map((row) => columns.map((col) => row[col]));
+          return [{ columns, values }];
+        } catch {
+          raw.exec(sql);
+          return [];
+        }
+      },
+    };
+
+    this.sqliteDb = wrapper;
+    logger.debug("SQLite cache initialized", { path: dbPath });
+    return wrapper;
+  }
+
+  private async initDuckDb(cacheDir: string): Promise<void> {
+    try {
+      const { DuckDBInstance: DI } = await import("@duckdb/node-api");
+      const dbPath = join(cacheDir, DUCKDB_FILENAME);
+      const instance = await DI.create(dbPath);
+      const conn = await instance.connect();
+
+      this.duckInstance = instance as unknown as DuckDBInstance;
+      this.duckConn = conn as unknown as DuckDBConnection;
+
+      await this.createDuckDbSchema(conn as unknown as DuckDBConnection);
+
+      this.analyticsDb = this.wrapDuckDbAsDbLike(conn as unknown as DuckDBConnection);
+      logger.debug("DuckDB analytics initialized", { path: dbPath });
+    } catch (err) {
+      logger.warn("DuckDB unavailable — analytics will degrade gracefully", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.analyticsDb = null;
+    }
+  }
+
+  private async createDuckDbSchema(conn: DuckDBConnection): Promise<void> {
+    for (const ddl of ALL_DUCKDB_DDL) {
+      await conn.run(ddl);
+    }
+  }
+
+  /** Drop and recreate all DuckDB analytical tables (for rebuild). */
+  async resetDuckDbSchema(): Promise<void> {
+    if (!this.duckConn) return;
+    for (const table of ALL_DUCKDB_TABLES) {
+      await this.duckConn.run(`DROP TABLE IF EXISTS ${table}`);
+    }
+    await this.createDuckDbSchema(this.duckConn);
+  }
+
+  private pendingDuckOps: Array<Promise<void>> = [];
+
+  private wrapDuckDbAsDbLike(conn: DuckDBConnection): DbLike {
+    const pending = this.pendingDuckOps;
+
+    const wrapper: DbLike = {
+      run(sql: string, params?: unknown[]): void {
+        const p = (async () => {
+          try {
+            if (params && params.length > 0) {
+              await conn.run(sql, params);
+            } else {
+              await conn.run(sql);
+            }
+          } catch (err) {
+            logger.debug("DuckDB run failed", {
+              sql: sql.slice(0, 120),
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        })();
+        pending.push(p);
+      },
+      async exec(sql: string, params?: unknown[]): Promise<Array<{ columns: string[]; values: unknown[][] }>> {
+        try {
+          const reader = await conn.runAndReadAll(sql, params ?? undefined);
+          const colNames = reader.columnNames();
+          const rowCount = reader.currentRowCount;
+          const values: unknown[][] = [];
+          for (let r = 0; r < rowCount; r++) {
+            const row: unknown[] = [];
+            for (let c = 0; c < reader.columnCount; c++) {
+              row.push(reader.value(c, r));
+            }
+            values.push(row);
+          }
+          return [{ columns: colNames, values }];
+        } catch (err) {
+          logger.debug("DuckDB exec failed", {
+            sql: sql.slice(0, 120),
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return [];
+        }
+      },
+    };
+
+    return wrapper;
+  }
+
+  /** Flush all pending DuckDB async operations. Call after a batch of writes. */
+  async flushDuckDb(): Promise<void> {
+    while (this.pendingDuckOps.length > 0) {
+      await Promise.all(this.pendingDuckOps.splice(0));
+    }
+  }
+
+  /** Direct async DuckDB connection for operations that need real results. */
+  getDuckDbConnection(): DuckDBConnection | null {
+    return this.duckConn;
+  }
+
+  private createSqliteSchema(db: InstanceType<typeof Database>): void {
+    // SQLite keeps ONLY operational tables: events (+ FTS), lineage, features.
+    // All analytical tables (sessions, direction_windows, comprehension_*, token_proxy_spend,
+    // metric_snapshots, decisions, decision_edges, event_links) live in DuckDB.
     db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
@@ -116,90 +257,6 @@ export class CacheManager {
       CREATE INDEX IF NOT EXISTS idx_events_project_ts ON events(project_id, ts);
       CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
       CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
-
-      CREATE TABLE IF NOT EXISTS decisions (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        date TEXT,
-        domain TEXT,
-        description TEXT,
-        rationale TEXT,
-        alternatives_count INTEGER,
-        hds REAL,
-        direction_class TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_decisions_project ON decisions(project_id);
-      CREATE INDEX IF NOT EXISTS idx_decisions_project_date ON decisions(project_id, date);
-      CREATE INDEX IF NOT EXISTS idx_decisions_domain ON decisions(domain);
-      CREATE INDEX IF NOT EXISTS idx_decisions_date ON decisions(date);
-
-      CREATE TABLE IF NOT EXISTS decision_edges (
-        from_id TEXT,
-        to_id TEXT,
-        relation TEXT,
-        weight REAL,
-        match_type TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS metric_snapshots (
-        date TEXT NOT NULL,
-        project_id TEXT NOT NULL,
-        rdi REAL,
-        dcs REAL,
-        aq REAL,
-        cwi REAL,
-        api_score REAL,
-        decisions_count INTEGER,
-        labels JSON,
-        PRIMARY KEY (date, project_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_metric_snapshots_project ON metric_snapshots(project_id);
-
-      CREATE TABLE IF NOT EXISTS direction_windows (
-        window_size TEXT NOT NULL,
-        window_end TEXT NOT NULL,
-        project_id TEXT NOT NULL,
-        direction_density REAL,
-        event_count INTEGER,
-        tool_mix JSON,
-        PRIMARY KEY (window_size, window_end, project_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS comprehension_proxy (
-        event_id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        mod_depth REAL,
-        specificity REAL,
-        rejection REAL,
-        score REAL
-      );
-      CREATE INDEX IF NOT EXISTS idx_comprehension_project ON comprehension_proxy(project_id);
-
-      CREATE TABLE IF NOT EXISTS comprehension_by_module (
-        module TEXT NOT NULL,
-        project_id TEXT NOT NULL,
-        score REAL,
-        event_count INTEGER,
-        updated_at TEXT,
-        PRIMARY KEY (module, project_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS direction_by_file (
-        path TEXT NOT NULL,
-        project_id TEXT NOT NULL,
-        direction_density REAL,
-        event_count INTEGER,
-        PRIMARY KEY (path, project_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS token_proxy_spend (
-        date TEXT NOT NULL,
-        model TEXT NOT NULL,
-        project_id TEXT NOT NULL,
-        count INTEGER DEFAULT 0,
-        estimated_cost REAL DEFAULT 0,
-        PRIMARY KEY (date, model, project_id)
-      );
 
       CREATE TABLE IF NOT EXISTS event_insight_map (
         event_id TEXT NOT NULL,
@@ -240,26 +297,8 @@ export class CacheManager {
         metadata JSON,
         PRIMARY KEY (from_event, to_event, link_type)
       );
-
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        start_ts TEXT,
-        end_ts TEXT,
-        event_count INTEGER DEFAULT 0,
-        turn_count INTEGER DEFAULT 0,
-        outcome TEXT,
-        estimated_cost REAL DEFAULT 0,
-        execution_phases TEXT,
-        branch TEXT,
-        domain TEXT,
-        feature_id TEXT,
-        updated_at TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
     `);
 
-    // FTS5 for full-text search
     try {
       db.exec(`
         CREATE VIRTUAL TABLE IF NOT EXISTS events_fts
@@ -270,41 +309,27 @@ export class CacheManager {
     }
   }
 
-  /**
-   * Check if the cache is stale by comparing source file mtimes
-   * against a stored version timestamp.
-   */
   isStale(sourceDir: string): boolean {
-    if (!this.rawDb) return true;
-
+    if (!this.rawSqlite) return true;
     const cacheDir = getCacheDir(this.cwd);
-    const dbPath = join(cacheDir, DB_FILENAME);
+    const dbPath = join(cacheDir, SQLITE_FILENAME);
     if (!existsSync(dbPath)) return true;
-
     const dbMtime = statSync(dbPath).mtimeMs;
-
     if (!existsSync(sourceDir)) return false;
     const files = readdirSync(sourceDir).filter(
       (f: string) => f.endsWith(".jsonl") || f.endsWith(".md"),
     );
-
     for (const file of files) {
       const fileMtime = statSync(join(sourceDir, file)).mtimeMs;
       if (fileMtime > dbMtime) return true;
     }
-
     return false;
   }
 
-  /**
-   * Persist changes (no-op for better-sqlite3 — it's already on disk via WAL).
-   */
   async save(): Promise<void> {
-    // better-sqlite3 writes are already persisted via WAL mode.
-    // Checkpoint WAL for durability on explicit save.
-    if (this.rawDb) {
+    if (this.rawSqlite) {
       try {
-        this.rawDb.pragma("wal_checkpoint(TRUNCATE)");
+        this.rawSqlite.pragma("wal_checkpoint(TRUNCATE)");
       } catch {
         // non-fatal
       }
@@ -312,15 +337,32 @@ export class CacheManager {
   }
 
   async close(): Promise<void> {
-    if (this.rawDb) {
+    if (this.rawSqlite) {
       try {
-        this.rawDb.pragma("wal_checkpoint(TRUNCATE)");
-        this.rawDb.close();
+        this.rawSqlite.pragma("wal_checkpoint(TRUNCATE)");
+        this.rawSqlite.close();
       } catch {
         // already closed
       }
-      this.rawDb = null;
-      this.db = null;
+      this.rawSqlite = null;
+      this.sqliteDb = null;
+    }
+    if (this.duckConn) {
+      try {
+        this.duckConn.closeSync();
+      } catch {
+        // already closed
+      }
+      this.duckConn = null;
+      this.analyticsDb = null;
+    }
+    if (this.duckInstance) {
+      try {
+        this.duckInstance.closeSync();
+      } catch {
+        // already closed
+      }
+      this.duckInstance = null;
     }
   }
 }

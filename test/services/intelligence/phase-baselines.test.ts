@@ -26,7 +26,7 @@ function createMockDb(events: Array<{ phase: string; hds: number }>) {
 }
 
 describe("phase baselines", () => {
-  it("computes per-phase mean HDS and stddev", () => {
+  it("computes per-phase mean HDS and stddev", async () => {
     const events = [
       // 60 planning events with high HDS
       ...Array.from({ length: 60 }, () => ({ phase: "planning", hds: 0.85 })),
@@ -34,7 +34,7 @@ describe("phase baselines", () => {
       ...Array.from({ length: 60 }, () => ({ phase: "debugging", hds: 0.25 })),
     ];
 
-    const { baselines } = computePhaseBaselines(createMockDb(events) as any);
+    const { baselines } = await computePhaseBaselines(createMockDb(events) as any);
 
     expect(baselines.planning).toBeDefined();
     expect(baselines.planning.trusted).toBe(true);
@@ -46,17 +46,17 @@ describe("phase baselines", () => {
     expect(baselines.debugging.meanHds).toBeCloseTo(0.25, 1);
   });
 
-  it("marks baseline as untrusted with < 50 events", () => {
+  it("marks baseline as untrusted with < 50 events", async () => {
     const events = Array.from({ length: 30 }, () => ({ phase: "review", hds: 0.6 }));
-    const { baselines } = computePhaseBaselines(createMockDb(events) as any);
+    const { baselines } = await computePhaseBaselines(createMockDb(events) as any);
 
     expect(baselines.review).toBeDefined();
     expect(baselines.review.trusted).toBe(false);
     expect(baselines.review.eventCount).toBe(30);
   });
 
-  it("returns empty baselines when no data exists", () => {
-    const { baselines } = computePhaseBaselines(createMockDb([]) as any);
+  it("returns empty baselines when no data exists", async () => {
+    const { baselines } = await computePhaseBaselines(createMockDb([]) as any);
     expect(Object.keys(baselines).length).toBe(0);
   });
 });

@@ -120,14 +120,14 @@ export interface ModuleComprehension {
  * Aggregate comprehension scores by module (top-2 directory levels).
  * Queries the events + comprehension_proxy tables joined.
  */
-export function aggregateComprehensionByModule(db: {
+export async function aggregateComprehensionByModule(db: {
   run(sql: string, params?: unknown[]): void;
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-}): ModuleComprehension[] {
+  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
+}): Promise<ModuleComprehension[]> {
   const now = new Date().toISOString();
 
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT
         e.content_detail,
         e.content_summary,
@@ -194,11 +194,11 @@ export function aggregateComprehensionByModule(db: {
 /**
  * Read per-module comprehension from DB (fast path for API/MCP).
  */
-export function readModuleComprehension(db: {
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-}): ModuleComprehension[] {
+export async function readModuleComprehension(db: {
+  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
+}): Promise<ModuleComprehension[]> {
   try {
-    const result = db.exec(
+    const result = await db.exec(
       "SELECT module, score, event_count FROM comprehension_by_module ORDER BY event_count DESC",
     );
     if (!result[0]?.values.length) return [];

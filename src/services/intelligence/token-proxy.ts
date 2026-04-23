@@ -1,14 +1,16 @@
 // FILE: src/services/intelligence/token-proxy.ts
-// UF-238: Token spend proxy — tracks model usage per day and estimates cost.
-// During materialization, extracts model name from event metadata,
-// counts events per model per day, applies optional pricing table.
+// Token spend proxy — incremental: maintains running date+model counters.
+// No full DELETE+INSERT; counters only grow. Periodic reconciliation on initialize.
 
 import { localDateStr, localToday } from "../../utils/date.js";
-
-type DbLike = {
-  run(sql: string, params?: unknown[]): void;
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-};
+import type { DbLike } from "../cache/manager.js";
+import type { AnalyzerContext } from "./analyzers/index.js";
+import type {
+  IncrementalAnalyzer,
+  IncrementalState,
+  NewEventBatch,
+  UpdateResult,
+} from "./incremental-state.js";
 
 export interface TokenSpendEntry {
   date: string;
@@ -24,37 +26,50 @@ export interface DailySpendSummary {
   byModel: Array<{ model: string; count: number; cost: number }>;
 }
 
-/**
- * Compute and store token spend proxy from events table.
- * Reads AI-session events, groups by date + model, applies pricing table.
- */
-export function computeTokenSpend(db: DbLike, pricingTable: Record<string, number>): void {
+interface TokenProxyState {
+  byKey: Record<string, { model: string; date: string; count: number; estimatedCost: number }>;
+  pricingTable: Record<string, number>;
+}
+
+async function fullScan(db: DbLike, pricing: Record<string, number>): Promise<TokenProxyState> {
+  const byKey: TokenProxyState["byKey"] = {};
+
   try {
-    const result = db.exec(`
-      SELECT
-        substr(ts, 1, 10) as date,
-        COALESCE(json_extract(metadata, '$.model'), json_extract(metadata, '$.ai_tool'), 'unknown') as model,
-        COUNT(*) as cnt
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
+    const result = await db.exec(`
+      SELECT ts::DATE as date, COALESCE(model_id, ai_tool, 'unknown') as model, COUNT(*) as cnt
+      FROM events WHERE source IN ('ai-session', 'mcp-active')
       GROUP BY date, model
     `);
 
-    if (!result[0]?.values.length) return;
+    if (result[0]?.values.length) {
+      for (const row of result[0].values) {
+        const date = row[0] as string;
+        const model = (row[1] as string) ?? "unknown";
+        const count = row[2] as number;
+        const key = `${date}::${model}`;
+        const pricePerK = findPrice(model, pricing);
+        byKey[key] = {
+          model,
+          date,
+          count,
+          estimatedCost: pricePerK > 0 ? Math.round(count * pricePerK * 100) / 100 : 0,
+        };
+      }
+    }
+  } catch {
+    // non-fatal
+  }
 
+  return { byKey, pricingTable: pricing };
+}
+
+function syncToDb(db: DbLike, state: TokenProxyState): void {
+  try {
     db.run("DELETE FROM token_proxy_spend");
-
-    for (const row of result[0].values) {
-      const date = row[0] as string;
-      const model = (row[1] as string) ?? "unknown";
-      const count = row[2] as number;
-
-      const pricePerK = findPrice(model, pricingTable);
-      const estimatedCost = pricePerK > 0 ? Math.round(count * pricePerK * 100) / 100 : 0;
-
+    for (const entry of Object.values(state.byKey)) {
       db.run(
         "INSERT OR REPLACE INTO token_proxy_spend (date, model, project_id, count, estimated_cost) VALUES (?, ?, ?, ?, ?)",
-        [date, model, "", count, estimatedCost],
+        [entry.date, entry.model, "", entry.count, entry.estimatedCost],
       );
     }
   } catch {
@@ -62,30 +77,83 @@ export function computeTokenSpend(db: DbLike, pricingTable: Record<string, numbe
   }
 }
 
-/**
- * Read today's spend summary.
- */
-export function readTodaySpend(db: DbLike): DailySpendSummary | null {
-  const today = localToday();
-  return readSpendForDate(db, today);
+export const tokenProxyAnalyzer: IncrementalAnalyzer<TokenProxyState, TokenSpendEntry[]> = {
+  name: "token-proxy",
+  outputFile: "token-proxy-spend.json",
+  eventFilter: { sources: ["ai-session", "mcp-active"] },
+  minDataPoints: 1,
+
+  async initialize(ctx): Promise<IncrementalState<TokenProxyState>> {
+    const pricing = (ctx.config.pricing ?? {}) as Record<string, number>;
+    const value = await fullScan(ctx.analytics, pricing);
+    syncToDb(ctx.analytics, value);
+    return { value, watermark: "", eventCount: 0, updatedAt: new Date().toISOString() };
+  },
+
+  async update(state, batch, ctx): Promise<UpdateResult<TokenProxyState>> {
+    if (batch.events.length === 0) return { state, changed: false };
+
+    const byKey = { ...state.value.byKey };
+    const pricing = state.value.pricingTable;
+    let changed = false;
+
+    for (const evt of batch.events) {
+      const date = evt.ts.slice(0, 10);
+      const model = evt.aiTool ?? "unknown";
+      const key = `${date}::${model}`;
+      const existing = byKey[key] ?? { model, date, count: 0, estimatedCost: 0 };
+      existing.count++;
+      const pricePerK = findPrice(model, pricing);
+      existing.estimatedCost =
+        pricePerK > 0 ? Math.round(existing.count * pricePerK * 100) / 100 : 0;
+      byKey[key] = existing;
+      changed = true;
+    }
+
+    if (changed) syncToDb(ctx.analytics, { byKey, pricingTable: pricing });
+
+    return {
+      state: {
+        value: { byKey, pricingTable: pricing },
+        watermark: batch.events[batch.events.length - 1].ts,
+        eventCount: state.eventCount + batch.events.length,
+        updatedAt: new Date().toISOString(),
+      },
+      changed,
+    };
+  },
+
+  derive(state): TokenSpendEntry[] {
+    return Object.values(state.value.byKey)
+      .map((e) => ({
+        date: e.date,
+        model: e.model,
+        count: e.count,
+        estimatedCost: e.estimatedCost,
+      }))
+      .sort((a, b) => b.estimatedCost - a.estimatedCost);
+  },
+};
+
+export async function readTodaySpend(db: DbLike): Promise<DailySpendSummary | null> {
+  return readSpendForDate(db, localToday());
 }
 
-/**
- * Read spend summary for a specific date.
- */
-export function readSpendForDate(db: DbLike, date: string): DailySpendSummary | null {
+export async function readSpendForDate(
+  db: DbLike,
+  date: string,
+): Promise<DailySpendSummary | null> {
   try {
-    const result = db.exec(
-      `SELECT model, count, estimated_cost FROM token_proxy_spend WHERE date = '${date}' ORDER BY count DESC`,
+    const result = await db.exec(
+      `SELECT model, count, estimated_cost FROM token_proxy_spend WHERE date = $1::DATE ORDER BY count DESC`,
+      [date],
     );
     if (!result[0]?.values.length) return null;
-
     const byModel = result[0].values.map((row) => ({
       model: row[0] as string,
       count: row[1] as number,
       cost: row[2] as number,
     }));
-
     return {
       date,
       totalCount: byModel.reduce((s, m) => s + m.count, 0),
@@ -97,36 +165,23 @@ export function readSpendForDate(db: DbLike, date: string): DailySpendSummary | 
   }
 }
 
-/**
- * Read trailing N-day spend for trend computation.
- */
-export function readTrailingSpend(db: DbLike, days: number): DailySpendSummary[] {
+export async function readTrailingSpend(db: DbLike, days: number): Promise<DailySpendSummary[]> {
   const summaries: DailySpendSummary[] = [];
   const now = new Date();
-
   for (let i = 0; i < days; i++) {
     const d = new Date(now);
     d.setDate(d.getDate() - i);
-    const dateStr = localDateStr(d);
-    const summary = readSpendForDate(db, dateStr);
-    if (summary && summary.totalCount > 0) {
-      summaries.push(summary);
-    }
+    const summary = await readSpendForDate(db, localDateStr(d));
+    if (summary && summary.totalCount > 0) summaries.push(summary);
   }
-
   return summaries;
 }
 
 function findPrice(model: string, table: Record<string, number>): number {
   const lower = model.toLowerCase();
-
   if (table[lower] !== undefined) return table[lower];
-
   for (const [key, price] of Object.entries(table)) {
-    if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) {
-      return price;
-    }
+    if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) return price;
   }
-
   return 0;
 }

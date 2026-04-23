@@ -54,8 +54,8 @@ func TestAISessionWatcherV2StartStopNoDirs(t *testing.T) {
 	w.Stop()
 }
 
-// T-100: AISessionWatcher V2 emits events with direction_signals metadata.
-func TestAISessionWatcherV2EmitsClassifiedEvents(t *testing.T) {
+// AISessionWatcher emits raw events with turn data (no classification).
+func TestAISessionWatcherV2EmitsRawEvents(t *testing.T) {
 	mock := &mockParser{
 		name: "test-tool",
 		sources: []parsers.DataSource{
@@ -98,8 +98,9 @@ func TestAISessionWatcherV2EmitsClassifiedEvents(t *testing.T) {
 		if event.Metadata == nil {
 			t.Fatal("expected metadata")
 		}
-		if _, ok := event.Metadata["direction_signals"]; !ok {
-			t.Error("expected direction_signals in metadata")
+		// Daemon is a pure fetcher — no classification metadata.
+		if _, ok := event.Metadata["direction_signals"]; ok {
+			t.Error("direction_signals should not be present")
 		}
 		if event.Metadata["ai_tool"] != "test-tool" {
 			t.Errorf("ai_tool = %q, want test-tool", event.Metadata["ai_tool"])
@@ -107,6 +108,10 @@ func TestAISessionWatcherV2EmitsClassifiedEvents(t *testing.T) {
 		turnCount, _ := event.Metadata["turn_count"].(int)
 		if turnCount != 2 {
 			t.Errorf("turn_count = %d, want 2", turnCount)
+		}
+		// Raw turns should be present.
+		if _, ok := event.Metadata["turns"]; !ok {
+			t.Error("expected turns in metadata")
 		}
 	case <-time.After(1 * time.Second):
 		t.Error("no event emitted")
@@ -202,7 +207,7 @@ done:
 	}
 }
 
-func TestTurnsToEventsDirectionSignals(t *testing.T) {
+func TestTurnsToEventsRawData(t *testing.T) {
 	turns := []parsers.ConversationTurn{
 		{ConversationID: "c1", TurnIndex: 0, Role: "user", Content: "Refactor auth to use DI instead of singletons", Timestamp: time.Now()},
 		{ConversationID: "c1", TurnIndex: 1, Role: "assistant", Content: "I'll use a singleton pattern for AuthService.", Timestamp: time.Now()},
@@ -216,15 +221,37 @@ func TestTurnsToEventsDirectionSignals(t *testing.T) {
 	}
 
 	ev := events[0]
-	signals, ok := ev.Metadata["direction_signals"].(parsers.DirectionSignals)
+
+	// Verify raw data is preserved — no classification.
+	if ev.Metadata["ai_tool"] != "claude-code" {
+		t.Errorf("ai_tool = %v, want claude-code", ev.Metadata["ai_tool"])
+	}
+	if ev.Metadata["turn_count"] != 4 {
+		t.Errorf("turn_count = %v, want 4", ev.Metadata["turn_count"])
+	}
+	if _, exists := ev.Metadata["direction_signals"]; exists {
+		t.Error("direction_signals should not be present — daemon is a pure fetcher")
+	}
+
+	// Verify raw turns are included.
+	rawTurns, ok := ev.Metadata["turns"].([]map[string]any)
 	if !ok {
-		t.Fatal("direction_signals not found or wrong type")
+		t.Fatal("turns metadata not found or wrong type")
 	}
-	if signals.HumanDirectionScore <= 0 {
-		t.Errorf("HDS = %.3f, want > 0", signals.HumanDirectionScore)
+	if len(rawTurns) != 4 {
+		t.Errorf("raw turns = %d, want 4", len(rawTurns))
 	}
-	if signals.RejectionCount == 0 {
-		t.Error("expected rejection count > 0")
+	if rawTurns[0]["role"] != "user" {
+		t.Errorf("first turn role = %v, want user", rawTurns[0]["role"])
+	}
+
+	// Verify prompts are extracted.
+	prompts, ok := ev.Metadata["prompts_all"].([]string)
+	if !ok {
+		t.Fatal("prompts_all not found or wrong type")
+	}
+	if len(prompts) != 2 {
+		t.Errorf("prompts_all = %d, want 2", len(prompts))
 	}
 }
 
@@ -508,124 +535,6 @@ func TestExtractAllPromptsLimits(t *testing.T) {
 	}
 }
 
-// T-323: classifyExecutionPhase returns correct priority-ordered phases.
-func TestClassifyExecutionPhase(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{"debugging wins over testing", "fix the failing test", "debugging"},
-		{"testing priority", "add unit tests for auth module", "testing"},
-		{"refactoring priority", "refactor the handler to extract a helper", "refactoring"},
-		{"configuring", "configure the .env file settings", "configuring"},
-		{"implementing default", "add user registration endpoint", "implementing"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			turns := []parsers.ConversationTurn{
-				{ConversationID: "c1", TurnIndex: 0, Role: "user", Content: tt.content, Timestamp: time.Now()},
-				{ConversationID: "c1", TurnIndex: 1, Role: "assistant", Content: "done", Timestamp: time.Now()},
-			}
-			events := TurnsToEvents(turns, "test")
-			phase := events[0].Metadata["execution_phase"].(string)
-			if phase != tt.want {
-				t.Errorf("execution_phase = %q, want %q", phase, tt.want)
-			}
-		})
-	}
-}
-
-// T-324: classifyExecutionPhase returns "exploring" when only read tools used.
-func TestClassifyExecutionPhaseExploring(t *testing.T) {
-	turns := []parsers.ConversationTurn{
-		{ConversationID: "c1", TurnIndex: 0, Role: "user",
-			Content: "show me what is in the auth folder", Timestamp: time.Now()},
-		{ConversationID: "c1", TurnIndex: 1, Role: "assistant",
-			Content: "Here's what I found.", Timestamp: time.Now(),
-			ToolUse: []parsers.ToolCall{
-				{Name: "Glob", Input: `{"pattern": "src/auth/**"}`},
-				{Name: "Read", Input: `{"file_path": "/src/auth/index.ts"}`},
-			}},
-	}
-	events := TurnsToEvents(turns, "test")
-	phase := events[0].Metadata["execution_phase"].(string)
-	if phase != "exploring" {
-		t.Errorf("execution_phase = %q, want exploring", phase)
-	}
-}
-
-// T-325: extractIntentSummary returns first sentence, max 200 chars.
-func TestExtractIntentSummary(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{"single sentence", "Add OAuth2 support. Then wire up the routes.", "Add OAuth2 support."},
-		{"question", "How does the auth middleware work? Show me the code.", "How does the auth middleware work?"},
-		{"no punctuation under 200", "Add user registration", "Add user registration"},
-		{"long without period", strings.Repeat("a", 250), strings.Repeat("a", 200)},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			turns := []parsers.ConversationTurn{
-				{ConversationID: "c1", TurnIndex: 0, Role: "user", Content: tt.content, Timestamp: time.Now()},
-				{ConversationID: "c1", TurnIndex: 1, Role: "assistant", Content: "ok", Timestamp: time.Now()},
-			}
-			events := TurnsToEvents(turns, "test")
-			intent := events[0].Metadata["intent_summary"].(string)
-			if intent != tt.want {
-				t.Errorf("intent_summary = %q, want %q", intent, tt.want)
-			}
-		})
-	}
-}
-
-// T-326: Session boundary markers (session_start, conversation_complete, trigger_context).
-func TestSessionBoundaryMarkers(t *testing.T) {
-	baseTime := time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC)
-
-	turns := []parsers.ConversationTurn{
-		{ConversationID: "c1", TurnIndex: 0, Role: "user",
-			Content: "implement the feature", Timestamp: baseTime, SessionID: "s1"},
-		{ConversationID: "c1", TurnIndex: 1, Role: "assistant",
-			Content: "Done implementing.", Timestamp: baseTime.Add(5 * time.Minute), SessionID: "s1"},
-	}
-
-	events := TurnsToEvents(turns, "test")
-	ev := events[0]
-
-	// session_start should be the earliest timestamp
-	sessionStart, ok := ev.Metadata["session_start"].(string)
-	if !ok || sessionStart == "" {
-		t.Fatal("session_start not found")
-	}
-	if sessionStart != "2026-04-20T10:00:00Z" {
-		t.Errorf("session_start = %q, want 2026-04-20T10:00:00Z", sessionStart)
-	}
-
-	// conversation_complete should be true (last turn is assistant)
-	complete, ok := ev.Metadata["conversation_complete"].(bool)
-	if !ok {
-		t.Fatal("conversation_complete not found")
-	}
-	if !complete {
-		t.Error("expected conversation_complete = true")
-	}
-
-	// trigger_context should be user_initiated (no MCP signals)
-	trigger, ok := ev.Metadata["trigger_context"].(string)
-	if !ok {
-		t.Fatal("trigger_context not found")
-	}
-	if trigger != "user_initiated" {
-		t.Errorf("trigger_context = %q, want user_initiated", trigger)
-	}
-}
-
 // T-327: Sequence persistence save/load round-trip.
 func TestSequencePersistence(t *testing.T) {
 	dir := t.TempDir()
@@ -673,21 +582,5 @@ func TestSequencePersistence(t *testing.T) {
 	nextBeta := nextSequenceID("session-beta")
 	if nextBeta != 2 { // Loaded 1, +1 = starts at 2
 		t.Errorf("next session-beta ID = %d, want 2", nextBeta)
-	}
-}
-
-// T-327b: detectTriggerContext identifies MCP invocation.
-func TestDetectTriggerContextMCP(t *testing.T) {
-	turns := []parsers.ConversationTurn{
-		{ConversationID: "c1", TurnIndex: 0, Role: "user",
-			Content: "Use the unfade-context to get background", Timestamp: time.Now()},
-		{ConversationID: "c1", TurnIndex: 1, Role: "assistant",
-			Content: "I'll query MCP.", Timestamp: time.Now(),
-			ToolUse: []parsers.ToolCall{{Name: "mcp__unfade", Input: `{}`}}},
-	}
-	events := TurnsToEvents(turns, "test")
-	trigger := events[0].Metadata["trigger_context"].(string)
-	if trigger != "mcp_invoked" {
-		t.Errorf("trigger_context = %q, want mcp_invoked", trigger)
 	}
 }

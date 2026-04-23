@@ -131,12 +131,34 @@ export class EmbeddedDaemon {
       args.push("--project-dir", this.repoRoot);
     }
 
+    // Clean up previous child listeners to prevent accumulation across restarts
+    if (this.child) {
+      this.child.removeAllListeners();
+      this.child.stderr?.removeAllListeners();
+    }
+
     const child = spawn(daemonPath, args, {
       stdio: ["ignore", "ignore", "pipe"],
     });
 
     this.child = child;
     this.startedAt = Date.now();
+
+    // Handle spawn failures (binary not executable, ENOENT, etc.)
+    child.on("error", (err) => {
+      logger.error(`[capture:${this.label}] spawn error: ${err.message}`);
+      logBuffer.append("daemon", "error", `Spawn error: ${err.message}`, { repoId: this.label });
+      this.child = null;
+
+      if (!this.shuttingDown) {
+        this.restartCount++;
+        const backoffMs = Math.min(1000 * 2 ** (this.restartCount - 1), MAX_BACKOFF_MS);
+        this.restartTimer = setTimeout(() => {
+          if (this.shuttingDown) return;
+          this.spawn(daemonPath);
+        }, backoffMs);
+      }
+    });
 
     child.stderr?.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString().trim().split("\n")) {
@@ -149,6 +171,7 @@ export class EmbeddedDaemon {
     });
 
     child.on("exit", (code, signal) => {
+      this.child = null;
       if (this.shuttingDown) return;
 
       this.restartCount++;

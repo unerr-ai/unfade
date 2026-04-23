@@ -70,7 +70,8 @@ Directory structure:
 ~/.unfade/                    # Global Unfade home (single source of truth)
 ├── config.json               # User config (v2)
 ├── events/                   # ALL events, ALL projects (date-partitioned JSONL)
-├── cache/unfade.db           # Global SQLite cache (project_id indexed)
+├── cache/unfade.db           # SQLite operational cache (FTS, point lookups, lineage)
+├── cache/unfade.duckdb       # DuckDB analytical cache (time-series, intelligence, typed columns)
 ├── distills/                 # Daily reasoning summaries
 ├── profile/                  # Global reasoning model (cross-project identity)
 ├── graph/                    # decisions.jsonl (project-tagged), domains.json
@@ -87,29 +88,38 @@ Directory structure:
 └── logs/                     # Server + global logs
 ```
 
-### 5. User-Facing Terminology
+### 5. Dual-Database Architecture (Layer 2)
+
+- **DuckDB** (`~/.unfade/cache/unfade.duckdb`) is for **all analytics**: time-series aggregations, intelligence queries, typed-column scans. Use `CacheManager.analytics` handle. All 8 intelligence analyzers, window aggregator, token proxy, session materializer, comprehension scorer, and file direction read/write here.
+- **SQLite** (`~/.unfade/cache/unfade.db`) is for **FTS, point lookups, and operational data**: event-by-ID retrieval, full-text search (`events_fts`), lineage (`event_insight_map`), feature boundaries (`features`, `event_features`), event links. Use `CacheManager.operational` or `CacheManager.getDb()` handle.
+- **Never cross the streams**: analytical queries go to DuckDB, operational queries go to SQLite. The materializer writes to both (SQLite events + DuckDB typed columns).
+- **JSONL is the source of truth**: both databases are derived caches. `unfade doctor --rebuild-cache` replays all JSONL into both.
+- DuckDB events table has **37 typed columns** (no `json_extract()`). SQLite events table keeps `metadata` as a JSON blob for backward compat.
+- `AnalyzerContext` carries `analytics: DbLike` (DuckDB) and `operational: DbLike` (SQLite).
+
+### 6. User-Facing Terminology
 
 - Say **"capture engine"**, not "daemon" — users don't need to know it's a background process
 - Say **"reasoning"**, not "data" or "logs"
 - Say **"distill"**, not "summarize"
 
-### 6. Test Naming
+### 7. Test Naming
 
 Tests mirror source structure: `test/<path>/<name>.test.ts` mirrors `src/<path>/<name>.ts`.
 Integration tests live in `test/integration/`.
 
-### 7. Imports
+### 8. Imports
 
 - All imports MUST use `.js` extensions (ESM requirement)
 - Use `node:` prefix for Node.js built-ins (`node:path`, `node:fs`, `node:os`)
 
-### 8. Config Migration
+### 9. Config Migration
 
 Config migrations live in `src/config/config-migrations.ts`. Each migration is `{ from: number, to: number, up: (config) => config }`. Migrations run sequentially, backup as `.backup.json`. Current version: 2.
 
 Profile migrations (reasoning_model.json v1→v2) are in `src/config/migrations.ts`.
 
-### 9. CLI Error Handling
+### 10. CLI Error Handling
 
 All CLI commands use `handleCliError(err, commandName)` from `src/utils/cli-error.ts`. It:
 - Logs a user-friendly message to stderr
@@ -117,7 +127,7 @@ All CLI commands use `handleCliError(err, commandName)` from `src/utils/cli-erro
 - Logs stack trace at debug level
 - Sets `process.exitCode = 1`
 
-### 10. Distill Pipeline
+### 11. Distill Pipeline
 
 `src/services/distill/distiller.ts` orchestrates: events → signals → context linking → synthesis → profile update → graph update → write markdown → notify.
 
@@ -126,7 +136,7 @@ All CLI commands use `handleCliError(err, commandName)` from `src/utils/cli-erro
 - Pass `provider: null` to use fallback synthesizer (no LLM) — useful for tests
 - Idempotent: re-running overwrites existing distill
 
-### 11. MCP Server
+### 12. MCP Server
 
 9 tools (see `src/services/mcp/tools.ts`), 5 resources, 3 prompts. All tools return the response envelope pattern. Degraded mode returns `degraded: true` with reason when `.unfade/` is missing.
 

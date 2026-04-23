@@ -36,8 +36,8 @@ export function writeInsightMappings(
 /**
  * Forward query: given an event ID, find all insights it contributed to.
  */
-export function getInsightsForEvent(db: DbLike, eventId: string): InsightMapping[] {
-  const result = db.exec(
+export async function getInsightsForEvent(db: DbLike, eventId: string): Promise<InsightMapping[]> {
+  const result = await db.exec(
     `SELECT event_id, insight_id, analyzer, contribution_weight, computed_at FROM event_insight_map WHERE event_id = '${eventId}'`,
   );
   if (!result[0] || result[0].values.length === 0) return [];
@@ -54,8 +54,8 @@ export function getInsightsForEvent(db: DbLike, eventId: string): InsightMapping
 /**
  * Reverse query: given an insight ID, find all events that contributed to it.
  */
-export function getEventsForInsight(db: DbLike, insightId: string): InsightMapping[] {
-  const result = db.exec(
+export async function getEventsForInsight(db: DbLike, insightId: string): Promise<InsightMapping[]> {
+  const result = await db.exec(
     `SELECT event_id, insight_id, analyzer, contribution_weight, computed_at FROM event_insight_map WHERE insight_id = '${insightId}'`,
   );
   if (!result[0] || result[0].values.length === 0) return [];

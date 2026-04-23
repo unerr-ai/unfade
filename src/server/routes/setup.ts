@@ -2,7 +2,8 @@
 // Setup/onboarding lifecycle API routes. Mounted at root ("").
 // POST /api/setup/complete — marks onboarding as done.
 
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { logger } from "../../utils/logger.js";
@@ -15,11 +16,11 @@ export const setupRoutes = new Hono();
  * POST /api/setup/complete — marks onboarding as done.
  * Called when user clicks "Start Exploring" on the setup page.
  */
-setupRoutes.post("/api/setup/complete", (c) => {
+setupRoutes.post("/api/setup/complete", async (c) => {
   const reqId = (c as unknown as { reqId?: string }).reqId;
   logger.info("setup.complete: marking done", { reqId });
   try {
-    updateSetupStatus({ configuredAt: new Date().toISOString(), setupCompleted: true });
+    await updateSetupStatus({ configuredAt: new Date().toISOString(), setupCompleted: true });
     invalidateSetupCache();
     logger.info("setup.complete: success", { reqId });
     return c.json({ success: true });
@@ -33,12 +34,12 @@ setupRoutes.post("/api/setup/complete", (c) => {
 /**
  * Update setup-status.json in state dir. Merges with existing data.
  */
-export function updateSetupStatus(update: Record<string, unknown>): void {
+export async function updateSetupStatus(update: Record<string, unknown>): Promise<void> {
   const stateDir = getStateDir();
   const statusPath = join(stateDir, "setup-status.json");
   let existing: Record<string, unknown> = {};
   try {
-    existing = JSON.parse(readFileSync(statusPath, "utf-8"));
+    existing = JSON.parse(await readFile(statusPath, "utf-8"));
   } catch {
     // Start fresh
   }

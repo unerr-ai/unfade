@@ -46,8 +46,8 @@ const MIN_ARC_EVENTS = 2;
  * Detect debugging arcs from recent events.
  * Groups debugging-phase events by file overlap + temporal proximity.
  */
-export function detectDebuggingArcs(db: DbLike): DebuggingArc[] {
-  const events = loadDebuggingEvents(db);
+export async function detectDebuggingArcs(db: DbLike): Promise<DebuggingArc[]> {
+  const events = await loadDebuggingEvents(db);
   if (events.length < MIN_ARC_EVENTS) return [];
 
   const arcEvents = events.map(toArcEvent);
@@ -98,20 +98,20 @@ export function formatDebuggingArcsSection(arcs: DebuggingArc[]): string {
   return lines.join("\n");
 }
 
-function loadDebuggingEvents(db: DbLike): RawEvent[] {
+async function loadDebuggingEvents(db: DbLike): Promise<RawEvent[]> {
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT id, ts, content_summary, content_detail, git_branch, metadata
       FROM events
       WHERE (
-        json_extract(metadata, '$.execution_phase') = 'debugging'
-        OR json_extract(metadata, '$.execution_phase') = 'investigating'
+        execution_phase = 'debugging'
+        OR execution_phase = 'investigating'
         OR content_summary LIKE '%error%'
         OR content_summary LIKE '%bug%'
         OR content_summary LIKE '%fix%'
         OR content_summary LIKE '%debug%'
       )
-      AND ts >= datetime('now', '-7 days')
+      AND ts >= now() - INTERVAL '7 days'
       ORDER BY ts ASC
       LIMIT 500
     `);

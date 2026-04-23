@@ -132,19 +132,19 @@ describe("lineage service", () => {
     expect(mappings[0].analyzer).toBe("efficiency");
   });
 
-  it("getEventsForInsight returns source events", () => {
+  it("getEventsForInsight returns source events", async () => {
     const db = createMockDb();
     writeInsightMappings(db, "insight-abc", "efficiency", ["evt-1", "evt-2"]);
 
-    const events = getEventsForInsight(db, "insight-abc");
+    const events = await getEventsForInsight(db, "insight-abc");
     expect(events.length).toBe(2);
     expect(events[0].insightId).toBe("insight-abc");
     expect(events[0].analyzer).toBe("efficiency");
   });
 
-  it("returns empty for unknown insight ID", () => {
+  it("returns empty for unknown insight ID", async () => {
     const db = createMockDb();
-    const events = getEventsForInsight(db, "nonexistent");
+    const events = await getEventsForInsight(db, "nonexistent");
     expect(events.length).toBe(0);
   });
 

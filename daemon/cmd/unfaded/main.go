@@ -217,22 +217,22 @@ func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, re
 			}
 		}
 
-		// Default: 30 days.
-		days := 30
+		// Default: all available history (zero time).
+		// Optional "days" arg narrows the window for manual overrides.
+		var since time.Time
 		if req.Args != nil {
 			if d, ok := req.Args["days"]; ok {
 				switch v := d.(type) {
 				case float64:
-					days = int(v)
+					since = time.Now().AddDate(0, 0, -int(v))
 				case string:
 					if parsed, err := strconv.Atoi(v); err == nil {
-						days = parsed
+						since = time.Now().AddDate(0, 0, -parsed)
 					}
 				}
 			}
 		}
 
-		since := time.Now().AddDate(0, 0, -days)
 		count, err := orchestrator.Backfill(since)
 		if err != nil {
 			return platform.IPCResponse{
@@ -244,9 +244,8 @@ func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, re
 		return platform.IPCResponse{
 			OK: true,
 			Data: map[string]any{
-				"message": fmt.Sprintf("backfilled %d commits from last %d days", count, days),
+				"message": fmt.Sprintf("backfilled %d commits", count),
 				"count":   count,
-				"days":    days,
 			},
 		}
 
@@ -258,21 +257,22 @@ func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, re
 			}
 		}
 
-		days := 7
+		// Default: all available history (zero time).
+		// Optional "days" arg narrows the window for manual overrides.
+		var since time.Time
 		if req.Args != nil {
 			if d, ok := req.Args["days"]; ok {
 				switch v := d.(type) {
 				case float64:
-					days = int(v)
+					since = time.Now().AddDate(0, 0, -int(v))
 				case string:
 					if parsed, err := strconv.Atoi(v); err == nil {
-						days = parsed
+						since = time.Now().AddDate(0, 0, -parsed)
 					}
 				}
 			}
 		}
 
-		since := time.Now().AddDate(0, 0, -days)
 		if err := orchestrator.StartIngest(since); err != nil {
 			return platform.IPCResponse{
 				OK:    false,
@@ -283,8 +283,7 @@ func handleIPC(req platform.IPCRequest, getBudget func() health.BudgetStatus, re
 		return platform.IPCResponse{
 			OK: true,
 			Data: map[string]any{
-				"message": fmt.Sprintf("historical ingest started for last %d days", days),
-				"days":    days,
+				"message": "historical ingest started (all available history)",
 			},
 		}
 
@@ -506,9 +505,15 @@ func resolveProjectID(projectDir string) string {
 		return "unregistered:" + projectDir
 	}
 
-	absProject, _ := filepath.Abs(projectDir)
+	absProject, err2 := filepath.Abs(projectDir)
+	if err2 != nil {
+		absProject = projectDir
+	}
 	for _, repo := range reg.Repos {
-		absRoot, _ := filepath.Abs(repo.Root)
+		absRoot, err3 := filepath.Abs(repo.Root)
+		if err3 != nil {
+			absRoot = repo.Root
+		}
 		if absProject == absRoot {
 			return repo.ID
 		}
@@ -520,7 +525,10 @@ func resolveProjectID(projectDir string) string {
 // Each daemon gets its own state/log dir under ~/.unfade/state/daemons/<id>/.
 
 func resolveEventsDir(_ string) string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = "."
+	}
 	return filepath.Join(home, ".unfade", "events")
 }
 
@@ -536,14 +544,20 @@ func resolveDaemonId(projectDir, captureMode string) string {
 }
 
 func resolveDaemonStateDir(daemonId string) string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = "."
+	}
 	dir := filepath.Join(home, ".unfade", "state", "daemons", daemonId)
 	_ = os.MkdirAll(dir, 0o755)
 	return dir
 }
 
 func resolveDaemonLogsDir(daemonId string) string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = "."
+	}
 	dir := filepath.Join(home, ".unfade", "state", "daemons", daemonId)
 	_ = os.MkdirAll(dir, 0o755)
 	return dir

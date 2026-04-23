@@ -91,7 +91,18 @@ export function createApp(): Hono {
     }),
   );
 
-  // Static assets (brand icons, fonts, manifest)
+  // Static assets — Cache-Control for fonts/css/js (UF-477)
+  app.use("/public/*", async (c, next) => {
+    await next();
+    const path = c.req.path;
+    if (path.endsWith(".woff2") || path.endsWith(".woff")) {
+      c.header("Cache-Control", "public, max-age=31536000, immutable");
+    } else if (path.endsWith(".css") || path.endsWith(".js")) {
+      c.header("Cache-Control", "public, max-age=3600, must-revalidate");
+    } else if (path.endsWith(".png") || path.endsWith(".svg")) {
+      c.header("Cache-Control", "public, max-age=86400");
+    }
+  });
   app.use("/public/*", serveStatic({ root: "./" }));
 
   // Request logging middleware — correlation ID + timing for every request
@@ -187,6 +198,10 @@ export function createApp(): Hono {
   // /decisions is now a real page (Sprint 15C) — registered via decisionsPage route above
   // /portfolio and /repos/:id redirects (Phase 15 — merged into Home)
   app.get("/portfolio", (c) => c.redirect("/"));
+  app.get("/repos/:id", (c) => {
+    const id = c.req.param("id");
+    return c.redirect(`/?project=${encodeURIComponent(id)}`);
+  });
 
   // Phase 7: Intelligence pages
   // Phase 15: standalone intelligence pages merged into Intelligence Hub tabs

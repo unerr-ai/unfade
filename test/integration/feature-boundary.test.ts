@@ -122,15 +122,15 @@ describe("Feature Boundary Detection (11C.3)", () => {
     const { assignEventsToFeatures } = await import(
       "../../src/services/intelligence/feature-boundary.js"
     );
-    assignEventsToFeatures(db, eventIds);
+    await assignEventsToFeatures(db, eventIds);
 
     // All events should be assigned to the same feature
-    const result = db.exec("SELECT DISTINCT feature_id FROM event_features");
+    const result = await db.exec("SELECT DISTINCT feature_id FROM event_features");
     expect(result[0].values.length).toBe(1);
 
     // Feature should have branch = "feat/auth"
     const featureId = result[0].values[0][0] as string;
-    const featureResult = db.exec("SELECT branch, name FROM features WHERE id = ?", [featureId]);
+    const featureResult = await db.exec("SELECT branch, name FROM features WHERE id = ?", [featureId]);
     expect(featureResult[0].values[0][0]).toBe("feat/auth");
   });
 
@@ -155,10 +155,10 @@ describe("Feature Boundary Detection (11C.3)", () => {
     const { assignEventsToFeatures } = await import(
       "../../src/services/intelligence/feature-boundary.js"
     );
-    assignEventsToFeatures(db, ["evt-first", "evt-second"]);
+    await assignEventsToFeatures(db, ["evt-first", "evt-second"]);
 
     // Should be in the same feature due to high file overlap
-    const result = db.exec("SELECT DISTINCT feature_id FROM event_features");
+    const result = await db.exec("SELECT DISTINCT feature_id FROM event_features");
     expect(result[0].values.length).toBe(1);
   });
 
@@ -177,10 +177,10 @@ describe("Feature Boundary Detection (11C.3)", () => {
     const { assignEventsToFeatures } = await import(
       "../../src/services/intelligence/feature-boundary.js"
     );
-    assignEventsToFeatures(db, ["evt-named"]);
+    await assignEventsToFeatures(db, ["evt-named"]);
 
     // Feature name should strip the "feat/" prefix
-    const result = db.exec("SELECT name FROM features LIMIT 1");
+    const result = await db.exec("SELECT name FROM features LIMIT 1");
     expect(result[0].values[0][0]).toBe("setup-wizard");
   });
 
@@ -199,10 +199,10 @@ describe("Feature Boundary Detection (11C.3)", () => {
     const { assignEventsToFeatures } = await import(
       "../../src/services/intelligence/feature-boundary.js"
     );
-    assignEventsToFeatures(db, ["evt-old"]);
+    await assignEventsToFeatures(db, ["evt-old"]);
 
     // Feature should be marked stale (last_seen is 14 days ago)
-    const result = db.exec("SELECT status FROM features WHERE branch = 'feat/old-work'");
+    const result = await db.exec("SELECT status FROM features WHERE branch = 'feat/old-work'");
     expect(result[0].values[0][0]).toBe("stale");
   });
 });
@@ -268,10 +268,10 @@ describe("Cross-Event Linking (11C.3)", () => {
     const { linkRelatedEvents } = await import(
       "../../src/services/intelligence/feature-boundary.js"
     );
-    linkRelatedEvents(db, ["sess-evt-2", "sess-evt-3"]);
+    await linkRelatedEvents(db, ["sess-evt-2", "sess-evt-3"]);
 
     // sess-evt-1 → sess-evt-2 (continues_from)
-    const link1 = db.exec(
+    const link1 = await db.exec(
       "SELECT from_event, to_event FROM event_links WHERE link_type = 'continues_from' AND to_event = ?",
       ["sess-evt-2"],
     );
@@ -279,7 +279,7 @@ describe("Cross-Event Linking (11C.3)", () => {
     expect(link1[0].values[0][0]).toBe("sess-evt-1");
 
     // sess-evt-2 → sess-evt-3 (continues_from)
-    const link2 = db.exec(
+    const link2 = await db.exec(
       "SELECT from_event, to_event FROM event_links WHERE link_type = 'continues_from' AND to_event = ?",
       ["sess-evt-3"],
     );
@@ -310,10 +310,10 @@ describe("Cross-Event Linking (11C.3)", () => {
     const { linkRelatedEvents } = await import(
       "../../src/services/intelligence/feature-boundary.js"
     );
-    linkRelatedEvents(db, ["ai-evt"]);
+    await linkRelatedEvents(db, ["ai-evt"]);
 
     // ai-evt → commit-evt (triggered_commit)
-    const result = db.exec(
+    const result = await db.exec(
       "SELECT to_event FROM event_links WHERE from_event = ? AND link_type = 'triggered_commit'",
       ["ai-evt"],
     );
@@ -340,10 +340,10 @@ describe("Cross-Event Linking (11C.3)", () => {
     const { linkRelatedEvents } = await import(
       "../../src/services/intelligence/feature-boundary.js"
     );
-    linkRelatedEvents(db, ["file-evt-2"]);
+    await linkRelatedEvents(db, ["file-evt-2"]);
 
     // file-evt-1 → file-evt-2 (related_events, shared file: src/auth.ts)
-    const result = db.exec(
+    const result = await db.exec(
       "SELECT from_event, metadata FROM event_links WHERE link_type = 'related_events' AND to_event = ?",
       ["file-evt-2"],
     );
@@ -373,10 +373,10 @@ describe("Cross-Event Linking (11C.3)", () => {
     const { linkRelatedEvents } = await import(
       "../../src/services/intelligence/feature-boundary.js"
     );
-    linkRelatedEvents(db, ["far-evt-2"]);
+    await linkRelatedEvents(db, ["far-evt-2"]);
 
     // Should NOT create a related_events link (>1 hour apart)
-    const result = db.exec("SELECT * FROM event_links WHERE link_type = 'related_events'");
+    const result = await db.exec("SELECT * FROM event_links WHERE link_type = 'related_events'");
     expect(result[0].values.length).toBe(0);
   });
 });

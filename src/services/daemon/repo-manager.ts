@@ -15,11 +15,10 @@ import {
   upsertComprehensionScores,
 } from "../intelligence/comprehension.js";
 import { assignEventsToFeatures, linkRelatedEvents } from "../intelligence/feature-boundary.js";
-import { computeDirectionByFile } from "../intelligence/file-direction.js";
 import { classifyAllUnclassified } from "../intelligence/outcome-classifier.js";
 import { appendRecentInsight } from "../intelligence/recent-insights.js";
 import { writePartialSnapshot } from "../intelligence/snapshot.js";
-import { writeSummary } from "../intelligence/summary-writer.js";
+import { readSummary } from "../intelligence/summary-writer.js";
 import type { RepoEntry } from "../registry/registry.js";
 import { type SchedulerHandle, startScheduler } from "../scheduler/scheduler.js";
 import { ensureBinaries } from "./binary.js";
@@ -136,12 +135,23 @@ export class RepoManager {
     const managed = this.repos.get(id);
     if (!managed) return;
 
-    managed.scheduler?.stop();
-    managed.materializer.stop();
-    await managed.daemon.stop();
-    await managed.materializer.close();
-
+    // Always remove from map first to prevent concurrent access during cleanup
     this.repos.delete(id);
+
+    try {
+      managed.scheduler?.stop();
+      managed.materializer.stop();
+      await managed.daemon.stop();
+    } finally {
+      // Ensure materializer DB is closed even if daemon.stop() throws
+      try {
+        await managed.materializer.close();
+      } catch (err) {
+        logger.debug(`Materializer close failed for ${managed.entry.label}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   /**
@@ -222,6 +232,13 @@ export class RepoManager {
       await managed.materializer.close();
     }
 
+    try {
+      const { CozoManager } = await import("../substrate/cozo-manager.js");
+      await CozoManager.close();
+    } catch {
+      // non-fatal
+    }
+
     this.repos.clear();
   }
 }
@@ -257,9 +274,7 @@ function createMaterializerForRepo(
   config: ReturnType<typeof loadConfig>,
 ): MaterializerDaemon {
   let lastPartialMs = 0;
-  let engine: import("../intelligence/engine.js").IntelligenceEngine | null = null;
-  let lastCorrelationMs = 0;
-  let lastDebuggingArcMs = 0;
+  let engine: import("../intelligence/engine.js").IntelligenceScheduler | null = null;
   let lastIncrementalDistillMs = 0;
 
   return new MaterializerDaemon({
@@ -272,9 +287,12 @@ function createMaterializerForRepo(
       const db = await cache.getDb();
       if (!db) return;
 
+      const analyticsDb = cache.analytics ?? db;
+
+      // Comprehension scoring (reads SQLite metadata column, writes to both)
       try {
         const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-        const recentResult = db.exec(
+        const recentResult = await db.exec(
           `SELECT id, source, metadata FROM events
            WHERE ts >= ? AND source IN ('ai-session', 'mcp-active')
              AND id NOT IN (SELECT event_id FROM comprehension_proxy)
@@ -292,15 +310,14 @@ function createMaterializerForRepo(
           if (scores.length > 0) upsertComprehensionScores(db, scores);
         }
 
-        aggregateComprehensionByModule(db);
-        computeDirectionByFile(db);
+        await aggregateComprehensionByModule(analyticsDb);
       } catch {
         // non-fatal
       }
 
-      // Feature boundary detection and event linking
+      // Feature boundary detection and event linking → SQLite (operational)
       try {
-        const recentIds = db.exec(
+        const recentIds = await db.exec(
           `SELECT id FROM events WHERE id NOT IN (SELECT event_id FROM event_features) ORDER BY ts DESC LIMIT ?`,
           [newRows + 10],
         );
@@ -313,141 +330,196 @@ function createMaterializerForRepo(
         // non-fatal — feature detection is additive
       }
 
-      // Materialize session metrics
+      // Materialize session metrics → DuckDB
       try {
         const { materializeSessionMetrics } = await import(
           "../intelligence/session-materializer.js"
         );
-        materializeSessionMetrics(db);
+        await materializeSessionMetrics(analyticsDb);
       } catch {
         // non-fatal — session materialization is additive
       }
 
-      // Global artifacts: summary, insights, snapshots → ~/.unfade/
+      // Summary snapshot + insights (reads from summary.json written by engine)
       try {
-        const summary = writeSummary(db, undefined, { pricing: config.pricing ?? {} });
+        const summary = readSummary();
+        if (summary) {
+          const now = Date.now();
+          if (now - lastPartialMs >= PARTIAL_SNAPSHOT_INTERVAL_MS) {
+            const today = localToday();
+            writePartialSnapshot(today, {
+              directionDensity: summary.directionDensity24h,
+              comprehensionScore: summary.comprehensionScore,
+              eventCount: summary.eventCount24h,
+              topDomain: summary.topDomain,
+            });
+            lastPartialMs = now;
+          }
 
-        const now = Date.now();
-        if (now - lastPartialMs >= PARTIAL_SNAPSHOT_INTERVAL_MS) {
-          const today = localToday();
-          writePartialSnapshot(today, {
-            directionDensity: summary.directionDensity24h,
-            comprehensionScore: summary.comprehensionScore,
-            eventCount: summary.eventCount24h,
-            topDomain: summary.topDomain,
+          appendRecentInsight(undefined, {
+            claim: `${newRows} new events indexed; direction ${summary.directionDensity24h}%`,
+            insightType: "materializer_tick",
+            severity: "info",
+            metrics: {
+              newRows,
+              directionDensity24h: summary.directionDensity24h,
+              comprehensionScore: summary.comprehensionScore,
+              costPerDirectedDecision: summary.costPerDirectedDecision,
+            },
           });
-          lastPartialMs = now;
         }
-
-        appendRecentInsight(undefined, {
-          claim: `${newRows} new events indexed; direction ${summary.directionDensity24h}%`,
-          insightType: "materializer_tick",
-          severity: "info",
-          metrics: {
-            newRows,
-            directionDensity24h: summary.directionDensity24h,
-            comprehensionScore: summary.comprehensionScore,
-            costPerDirectedDecision: summary.costPerDirectedDecision,
-          },
-        });
       } catch {
         // non-fatal
       }
 
-      // Outcome classification
+      // Prompt type classification → DuckDB (16B.1)
       try {
-        classifyAllUnclassified(db);
+        const { classifyUnclassifiedEvents } = await import("../intelligence/prompt-classifier.js");
+        await classifyUnclassifiedEvents(analyticsDb);
       } catch {
         // non-fatal — classification is additive
       }
 
-      // Intelligence Engine → ~/.unfade/intelligence/ (global)
+      // Prompt chain analysis → DuckDB (16B.3)
+      try {
+        const { analyzeUnanalyzedChains } = await import("../intelligence/prompt-chain.js");
+        await analyzeUnanalyzedChains(analyticsDb, null);
+      } catch {
+        // non-fatal
+      }
+
+      // Prompt→response correlation → DuckDB (16B.4)
+      try {
+        const { computeAndStoreCorrelations } = await import(
+          "../intelligence/prompt-response-synthesis.js"
+        );
+        await computeAndStoreCorrelations(analyticsDb);
+      } catch {
+        // non-fatal
+      }
+
+      // Outcome classification → SQLite
+      try {
+        classifyAllUnclassified(db);
+      } catch {
+        // non-fatal
+      }
+
+      // IntelligenceScheduler → DAG-ordered processing → ~/.unfade/intelligence/
       try {
         if (!engine) {
-          const { IntelligenceEngine } = await import("../intelligence/engine.js");
+          const { IntelligenceScheduler } = await import("../intelligence/engine.js");
           const { allAnalyzers } = await import("../intelligence/analyzers/all.js");
-          engine = new IntelligenceEngine({ minIntervalMs: 10_000 });
+          engine = new IntelligenceScheduler({ minIntervalMs: 10_000 });
           for (const analyzer of allAnalyzers) {
             engine.register(analyzer);
           }
         }
-        const results = await engine.run({
+        const schedulerCtx = {
           repoRoot: "",
-          db,
+          analytics: analyticsDb,
+          operational: db,
           config: config as unknown as Record<string, unknown>,
-        });
+        };
+        const schedulerResult = await engine.processEvents(schedulerCtx);
 
-        if (results.length > 0) {
+        if (schedulerResult.results.length > 0) {
           const { getActionRunner } = await import("../actions/index.js");
           const runner = getActionRunner();
-          const actionCtx = {
+          await runner.fire("intelligence_update", {
             repoRoot: undefined as unknown as string,
             config: config as unknown as import("../../schemas/config.js").UnfadeConfig,
             trigger: "intelligence_update" as const,
-          };
-          await runner.fire("intelligence_update", actionCtx);
+          });
+
+          // Dynamic cross-analyzer correlation discovery
+          try {
+            const { discoverCorrelations } = await import("../intelligence/cross-analyzer.js");
+            await discoverCorrelations(engine.getChangedAnalyzers(), schedulerCtx);
+          } catch {
+            // non-fatal
+          }
+
+          // Semantic Substrate — analyzer-driven entity production (SUB-7)
+          if (schedulerResult.nodesProcessed > 0) {
+            try {
+              const { CozoManager } = await import("../substrate/cozo-manager.js");
+              const { SubstrateEngine } = await import("../substrate/substrate-engine.js");
+              const { DiagnosticAccumulator } = await import(
+                "../substrate/diagnostic-accumulator.js"
+              );
+              const { diagnosticStream } = await import("../intelligence/diagnostic-stream.js");
+              const graphDb = await CozoManager.getInstance();
+              const substrate = new SubstrateEngine(graphDb);
+
+              let contributions = schedulerResult.entityContributions ?? [];
+
+              if (contributions.length === 0) {
+                const { buildAllContributions } = await import("../substrate/entity-mapper.js");
+                contributions = await buildAllContributions(analyticsDb, "");
+              }
+
+              const activeDiags = diagnosticStream.getActive();
+              if (activeDiags.length > 0) {
+                const accumulator = new DiagnosticAccumulator();
+                const diagContributions = accumulator.accumulateWithEntities(activeDiags);
+                contributions.push(...diagContributions);
+              }
+              let graphDirty = false;
+              if (contributions.length > 0) {
+                const upserted = await substrate.ingest(contributions);
+                if (upserted > 0) graphDirty = true;
+                await substrate.propagate();
+
+                if (graphDirty) {
+                  try {
+                    const { runGenerationDepth } = await import("../substrate/generation-depth.js");
+                    await runGenerationDepth(substrate);
+                  } catch {
+                    // non-fatal — generation depth is additive
+                  }
+                }
+              }
+
+              // Graph context: only write when graph changed
+              if (graphDirty) {
+                try {
+                  const { getGraphContextForSession } = await import(
+                    "../substrate/graph-queries.js"
+                  );
+                  const { writeFileSync, renameSync, mkdirSync } = await import("node:fs");
+                  const { join } = await import("node:path");
+                  const { getIntelligenceDir } = await import("../../utils/paths.js");
+                  const graphCtx = await getGraphContextForSession(substrate, "");
+                  if (graphCtx) {
+                    const dir = getIntelligenceDir();
+                    mkdirSync(dir, { recursive: true });
+                    const target = join(dir, "graph-context.json");
+                    const tmp = `${target}.tmp.${process.pid}`;
+                    writeFileSync(tmp, JSON.stringify(graphCtx, null, 2), "utf-8");
+                    renameSync(tmp, target);
+                  }
+                } catch {
+                  // non-fatal
+                }
+              }
+            } catch {
+              // non-fatal — substrate is additive
+            }
+          }
+
+          // Cross-project intelligence
+          try {
+            const { runCrossProjectIntelligence } = await import(
+              "../intelligence/cross-project.js"
+            );
+            await runCrossProjectIntelligence();
+          } catch {
+            // non-fatal — graph context is additive
+          }
         }
       } catch {
         // non-fatal — intelligence is additive
-      }
-
-      // Decision durability → ~/.unfade/intelligence/
-      try {
-        const { computeDecisionDurability, writeDecisionDurability } = await import(
-          "../intelligence/decision-durability.js"
-        );
-        const report = computeDecisionDurability(db);
-        if (report.decisions.length > 0) {
-          writeDecisionDurability(report);
-        }
-      } catch {
-        // non-fatal — decision durability is additive
-      }
-
-      // Cross-analyzer correlations → ~/.unfade/intelligence/ (5 min throttle)
-      if (Date.now() - lastCorrelationMs > 300_000) {
-        try {
-          const { computeCorrelations, writeCorrelations } = await import(
-            "../intelligence/cross-analyzer.js"
-          );
-          const report = computeCorrelations({
-            repoRoot: "",
-            db,
-            config: config as unknown as Record<string, unknown>,
-          });
-          if (report.correlations.length > 0) {
-            writeCorrelations(report);
-            lastCorrelationMs = Date.now();
-
-            // Narrative synthesis
-            try {
-              const { synthesizeNarratives } = await import(
-                "../intelligence/narrative-synthesizer.js"
-              );
-              synthesizeNarratives();
-            } catch {
-              // non-fatal
-            }
-          }
-        } catch {
-          // non-fatal — correlations are additive
-        }
-      }
-
-      // Debugging arcs → ~/.unfade/intelligence/ (60s throttle)
-      if (Date.now() - lastDebuggingArcMs > 60_000) {
-        try {
-          const { detectDebuggingArcs, writeDebuggingArcs } = await import(
-            "../intelligence/debugging-arcs.js"
-          );
-          const arcs = detectDebuggingArcs(db);
-          if (arcs.length > 0) {
-            writeDebuggingArcs(arcs);
-          }
-          lastDebuggingArcMs = Date.now();
-        } catch {
-          // non-fatal — debugging arcs are additive
-        }
       }
 
       // Incremental distill → ~/.unfade/distills/ (global, 5 min throttle)

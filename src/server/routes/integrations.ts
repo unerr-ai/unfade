@@ -3,7 +3,8 @@
 // POST /api/integrations/install — writes unfade MCP config into IDE config files.
 // GET /api/integrations/status — checks which tools have unfade configured.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Hono } from "hono";
@@ -80,7 +81,7 @@ integrationsRoutes.post("/api/integrations/install", async (c) => {
     // Read existing config or start fresh
     let existing: Record<string, unknown> = {};
     if (existsSync(configPath)) {
-      const raw = readFileSync(configPath, "utf-8").trim();
+      const raw = (await readFile(configPath, "utf-8")).trim();
       if (raw) {
         existing = JSON.parse(raw);
       }
@@ -117,14 +118,14 @@ integrationsRoutes.post("/api/integrations/install", async (c) => {
  * GET /api/integrations/status
  * Returns which tools currently have unfade configured.
  */
-integrationsRoutes.get("/api/integrations/status", (c) => {
-  const tools = Object.values(TOOLS).map((tool) => {
+integrationsRoutes.get("/api/integrations/status", async (c) => {
+  const tools = await Promise.all(Object.values(TOOLS).map(async (tool) => {
     let connected = false;
     let path = "";
     try {
       path = tool.getPath();
       if (existsSync(path)) {
-        const raw = readFileSync(path, "utf-8").trim();
+        const raw = (await readFile(path, "utf-8")).trim();
         if (raw) {
           const parsed = JSON.parse(raw);
           connected = tool.checkConnected(parsed);
@@ -134,7 +135,7 @@ integrationsRoutes.get("/api/integrations/status", (c) => {
       // Non-fatal — treat as not connected
     }
     return { tool: tool.name, label: tool.label, connected, path };
-  });
+  }));
 
   return c.json({ tools });
 });

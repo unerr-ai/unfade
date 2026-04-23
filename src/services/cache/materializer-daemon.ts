@@ -192,7 +192,7 @@ export class MaterializerDaemon {
       const db = await this.cache.getDb();
       if (!db) return;
 
-      const result = db.exec("SELECT COUNT(*) FROM events");
+      const result = await db.exec("SELECT COUNT(*) FROM events");
       const count = (result[0]?.values[0]?.[0] as number) ?? 0;
 
       if (count === 0) {

@@ -6,10 +6,7 @@
 import { localToday } from "../../utils/date.js";
 import { readTodaySpend, readTrailingSpend } from "./token-proxy.js";
 
-type DbLike = {
-  run(sql: string, params?: unknown[]): void;
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }>;
-};
+import type { DbLike } from "../cache/manager.js";
 
 export interface CostQualityResult {
   costPerDirectedDecision: number | null;
@@ -23,24 +20,24 @@ export interface CostQualityResult {
  * Compute cost-per-directed-decision for today and 7d trailing average.
  * Returns null values when insufficient data — never divides by zero.
  */
-export function computeCostPerQuality(db: DbLike): CostQualityResult {
-  const todaySpendData = readTodaySpend(db);
+export async function computeCostPerQuality(db: DbLike): Promise<CostQualityResult> {
+  const todaySpendData = await readTodaySpend(db);
   const todaySpend = todaySpendData?.totalCost ?? 0;
 
-  const todayDirected = countDirectedDecisions(db, localToday());
+  const todayDirected = await countDirectedDecisions(db, localToday());
   const costPerDirected =
     todayDirected > 0 && todaySpend > 0
       ? Math.round((todaySpend / todayDirected) * 100) / 100
       : null;
 
-  const trailing = readTrailingSpend(db, 7);
+  const trailing = await readTrailingSpend(db, 7);
   let trailingAvg: number | null = null;
   if (trailing.length >= 2) {
     let totalCost = 0;
     let totalDirected = 0;
     for (const day of trailing) {
       totalCost += day.totalCost;
-      const dd = countDirectedDecisions(db, day.date);
+      const dd = await countDirectedDecisions(db, day.date);
       totalDirected += dd;
     }
     if (totalDirected > 0 && totalCost > 0) {
@@ -65,14 +62,15 @@ export function computeCostPerQuality(db: DbLike): CostQualityResult {
   };
 }
 
-function countDirectedDecisions(db: DbLike, date: string): number {
+async function countDirectedDecisions(db: DbLike, date: string): Promise<number> {
   try {
-    const result = db.exec(`
-      SELECT COUNT(*) FROM events
-      WHERE substr(ts, 1, 10) = '${date}'
-        AND source IN ('ai-session', 'mcp-active')
-        AND CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) >= 0.5
-    `);
+    const result = await db.exec(
+      `SELECT COUNT(*) FROM events
+       WHERE ts::DATE = $1::DATE
+         AND source IN ('ai-session', 'mcp-active')
+         AND human_direction_score >= 0.5`,
+      [date],
+    );
     return (result[0]?.values[0]?.[0] as number) ?? 0;
   } catch {
     return 0;

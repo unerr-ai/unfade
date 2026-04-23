@@ -3,7 +3,7 @@
 // Steps: 1) Configure Intelligence → 2) Connect AI Tools → 3) Start Exploring
 // Each step is a full-screen view with progress indicator, smooth transitions.
 
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getProjectDataDir } from "../../utils/paths.js";
@@ -11,15 +11,15 @@ import { escapeHtml, layout } from "./layout.js";
 
 export const setupPage = new Hono();
 
-function readCurrentLlmConfig(): {
+async function readCurrentLlmConfig(): Promise<{
   provider: string;
   model: string;
   apiKey: string;
   apiBase: string;
-} {
+}> {
   try {
     const configPath = join(getProjectDataDir(), "config.json");
-    const raw = JSON.parse(readFileSync(configPath, "utf-8"));
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
     const distill = raw?.distill ?? {};
     return {
       provider: distill.provider ?? "none",
@@ -34,8 +34,8 @@ function readCurrentLlmConfig(): {
 
 const CURSOR_DEEPLINK = `cursor://anysphere.cursor-deeplink/mcp/install?name=Unfade&config=${Buffer.from(JSON.stringify({ command: "npx", args: ["unfade", "mcp"] })).toString("base64")}`;
 
-setupPage.get("/setup", (c) => {
-  const llm = readCurrentLlmConfig();
+setupPage.get("/setup", async (c) => {
+  const llm = await readCurrentLlmConfig();
   const sel = (val: string) => (llm.provider === val ? "selected" : "");
   const hasExistingConfig = llm.provider !== "none";
 

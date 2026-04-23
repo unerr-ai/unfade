@@ -32,13 +32,13 @@ interface EventForFeature {
  * Process new events and assign them to features.
  * Called after each materialization tick with newly added event IDs.
  */
-export function assignEventsToFeatures(db: DbLike, newEventIds: string[]): void {
+export async function assignEventsToFeatures(db: DbLike, newEventIds: string[]): Promise<void> {
   if (newEventIds.length === 0) return;
 
-  const activeFeatures = loadActiveFeatures(db);
+  const activeFeatures = await loadActiveFeatures(db);
 
   for (const eventId of newEventIds) {
-    const event = loadEvent(db, eventId);
+    const event = await loadEvent(db, eventId);
     if (!event) continue;
 
     const assignment = assignFeature(event, activeFeatures);
@@ -77,11 +77,11 @@ export function assignEventsToFeatures(db: DbLike, newEventIds: string[]): void 
 /**
  * Link events that form continuations or are related.
  */
-export function linkRelatedEvents(db: DbLike, newEventIds: string[]): void {
+export async function linkRelatedEvents(db: DbLike, newEventIds: string[]): Promise<void> {
   if (newEventIds.length === 0) return;
 
   for (const eventId of newEventIds) {
-    const event = loadEvent(db, eventId);
+    const event = await loadEvent(db, eventId);
     if (!event) continue;
 
     const meta = event.metadata;
@@ -90,7 +90,7 @@ export function linkRelatedEvents(db: DbLike, newEventIds: string[]): void {
     // Session-based linking requires session_id
     if (sessionId) {
       // Find previous event in same session (continues_from)
-      const prevResult = db.exec(
+      const prevResult = await db.exec(
         `SELECT id FROM events WHERE json_extract(metadata, '$.session_id') = ? AND ts < ? ORDER BY ts DESC LIMIT 1`,
         [sessionId, event.ts],
       );
@@ -107,7 +107,7 @@ export function linkRelatedEvents(db: DbLike, newEventIds: string[]): void {
 
     // Find git commit events within 5 minutes after this event (triggered_commit)
     const fiveMinLater = new Date(new Date(event.ts).getTime() + 5 * 60 * 1000).toISOString();
-    const commitResult = db.exec(
+    const commitResult = await db.exec(
       `SELECT id FROM events WHERE source = 'git' AND type = 'commit' AND ts > ? AND ts < ? ORDER BY ts ASC LIMIT 1`,
       [event.ts, fiveMinLater],
     );
@@ -123,7 +123,7 @@ export function linkRelatedEvents(db: DbLike, newEventIds: string[]): void {
     const eventFiles = getEventFiles(event);
     if (eventFiles.length > 0) {
       const oneHourAgo = new Date(new Date(event.ts).getTime() - 3600 * 1000).toISOString();
-      const nearbyResult = db.exec(
+      const nearbyResult = await db.exec(
         `SELECT id, metadata FROM events WHERE ts > ? AND ts < ? AND id != ? LIMIT 50`,
         [oneHourAgo, event.ts, eventId],
       );
@@ -259,35 +259,35 @@ function getEventFiles(event: EventForFeature): string[] {
   return [...allFiles];
 }
 
-function loadActiveFeatures(db: DbLike): Feature[] {
+async function loadActiveFeatures(db: DbLike): Promise<Feature[]> {
   try {
-    const result = db.exec(
+    const result = await db.exec(
       "SELECT id, name, branch, first_seen, last_seen, event_count, file_count, session_count, status FROM features WHERE status = 'active' ORDER BY last_seen DESC LIMIT 50",
     );
     if (!result[0]?.values.length) return [];
 
-    return result[0].values.map((row) => ({
+    return Promise.all(result[0].values.map(async (row) => ({
       id: row[0] as string,
       name: row[1] as string,
       branch: row[2] as string | null,
-      files: loadFeatureFiles(db, row[0] as string),
+      files: await loadFeatureFiles(db, row[0] as string),
       firstSeen: row[3] as string,
       lastSeen: row[4] as string,
       eventCount: row[5] as number,
       fileCount: row[6] as number,
       sessionCount: row[7] as number,
       status: row[8] as "active" | "completed" | "stale",
-    }));
+    })));
   } catch {
     return [];
   }
 }
 
-function loadFeatureFiles(db: DbLike, featureId: string): string[] {
+async function loadFeatureFiles(db: DbLike, featureId: string): Promise<string[]> {
   try {
     // Get files from events linked to this feature
-    const result = db.exec(
-      `SELECT DISTINCT json_extract(e.metadata, '$.files_modified') FROM events e JOIN event_features ef ON e.id = ef.event_id WHERE ef.feature_id = ? LIMIT 20`,
+    const result = await db.exec(
+      `SELECT DISTINCT json_extract(e.metadata, '$.files_modified') as files_modified FROM events e JOIN event_features ef ON e.id = ef.event_id WHERE ef.feature_id = ? LIMIT 20`,
       [featureId],
     );
     const files = new Set<string>();
@@ -307,9 +307,9 @@ function loadFeatureFiles(db: DbLike, featureId: string): string[] {
   }
 }
 
-function loadEvent(db: DbLike, eventId: string): EventForFeature | null {
+async function loadEvent(db: DbLike, eventId: string): Promise<EventForFeature | null> {
   try {
-    const result = db.exec(
+    const result = await db.exec(
       `SELECT id, project_id, ts, metadata, git_branch, content_summary FROM events WHERE id = ?`,
       [eventId],
     );

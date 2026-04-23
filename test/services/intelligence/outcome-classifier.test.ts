@@ -56,58 +56,58 @@ function createMockDb(events: Array<{ id: string; metadata: Record<string, unkno
 }
 
 describe("classifyOutcomes", () => {
-  it("T-328: files_modified present → success", () => {
+  it("T-328: files_modified present → success", async () => {
     const db = createMockDb([
       { id: "ev-1", metadata: { files_modified: ["src/auth.ts"], session_id: "s1" } },
     ]);
-    const count = classifyOutcomes(db, ["ev-1"]);
+    const count = await classifyOutcomes(db, ["ev-1"]);
     expect(count).toBe(1);
     const meta = db.getMetadata("ev-1");
     expect(meta?.outcome).toBe("success");
   });
 
-  it("T-329: abandon keywords in last prompt → abandoned", () => {
+  it("T-329: abandon keywords in last prompt → abandoned", async () => {
     const db = createMockDb([
       {
         id: "ev-2",
         metadata: { prompts_all: ["implement auth", "never mind, skip this"], session_id: "s1" },
       },
     ]);
-    const count = classifyOutcomes(db, ["ev-2"]);
+    const count = await classifyOutcomes(db, ["ev-2"]);
     expect(count).toBe(1);
     const meta = db.getMetadata("ev-2");
     expect(meta?.outcome).toBe("abandoned");
   });
 
-  it("T-330: iteration_count > 5 with no files → failed", () => {
+  it("T-330: iteration_count > 5 with no files → failed", async () => {
     const db = createMockDb([{ id: "ev-3", metadata: { iteration_count: 8, session_id: "s1" } }]);
-    const count = classifyOutcomes(db, ["ev-3"]);
+    const count = await classifyOutcomes(db, ["ev-3"]);
     expect(count).toBe(1);
     const meta = db.getMetadata("ev-3");
     expect(meta?.outcome).toBe("failed");
   });
 
-  it("T-331: conversation_complete with no files → partial", () => {
+  it("T-331: conversation_complete with no files → partial", async () => {
     const db = createMockDb([
       { id: "ev-4", metadata: { conversation_complete: true, session_id: "s1" } },
     ]);
-    const count = classifyOutcomes(db, ["ev-4"]);
+    const count = await classifyOutcomes(db, ["ev-4"]);
     expect(count).toBe(1);
     const meta = db.getMetadata("ev-4");
     expect(meta?.outcome).toBe("partial");
   });
 
-  it("T-331b: already classified events are skipped", () => {
+  it("T-331b: already classified events are skipped", async () => {
     const db = createMockDb([
       { id: "ev-5", metadata: { outcome: "success", files_modified: ["x.ts"] } },
     ]);
-    const count = classifyOutcomes(db, ["ev-5"]);
+    const count = await classifyOutcomes(db, ["ev-5"]);
     expect(count).toBe(0); // Already has outcome
   });
 
-  it("T-331c: empty event list returns 0", () => {
+  it("T-331c: empty event list returns 0", async () => {
     const db = createMockDb([]);
-    const count = classifyOutcomes(db, []);
+    const count = await classifyOutcomes(db, []);
     expect(count).toBe(0);
   });
 });

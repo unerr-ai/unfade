@@ -26,9 +26,9 @@ export interface ValuePeriod {
 /**
  * Count MCP context injections in the given time window.
  */
-function countInjections(db: DbLike, sinceIso: string): number {
+async function countInjections(db: DbLike, sinceIso: string): Promise<number> {
   try {
-    const result = db.exec(
+    const result = await db.exec(
       `SELECT COUNT(*) FROM events
        WHERE source = 'mcp-active'
          AND type IN ('tool-invocation', 'mcp-invocation', 'context-injection')
@@ -53,7 +53,7 @@ function computePeriod(injections: number, costPer1K: number): ValuePeriod {
 /**
  * Compute the value receipt from MCP invocation data.
  */
-export function computeValueReceipt(db: DbLike, pricing?: Record<string, number>): ValueReceipt {
+export async function computeValueReceipt(db: DbLike, pricing?: Record<string, number>): Promise<ValueReceipt> {
   const costPer1K = pricing?.default ?? DEFAULT_COST_PER_1K_INPUT;
   const now = new Date();
 
@@ -62,9 +62,9 @@ export function computeValueReceipt(db: DbLike, pricing?: Record<string, number>
   const monthCutoff = new Date(now.getTime() - 30 * 24 * 3600 * 1000).toISOString();
 
   return {
-    today: computePeriod(countInjections(db, todayCutoff), costPer1K),
-    thisWeek: computePeriod(countInjections(db, weekCutoff), costPer1K),
-    thisMonth: computePeriod(countInjections(db, monthCutoff), costPer1K),
+    today: computePeriod(await countInjections(db, todayCutoff), costPer1K),
+    thisWeek: computePeriod(await countInjections(db, weekCutoff), costPer1K),
+    thisMonth: computePeriod(await countInjections(db, monthCutoff), costPer1K),
     updatedAt: now.toISOString(),
   };
 }

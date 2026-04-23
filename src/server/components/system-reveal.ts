@@ -1,3 +1,4 @@
+// FILE: src/server/components/system-reveal.ts
 // Phase 15 / Home redesign: inline activation sequence (not an overlay).
 // Renders inside the main shell; client wiring lives in `home.ts` (single script, __unfade only).
 

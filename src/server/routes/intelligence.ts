@@ -3,20 +3,21 @@
 // Reads from .unfade/intelligence/*.json files (written by IntelligenceEngine).
 // 11E.4: Lineage endpoint for insight drill-through.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { CacheManager } from "../../services/cache/manager.js";
 import { getEventsForInsight } from "../../services/intelligence/lineage.js";
-import { getProjectDataDir } from "../../utils/paths.js";
+import { getIntelligenceDir, getProjectDataDir } from "../../utils/paths.js";
 
 export const intelligenceRoutes = new Hono();
 
-function readIntelligenceFile(filename: string, cwd?: string): unknown | null {
-  const path = join(getProjectDataDir(cwd), "intelligence", filename);
+async function readIntelligenceFile(filename: string): Promise<unknown | null> {
+  const path = join(getIntelligenceDir(), filename);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
+    return JSON.parse(await readFile(path, "utf-8"));
   } catch {
     return null;
   }
@@ -40,46 +41,46 @@ function jsonOr202(
   return c.json(data);
 }
 
-intelligenceRoutes.get("/api/intelligence/efficiency", (c) =>
-  jsonOr202(c, readIntelligenceFile("efficiency.json")),
+intelligenceRoutes.get("/api/intelligence/efficiency", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("efficiency.json")),
 );
-intelligenceRoutes.get("/api/intelligence/costs", (c) =>
-  jsonOr202(c, readIntelligenceFile("costs.json")),
+intelligenceRoutes.get("/api/intelligence/costs", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("costs.json")),
 );
-intelligenceRoutes.get("/api/intelligence/comprehension", (c) =>
-  jsonOr202(c, readIntelligenceFile("comprehension.json")),
+intelligenceRoutes.get("/api/intelligence/comprehension", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("comprehension.json")),
 );
-intelligenceRoutes.get("/api/intelligence/prompt-patterns", (c) =>
-  jsonOr202(c, readIntelligenceFile("prompt-patterns.json")),
+intelligenceRoutes.get("/api/intelligence/prompt-patterns", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("prompt-patterns.json")),
 );
-intelligenceRoutes.get("/api/intelligence/coach", (c) =>
-  jsonOr202(c, readIntelligenceFile("prompt-patterns.json")),
+intelligenceRoutes.get("/api/intelligence/coach", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("prompt-patterns.json")),
 );
-intelligenceRoutes.get("/api/intelligence/velocity", (c) =>
-  jsonOr202(c, readIntelligenceFile("velocity.json")),
+intelligenceRoutes.get("/api/intelligence/velocity", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("velocity.json")),
 );
-intelligenceRoutes.get("/api/intelligence/rejections", (c) =>
-  jsonOr202(c, readIntelligenceFile("rejections.idx.json")),
+intelligenceRoutes.get("/api/intelligence/rejections", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("rejections.idx.json")),
 );
-intelligenceRoutes.get("/api/intelligence/alerts", (c) =>
-  jsonOr202(c, readIntelligenceFile("alerts.json")),
+intelligenceRoutes.get("/api/intelligence/alerts", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("alerts.json")),
 );
-intelligenceRoutes.get("/api/intelligence/replays", (c) =>
-  jsonOr202(c, readIntelligenceFile("replays.json")),
+intelligenceRoutes.get("/api/intelligence/replays", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("replays.json")),
 );
 
 // 13A / UF-401: Decision durability endpoint (consumed by velocity-page.ts)
-intelligenceRoutes.get("/api/intelligence/decision-durability", (c) =>
-  jsonOr202(c, readIntelligenceFile("decision-durability.json")),
+intelligenceRoutes.get("/api/intelligence/decision-durability", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("decision-durability.json")),
 );
 
 // 13C / UF-410: Actions log endpoint — reads .unfade/logs/actions.jsonl
-intelligenceRoutes.get("/api/intelligence/actions", (c) => {
+intelligenceRoutes.get("/api/intelligence/actions", async (c) => {
   const logsDir = join(getProjectDataDir(), "logs");
   const filePath = join(logsDir, "actions.jsonl");
   if (!existsSync(filePath)) return c.json({ actions: [], count: 0 });
   try {
-    const content = readFileSync(filePath, "utf-8").trim();
+    const content = (await readFile(filePath, "utf-8")).trim();
     if (!content) return c.json({ actions: [], count: 0 });
     const actions = content
       .split("\n")
@@ -117,7 +118,7 @@ intelligenceRoutes.get("/api/intelligence/lineage/:insightId", async (c) => {
   }
 
   try {
-    const mappings = getEventsForInsight(db, insightId);
+    const mappings = await getEventsForInsight(db, insightId);
     if (mappings.length === 0) {
       return c.json({
         data: { insight: insightId, sourceEvents: [], analyzerChain: [] },
@@ -131,7 +132,7 @@ intelligenceRoutes.get("/api/intelligence/lineage/:insightId", async (c) => {
     // Fetch actual event data for the source events
     const eventIds = mappings.map((m) => m.eventId);
     const placeholders = eventIds.map(() => "?").join(",");
-    const result = db.exec(
+    const result = await db.exec(
       `SELECT id, ts, source, content_summary, git_branch,
               json_extract(metadata, '$.domain') as domain
        FROM events WHERE id IN (${placeholders})
@@ -165,12 +166,11 @@ intelligenceRoutes.get("/api/intelligence/lineage/:insightId", async (c) => {
 });
 
 // 11E.2: Narratives endpoint
-intelligenceRoutes.get("/api/intelligence/narratives", (c) => {
-  const dir = join(getProjectDataDir(), "intelligence");
-  const filePath = join(dir, "narratives.jsonl");
+intelligenceRoutes.get("/api/intelligence/narratives", async (c) => {
+  const filePath = join(getIntelligenceDir(), "narratives.jsonl");
   if (!existsSync(filePath)) return jsonOr202(c, null);
   try {
-    const content = readFileSync(filePath, "utf-8").trim();
+    const content = (await readFile(filePath, "utf-8")).trim();
     if (!content) return jsonOr202(c, null);
     const narratives = content
       .split("\n")
@@ -190,6 +190,6 @@ intelligenceRoutes.get("/api/intelligence/narratives", (c) => {
 });
 
 // 11E.1: Correlations endpoint
-intelligenceRoutes.get("/api/intelligence/correlations", (c) =>
-  jsonOr202(c, readIntelligenceFile("correlation.json")),
+intelligenceRoutes.get("/api/intelligence/correlations", async (c) =>
+  jsonOr202(c, await readIntelligenceFile("correlation.json")),
 );

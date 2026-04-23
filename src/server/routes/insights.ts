@@ -2,7 +2,8 @@
 // UF-228: GET /api/insights/recent — tail-reads last 20 lines of insights/recent.jsonl.
 // Returns JSON array. Graceful: returns [] if file doesn't exist.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getProjectDataDir } from "../../utils/paths.js";
@@ -11,7 +12,7 @@ export const insightsRoutes = new Hono();
 
 const MAX_RECENT = 20;
 
-insightsRoutes.get("/api/insights/recent", (c) => {
+insightsRoutes.get("/api/insights/recent", async (c) => {
   const insightsPath = join(getProjectDataDir(), "insights", "recent.jsonl");
 
   if (!existsSync(insightsPath)) {
@@ -19,7 +20,7 @@ insightsRoutes.get("/api/insights/recent", (c) => {
   }
 
   try {
-    const content = readFileSync(insightsPath, "utf-8").trim();
+    const content = (await readFile(insightsPath, "utf-8")).trim();
     if (!content) return c.json([]);
 
     const lines = content.split("\n");

@@ -3,7 +3,8 @@
 // POST /unfade/cards/generate — generate card PNG for a date.
 // GET /unfade/cards/image/:date — serve generated card PNG.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { CardGenerateInputSchema } from "../../schemas/card.js";
@@ -73,7 +74,7 @@ cardsRoutes.post("/cards/generate", async (c) => {
   }
 });
 
-cardsRoutes.get("/cards/image/:date", (c) => {
+cardsRoutes.get("/cards/image/:date", async (c) => {
   const date = c.req.param("date");
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -87,7 +88,7 @@ cardsRoutes.get("/cards/image/:date", (c) => {
     return c.json({ error: `No card found for ${date}` }, 404);
   }
 
-  const png = readFileSync(pngPath);
+  const png = await readFile(pngPath);
   return new Response(png, {
     headers: {
       "Content-Type": "image/png",

@@ -3,7 +3,8 @@
 // GET /settings/status — config completeness and connectivity check.
 // Reads current config, merges LLM fields, writes atomically.
 
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { UnfadeConfigSchema } from "../../schemas/config.js";
@@ -44,7 +45,7 @@ settingsRoutes.get("/settings/status", async (c) => {
   let actions: Record<string, unknown> = {};
 
   try {
-    const raw = JSON.parse(readFileSync(configPath, "utf-8"));
+    const raw = JSON.parse(await readFile(configPath, "utf-8"));
     const distill = raw?.distill ?? {};
     provider = distill.provider ?? "none";
     model = distill.model ?? "llama3.2";
@@ -140,7 +141,7 @@ settingsRoutes.post("/settings/llm", async (c) => {
   const configPath = join(projectDir, "config.json");
   let rawConfig: Record<string, unknown> = {};
   try {
-    rawConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    rawConfig = JSON.parse(await readFile(configPath, "utf-8"));
   } catch {
     logger.debug("No existing config.json — creating fresh");
   }
@@ -194,7 +195,7 @@ settingsRoutes.post("/settings/llm", async (c) => {
 
   // Update setup-status.json to reflect config change
   try {
-    updateSetupStatus({ configuredAt: new Date().toISOString(), llmProvider: provider });
+    await updateSetupStatus({ configuredAt: new Date().toISOString(), llmProvider: provider });
   } catch (err) {
     logger.warn("settings.llm: failed to update setup-status", {
       reqId,
@@ -269,7 +270,7 @@ settingsRoutes.post("/settings/actions", async (c) => {
   const configPath = join(projectDir, "config.json");
   let rawConfig: Record<string, unknown> = {};
   try {
-    rawConfig = JSON.parse(readFileSync(configPath, "utf-8"));
+    rawConfig = JSON.parse(await readFile(configPath, "utf-8"));
   } catch {
     // fresh config
   }

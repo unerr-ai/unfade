@@ -61,7 +61,7 @@ function createMockDb(
 }
 
 describe("cross-analyzer correlations", () => {
-  it("detects efficiency↔loop negative correlation when data shows inverse relationship", () => {
+  it("detects efficiency↔loop negative correlation when data shows inverse relationship", async () => {
     // Create 10 days of data where high loops = low efficiency
     const data = Array.from({ length: 10 }, (_, i) => ({
       day: `2026-04-${String(i + 1).padStart(2, "0")}`,
@@ -78,7 +78,7 @@ describe("cross-analyzer correlations", () => {
       config: {},
     };
 
-    const report = computeCorrelations(ctx as any);
+    const report = await computeCorrelations(ctx as any);
     const effLoops = report.correlations.find((c) => c.id === "efficiency-loops");
 
     // Should detect negative correlation
@@ -90,7 +90,7 @@ describe("cross-analyzer correlations", () => {
     }
   });
 
-  it("requires minimum data points (7) for correlation", () => {
+  it("requires minimum data points (7) for correlation", async () => {
     const data = Array.from({ length: 5 }, (_, i) => ({
       day: `2026-04-${String(i + 1).padStart(2, "0")}`,
       hds: 0.5,
@@ -106,12 +106,12 @@ describe("cross-analyzer correlations", () => {
       config: {},
     };
 
-    const report = computeCorrelations(ctx as any);
+    const report = await computeCorrelations(ctx as any);
     // With only 5 data points, no correlations should be computed
     expect(report.correlations.length).toBe(0);
   });
 
-  it("filters correlations below r=0.6 threshold", () => {
+  it("filters correlations below r=0.6 threshold", async () => {
     // Random-ish data with no clear correlation
     const data = Array.from({ length: 10 }, (_, i) => ({
       day: `2026-04-${String(i + 1).padStart(2, "0")}`,
@@ -128,14 +128,14 @@ describe("cross-analyzer correlations", () => {
       config: {},
     };
 
-    const report = computeCorrelations(ctx as any);
+    const report = await computeCorrelations(ctx as any);
     // All correlations that exist must have |r| >= 0.6
     for (const c of report.correlations) {
       expect(Math.abs(c.r)).toBeGreaterThanOrEqual(0.6);
     }
   });
 
-  it("includes temporal lag for efficiency-loops pair", () => {
+  it("includes temporal lag for efficiency-loops pair", async () => {
     // Strong inverse correlation with lag pattern
     const data = Array.from({ length: 12 }, (_, i) => ({
       day: `2026-04-${String(i + 1).padStart(2, "0")}`,
@@ -152,7 +152,7 @@ describe("cross-analyzer correlations", () => {
       config: {},
     };
 
-    const report = computeCorrelations(ctx as any);
+    const report = await computeCorrelations(ctx as any);
     const effLoops = report.correlations.find((c) => c.id === "efficiency-loops");
     if (effLoops) {
       // temporalLag should be a number (0 or 1440 = 1 day)

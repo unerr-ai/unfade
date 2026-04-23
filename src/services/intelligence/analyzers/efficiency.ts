@@ -3,7 +3,26 @@
 // AES = Direction(30%) + TokenEfficiency(20%) + IterationRatio(20%) + ContextLeverage(15%) + ModificationDepth(15%)
 
 import type { Efficiency, EfficiencySubMetric } from "../../../schemas/intelligence/efficiency.js";
-import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./index.js";
+import { logger } from "../../../utils/logger.js";
+import type {
+  IncrementalAnalyzer,
+  IncrementalState,
+  NewEventBatch,
+  UpdateResult,
+} from "../incremental-state.js";
+import type { AnalyzerContext, AnalyzerResult } from "./index.js";
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+interface EfficiencyState {
+  output: Efficiency;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const WEIGHTS = {
   directionDensity: 0.3,
@@ -13,105 +32,22 @@ const WEIGHTS = {
   modificationDepth: 0.15,
 } as const;
 
-export const efficiencyAnalyzer: Analyzer = {
-  name: "efficiency",
-  outputFile: "efficiency.json",
-  minDataPoints: 5,
+// ---------------------------------------------------------------------------
+// Compute helpers — all take db (analytics) only
+// ---------------------------------------------------------------------------
 
-  async run(ctx: AnalyzerContext): Promise<AnalyzerResult> {
-    const db = ctx.db;
-    const now = new Date().toISOString();
-
-    const direction = computeDirectionDensity(db);
-    const tokenEff = computeTokenEfficiency(db);
-    const iteration = computeIterationRatio(db);
-    const context = computeContextLeverage(db);
-    const modification = computeModificationDepth(db);
-
-    // 12C.14: Execution phase normalization — planning sessions weighted 1.5×, debug 0.7×
-    const phaseMultiplier = computePhaseMultiplier(db);
-
-    // 12C.14: Outcome-adjusted scoring — penalize sessions with outcome=failure
-    const outcomeAdjustment = computeOutcomeAdjustment(db);
-
-    const rawAes =
-      direction.value * WEIGHTS.directionDensity +
-      tokenEff.value * WEIGHTS.tokenEfficiency +
-      iteration.value * WEIGHTS.iterationRatio +
-      context.value * WEIGHTS.contextLeverage +
-      modification.value * WEIGHTS.modificationDepth;
-
-    const aes = Math.round(
-      Math.min(100, Math.max(0, rawAes * phaseMultiplier * outcomeAdjustment)),
-    );
-
-    const minConfidence = [direction, tokenEff, iteration, context, modification].reduce(
-      (min, m) => {
-        const order = { high: 2, medium: 1, low: 0 };
-        return order[m.confidence] < order[min.confidence] ? m : min;
-      },
-    );
-
-    const history = computeHistory(db);
-    const trend = computeTrend(history);
-    const topInsight = generateInsight(aes, direction, tokenEff, iteration, context, modification);
-
-    const efficiency: Efficiency = {
-      aes,
-      confidence: minConfidence.confidence,
-      subMetrics: {
-        directionDensity: direction,
-        tokenEfficiency: tokenEff,
-        iterationRatio: iteration,
-        contextLeverage: context,
-        modificationDepth: modification,
-      },
-      trend,
-      history,
-      topInsight,
-      updatedAt: now,
-      period: "24h",
-    };
-
-    const sourceEventIds = collectSourceEventIds(db);
-
-    return {
-      analyzer: "efficiency",
-      updatedAt: now,
-      data: efficiency as unknown as Record<string, unknown>,
-      insightCount: topInsight ? 1 : 0,
-      sourceEventIds,
-    };
-  },
-};
-
-function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
+async function computeDirectionDensity(
+  db: AnalyzerContext["analytics"],
+): Promise<EfficiencySubMetric> {
   try {
-    const result = db.exec(`
-      SELECT id FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND ts >= datetime('now', '-24 hours')
-      ORDER BY ts DESC
-      LIMIT 20
-    `);
-    if (!result[0]?.values.length) return [];
-    return result[0].values.map((row) => row[0] as string);
-  } catch {
-    return [];
-  }
-}
-
-function computeDirectionDensity(db: AnalyzerContext["db"]): EfficiencySubMetric {
-  try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT
-        AVG(CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL)) as avg_hds,
+        AVG(human_direction_score) as avg_hds,
         COUNT(*) as cnt
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.direction_signals.human_direction_score') IS NOT NULL
-        AND COALESCE(json_extract(metadata, '$.is_continuation'), 0) != 1
-        AND ts >= datetime('now', '-24 hours')
+        AND human_direction_score IS NOT NULL
+        AND ts >= now() - INTERVAL '24 hours'
     `);
     const avg = (result[0]?.values[0]?.[0] as number) ?? 0;
     const cnt = (result[0]?.values[0]?.[1] as number) ?? 0;
@@ -126,15 +62,16 @@ function computeDirectionDensity(db: AnalyzerContext["db"]): EfficiencySubMetric
   }
 }
 
-function computeTokenEfficiency(db: AnalyzerContext["db"]): EfficiencySubMetric {
+async function computeTokenEfficiency(
+  db: AnalyzerContext["analytics"],
+): Promise<EfficiencySubMetric> {
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT COUNT(*) as total_events,
-             SUM(CASE WHEN CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) >= 0.5 THEN 1 ELSE 0 END) as directed
+             SUM(CASE WHEN human_direction_score >= 0.5 THEN 1 ELSE 0 END) as directed
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND COALESCE(json_extract(metadata, '$.is_continuation'), 0) != 1
-        AND ts >= datetime('now', '-24 hours')
+        AND ts >= now() - INTERVAL '24 hours'
     `);
     const total = (result[0]?.values[0]?.[0] as number) ?? 0;
     const directed = (result[0]?.values[0]?.[1] as number) ?? 0;
@@ -153,15 +90,17 @@ function computeTokenEfficiency(db: AnalyzerContext["db"]): EfficiencySubMetric 
   }
 }
 
-function computeIterationRatio(db: AnalyzerContext["db"]): EfficiencySubMetric {
+async function computeIterationRatio(
+  db: AnalyzerContext["analytics"],
+): Promise<EfficiencySubMetric> {
   try {
-    const result = db.exec(`
-      SELECT AVG(CAST(json_extract(metadata, '$.turn_count') AS INTEGER)) as avg_turns,
+    const result = await db.exec(`
+      SELECT AVG(turn_count) as avg_turns,
              COUNT(*) as cnt
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.turn_count') IS NOT NULL
-        AND ts >= datetime('now', '-24 hours')
+        AND turn_count IS NOT NULL
+        AND ts >= now() - INTERVAL '24 hours'
     `);
     const avgTurns = (result[0]?.values[0]?.[0] as number) ?? 5;
     const cnt = (result[0]?.values[0]?.[1] as number) ?? 0;
@@ -178,15 +117,17 @@ function computeIterationRatio(db: AnalyzerContext["db"]): EfficiencySubMetric {
   }
 }
 
-function computeContextLeverage(db: AnalyzerContext["db"]): EfficiencySubMetric {
+async function computeContextLeverage(
+  db: AnalyzerContext["analytics"],
+): Promise<EfficiencySubMetric> {
   try {
-    const result = db.exec(`
-      SELECT AVG(CAST(json_extract(metadata, '$.direction_signals.prompt_specificity') AS REAL)) as avg_spec,
+    const result = await db.exec(`
+      SELECT AVG(prompt_specificity) as avg_spec,
              COUNT(*) as cnt
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.direction_signals.prompt_specificity') IS NOT NULL
-        AND ts >= datetime('now', '-24 hours')
+        AND prompt_specificity IS NOT NULL
+        AND ts >= now() - INTERVAL '24 hours'
     `);
     const avg = (result[0]?.values[0]?.[0] as number) ?? 0;
     const cnt = (result[0]?.values[0]?.[1] as number) ?? 0;
@@ -201,9 +142,11 @@ function computeContextLeverage(db: AnalyzerContext["db"]): EfficiencySubMetric 
   }
 }
 
-function computeModificationDepth(db: AnalyzerContext["db"]): EfficiencySubMetric {
+async function computeModificationDepth(
+  db: AnalyzerContext["analytics"],
+): Promise<EfficiencySubMetric> {
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT AVG(score) as avg_score, COUNT(*) as cnt
       FROM comprehension_proxy
     `);
@@ -220,9 +163,57 @@ function computeModificationDepth(db: AnalyzerContext["db"]): EfficiencySubMetri
   }
 }
 
-function computeHistory(db: AnalyzerContext["db"]): Array<{ date: string; aes: number }> {
+async function computePhaseMultiplier(db: AnalyzerContext["analytics"]): Promise<number> {
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
+      SELECT
+        SUM(CASE WHEN execution_phase IN ('planning', 'designing') THEN 1 ELSE 0 END) as planning,
+        SUM(CASE WHEN execution_phase IN ('debugging', 'investigating') THEN 1 ELSE 0 END) as debugging,
+        COUNT(*) as total
+      FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND ts >= now() - INTERVAL '24 hours'
+    `);
+    const planning = (result[0]?.values[0]?.[0] as number) ?? 0;
+    const debugging = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const total = (result[0]?.values[0]?.[2] as number) ?? 0;
+    if (total === 0) return 1.0;
+
+    const planningRatio = planning / total;
+    const debuggingRatio = debugging / total;
+    return 1.0 + planningRatio * 0.5 - debuggingRatio * 0.3;
+  } catch {
+    return 1.0;
+  }
+}
+
+async function computeOutcomeAdjustment(db: AnalyzerContext["analytics"]): Promise<number> {
+  try {
+    const result = await db.exec(`
+      SELECT
+        SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) as failures,
+        COUNT(*) as total
+      FROM events
+      WHERE source IN ('ai-session', 'mcp-active')
+        AND ts >= now() - INTERVAL '24 hours'
+        AND outcome IS NOT NULL
+    `);
+    const failures = (result[0]?.values[0]?.[0] as number) ?? 0;
+    const total = (result[0]?.values[0]?.[1] as number) ?? 0;
+    if (total === 0) return 1.0;
+
+    const failureRatio = failures / total;
+    return 1.0 - failureRatio * 0.2;
+  } catch {
+    return 1.0;
+  }
+}
+
+async function computeHistory(
+  db: AnalyzerContext["analytics"],
+): Promise<Array<{ date: string; aes: number }>> {
+  try {
+    const result = await db.exec(`
       SELECT date, rdi FROM metric_snapshots ORDER BY date DESC LIMIT 30
     `);
     if (!result[0]?.values.length) return [];
@@ -284,57 +275,144 @@ function generateInsight(
   return null;
 }
 
-/**
- * 12C.14: Compute phase-weighted multiplier.
- * Planning sessions = 1.5× weight (high-value), debugging = 0.7× (lower signal).
- */
-function computePhaseMultiplier(db: AnalyzerContext["db"]): number {
+async function collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
   try {
-    const result = db.exec(`
-      SELECT
-        SUM(CASE WHEN json_extract(metadata, '$.execution_phase') IN ('planning', 'designing') THEN 1 ELSE 0 END) as planning,
-        SUM(CASE WHEN json_extract(metadata, '$.execution_phase') IN ('debugging', 'investigating') THEN 1 ELSE 0 END) as debugging,
-        COUNT(*) as total
-      FROM events
+    const result = await db.exec(`
+      SELECT id FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND ts >= datetime('now', '-24 hours')
+        AND ts >= now() - INTERVAL '24 hours'
+      ORDER BY ts DESC
+      LIMIT 20
     `);
-    const planning = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const debugging = (result[0]?.values[0]?.[1] as number) ?? 0;
-    const total = (result[0]?.values[0]?.[2] as number) ?? 0;
-    if (total === 0) return 1.0;
-
-    const planningRatio = planning / total;
-    const debuggingRatio = debugging / total;
-    // Weighted: planning boosts score, debugging dampens it
-    return 1.0 + planningRatio * 0.5 - debuggingRatio * 0.3;
+    if (!result[0]?.values.length) return [];
+    return result[0].values.map((row) => row[0] as string);
   } catch {
-    return 1.0;
+    return [];
   }
 }
 
-/**
- * 12C.14: Outcome-adjusted scoring — sessions with outcome=failure reduce AES.
- */
-function computeOutcomeAdjustment(db: AnalyzerContext["db"]): number {
-  try {
-    const result = db.exec(`
-      SELECT
-        SUM(CASE WHEN json_extract(metadata, '$.outcome') = 'failure' THEN 1 ELSE 0 END) as failures,
-        COUNT(*) as total
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND ts >= datetime('now', '-24 hours')
-        AND json_extract(metadata, '$.outcome') IS NOT NULL
-    `);
-    const failures = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const total = (result[0]?.values[0]?.[1] as number) ?? 0;
-    if (total === 0) return 1.0;
+// ---------------------------------------------------------------------------
+// Full computation — assembles all sub-metrics into an Efficiency output
+// ---------------------------------------------------------------------------
 
-    const failureRatio = failures / total;
-    // Up to 20% penalty for high failure rate
-    return 1.0 - failureRatio * 0.2;
-  } catch {
-    return 1.0;
-  }
+async function computeEfficiency(db: AnalyzerContext["analytics"]): Promise<Efficiency> {
+  const now = new Date().toISOString();
+
+  const direction = await computeDirectionDensity(db);
+  const tokenEff = await computeTokenEfficiency(db);
+  const iteration = await computeIterationRatio(db);
+  const context = await computeContextLeverage(db);
+  const modification = await computeModificationDepth(db);
+
+  const phaseMultiplier = await computePhaseMultiplier(db);
+  const outcomeAdjustment = await computeOutcomeAdjustment(db);
+
+  const rawAes =
+    direction.value * WEIGHTS.directionDensity +
+    tokenEff.value * WEIGHTS.tokenEfficiency +
+    iteration.value * WEIGHTS.iterationRatio +
+    context.value * WEIGHTS.contextLeverage +
+    modification.value * WEIGHTS.modificationDepth;
+
+  const aes = Math.round(Math.min(100, Math.max(0, rawAes * phaseMultiplier * outcomeAdjustment)));
+
+  const minConfidence = [direction, tokenEff, iteration, context, modification].reduce((min, m) => {
+    const order = { high: 2, medium: 1, low: 0 };
+    return order[m.confidence] < order[min.confidence] ? m : min;
+  });
+
+  const history = await computeHistory(db);
+  const trend = computeTrend(history);
+  const topInsight = generateInsight(aes, direction, tokenEff, iteration, context, modification);
+
+  return {
+    aes,
+    confidence: minConfidence.confidence,
+    subMetrics: {
+      directionDensity: direction,
+      tokenEfficiency: tokenEff,
+      iterationRatio: iteration,
+      contextLeverage: context,
+      modificationDepth: modification,
+    },
+    trend,
+    history,
+    topInsight,
+    updatedAt: now,
+    period: "24h",
+  };
 }
+
+// ---------------------------------------------------------------------------
+// IncrementalAnalyzer export
+// ---------------------------------------------------------------------------
+
+export const efficiencyAnalyzer: IncrementalAnalyzer<EfficiencyState, Efficiency> = {
+  name: "efficiency",
+  outputFile: "efficiency.json",
+  eventFilter: { sources: ["ai-session", "mcp-active"] },
+  minDataPoints: 5,
+
+  async initialize(ctx: AnalyzerContext): Promise<IncrementalState<EfficiencyState>> {
+    logger.debug("efficiency: initializing");
+    const output = await computeEfficiency(ctx.analytics);
+    return {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: output.subMetrics.directionDensity.dataPoints,
+      updatedAt: output.updatedAt,
+    };
+  },
+
+  async update(
+    state: IncrementalState<EfficiencyState>,
+    newEvents: NewEventBatch,
+    ctx: AnalyzerContext,
+  ): Promise<UpdateResult<EfficiencyState>> {
+    if (newEvents.events.length === 0) {
+      return { state, changed: false };
+    }
+
+    const output = await computeEfficiency(ctx.analytics);
+    const oldAES = state.value.output.aes;
+    const newAES = output.aes;
+    const changed = Math.abs(newAES - oldAES) > 2;
+
+    const newState: IncrementalState<EfficiencyState> = {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: state.eventCount + newEvents.events.length,
+      updatedAt: output.updatedAt,
+    };
+
+    return {
+      state: newState,
+      changed,
+      changeMagnitude: Math.abs(newAES - oldAES),
+    };
+  },
+
+  derive(state: IncrementalState<EfficiencyState>): Efficiency {
+    return state.value.output;
+  },
+
+  contributeEntities(state, batch) {
+    const contributions: import("../../substrate/substrate-engine.js").EntityContribution[] = [];
+    const aes = state.value.output.aes ?? 0;
+
+    for (const evt of batch.events) {
+      if (!evt.sessionId || evt.source !== "ai-session") continue;
+
+      contributions.push({
+        entityId: `wu-${evt.sessionId}`,
+        entityType: "work-unit",
+        projectId: evt.projectId,
+        analyzerName: "efficiency",
+        stateFragment: { aes, efficiency: aes },
+        relationships: [],
+      });
+    }
+
+    return contributions;
+  },
+};

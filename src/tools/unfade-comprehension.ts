@@ -39,9 +39,9 @@ export async function getComprehension(cwd?: string): Promise<ComprehensionResul
     };
   }
 
-  let modules = readModuleComprehension(db);
+  let modules = await readModuleComprehension(db);
   if (modules.length === 0) {
-    modules = aggregateComprehensionByModule(db);
+    modules = await aggregateComprehensionByModule(db);
   }
 
   const overall =

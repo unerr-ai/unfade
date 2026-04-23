@@ -27,8 +27,8 @@ lineageRoutes.get("/api/lineage/:id", async (c) => {
   }
 
   try {
-    const asEvent = getInsightsForEvent(db, id);
-    const asInsight = getEventsForInsight(db, id);
+    const asEvent = await getInsightsForEvent(db, id);
+    const asInsight = await getEventsForInsight(db, id);
 
     return c.json({
       data: {

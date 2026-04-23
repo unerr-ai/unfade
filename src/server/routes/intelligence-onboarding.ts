@@ -2,7 +2,8 @@
 // UF-116: Intelligence onboarding — computes progress toward each intelligence metric.
 // Returns "N more days/sessions until X" for each capability not yet calibrated.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getEventsDir, getProjectDataDir } from "../../utils/paths.js";
@@ -18,12 +19,12 @@ interface OnboardingProgress {
   hint: string;
 }
 
-onboardingRoutes.get("/api/intelligence/onboarding", (c) => {
+onboardingRoutes.get("/api/intelligence/onboarding", async (c) => {
   const dataDir = getProjectDataDir();
   const eventsDir = getEventsDir();
   const intelligenceDir = join(dataDir, "intelligence");
 
-  const totalEvents = countTotalEvents(eventsDir);
+  const totalEvents = await countTotalEvents(eventsDir);
   const totalDays = countEventDays(eventsDir);
 
   const progress: OnboardingProgress[] = [
@@ -113,13 +114,13 @@ onboardingRoutes.get("/api/intelligence/onboarding", (c) => {
   });
 });
 
-function countTotalEvents(eventsDir: string): number {
+async function countTotalEvents(eventsDir: string): Promise<number> {
   if (!existsSync(eventsDir)) return 0;
   try {
     let total = 0;
     const files = readdirSync(eventsDir).filter((f) => f.endsWith(".jsonl"));
     for (const file of files) {
-      const content = readFileSync(join(eventsDir, file), "utf-8");
+      const content = await readFile(join(eventsDir, file), "utf-8");
       total += content.split("\n").filter((l) => l.trim()).length;
     }
     return total;

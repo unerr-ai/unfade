@@ -39,7 +39,7 @@ export async function historyCommand(options: HistoryOptions): Promise<void> {
       return;
     }
 
-    const entries = queryHistory(db, options);
+    const entries = await queryHistory(db, options);
 
     if (options.json || options.format === "json") {
       process.stdout.write(`${JSON.stringify({ entries, count: entries.length }, null, 2)}\n`);
@@ -51,10 +51,10 @@ export async function historyCommand(options: HistoryOptions): Promise<void> {
   }
 }
 
-function queryHistory(
-  db: { exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> },
+async function queryHistory(
+  db: { exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>> },
   options: HistoryOptions,
-): HistoryEntry[] {
+): Promise<HistoryEntry[]> {
   const conditions: string[] = [];
   const params: unknown[] = [];
 
@@ -84,7 +84,7 @@ function queryHistory(
     : "LEFT JOIN event_features ef ON ef.event_id = e.id";
 
   try {
-    const result = db.exec(
+    const result = await db.exec(
       `SELECT e.id, e.ts, e.source, e.content_summary,
               json_extract(e.metadata, '$.domain') as domain,
               e.git_branch,

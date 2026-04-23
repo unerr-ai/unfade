@@ -74,8 +74,8 @@ drain:
 		if ev.Source != "ai-session" {
 			t.Errorf("source = %q, want ai-session", ev.Source)
 		}
-		if _, ok := ev.Metadata["direction_signals"]; !ok {
-			t.Error("expected direction_signals in metadata")
+		if _, ok := ev.Metadata["turns"]; !ok {
+			t.Error("expected turns in metadata")
 		}
 	}
 

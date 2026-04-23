@@ -5,117 +5,63 @@
 // §7c: never surface based on <5 data points or <2 weeks sustained.
 
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AlertsFile, BlindSpotAlert } from "../../../schemas/intelligence/alerts.js";
+import type {
+  IncrementalAnalyzer,
+  IncrementalState,
+  NewEventBatch,
+  UpdateResult,
+} from "../incremental-state.js";
 import { computePhaseBaselines, isHdsConcerning } from "../phase-baselines.js";
 import { detectTrend } from "../utils/trend.js";
-import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./index.js";
+import type { AnalyzerContext } from "./index.js";
 
 const MAX_ALERTS_PER_WEEK = 2;
 const MIN_DATA_POINTS = 5;
 const MIN_SUSTAINED_WEEKS = 2;
 
-export const blindSpotDetectorAnalyzer: Analyzer = {
-  name: "blind-spot-detector",
-  outputFile: "alerts.json",
-  minDataPoints: 20,
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
 
-  async run(ctx: AnalyzerContext): Promise<AnalyzerResult> {
-    const db = ctx.db;
-    const now = new Date().toISOString();
-
-    const existing = loadExistingAlerts(ctx.repoRoot);
-    const activeCount = countAlertsThisWeek(existing);
-
-    // 11E.7: Compute phase baselines for phase-aware detection
-    const { baselines } = computePhaseBaselines(db);
-
-    const newAlerts: BlindSpotAlert[] = [];
-
-    if (activeCount < MAX_ALERTS_PER_WEEK) {
-      const highAcceptance = detectHighAcceptance(db, existing, baselines);
-      if (highAcceptance && activeCount + newAlerts.length < MAX_ALERTS_PER_WEEK) {
-        newAlerts.push(highAcceptance);
-      }
-
-      const lowComprehension = detectLowComprehension(db, existing);
-      if (lowComprehension && activeCount + newAlerts.length < MAX_ALERTS_PER_WEEK) {
-        newAlerts.push(lowComprehension);
-      }
-
-      const decliningDirection = detectDecliningDirection(db, existing);
-      if (decliningDirection && activeCount + newAlerts.length < MAX_ALERTS_PER_WEEK) {
-        newAlerts.push(decliningDirection);
-      }
-    }
-
-    const allAlerts = [...existing.alerts.filter((a) => !isExpired(a)), ...newAlerts];
-
-    const alertsFile: AlertsFile = {
-      alerts: allAlerts.slice(-20),
-      maxPerWeek: MAX_ALERTS_PER_WEEK,
-      lastGeneratedAt: now,
-      updatedAt: now,
-    };
-
-    const sourceEventIds = collectSourceEventIds(db);
-
-    return {
-      analyzer: "blind-spot-detector",
-      updatedAt: now,
-      data: alertsFile as unknown as Record<string, unknown>,
-      insightCount: newAlerts.length,
-      sourceEventIds,
-    };
-  },
-};
-
-function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
-  try {
-    const result = db.exec(`
-      SELECT id FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND json_extract(metadata, '$.direction_signals.human_direction_score') IS NOT NULL
-      ORDER BY ts DESC
-      LIMIT 20
-    `);
-    if (!result[0]?.values.length) return [];
-    return result[0].values.map((row) => row[0] as string);
-  } catch {
-    return [];
-  }
+interface BlindSpotState {
+  output: AlertsFile;
 }
 
-function detectHighAcceptance(
-  db: AnalyzerContext["db"],
+// ---------------------------------------------------------------------------
+// Compute helpers — all take db (analytics) only
+// ---------------------------------------------------------------------------
+
+async function detectHighAcceptance(
+  db: AnalyzerContext["analytics"],
   existing: AlertsFile,
   baselines: Record<string, import("../phase-baselines.js").PhaseBaseline>,
-): BlindSpotAlert | null {
+): Promise<BlindSpotAlert | null> {
   try {
     const twoWeeksAgo = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
-    // 11E.7: Include execution_phase so we can filter out phase-expected low HDS
-    const result = db.exec(`
-      SELECT
-        CAST(json_extract(metadata, '$.direction_signals.human_direction_score') AS REAL) as hds,
-        json_extract(metadata, '$.execution_phase') as phase
+    const result = await db.exec(
+      `SELECT
+        human_direction_score as hds,
+        execution_phase as phase
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND ts >= '${twoWeeksAgo}'
-        AND json_extract(metadata, '$.direction_signals.human_direction_score') IS NOT NULL
-    `);
+        AND ts >= $1::TIMESTAMP
+        AND human_direction_score IS NOT NULL`,
+      [twoWeeksAgo],
+    );
 
     if (!result[0]?.values?.length) return null;
     const total = result[0].values.length;
     if (total < MIN_DATA_POINTS) return null;
 
-    // 11E.7: Only count as "low direction" if the HDS is concerning FOR its phase.
-    // A debugging session with HDS 0.15 is NORMAL — don't count it.
     let lowDir = 0;
     for (const row of result[0].values) {
       const hds = row[0] as number;
       const phase = row[1] as string | null;
       if (hds < 0.2) {
         if (phase && !isHdsConcerning(hds, phase, baselines)) {
-          // Low HDS is expected for this phase — skip
           continue;
         }
         lowDir++;
@@ -148,17 +94,17 @@ function detectHighAcceptance(
   }
 }
 
-function detectLowComprehension(
-  db: AnalyzerContext["db"],
+async function detectLowComprehension(
+  db: AnalyzerContext["analytics"],
   existing: AlertsFile,
-): BlindSpotAlert | null {
+): Promise<BlindSpotAlert | null> {
   try {
-    const result = db.exec(`
-      SELECT module, score, event_count FROM comprehension_by_module
-      WHERE score < 40 AND event_count >= ${MIN_DATA_POINTS}
-      ORDER BY score ASC
-      LIMIT 1
-    `);
+    const result = await db.exec(
+      `SELECT module, score, event_count FROM comprehension_by_module
+       WHERE score < 40 AND event_count >= 5
+       ORDER BY score ASC
+       LIMIT 1`,
+    );
 
     if (!result[0]?.values.length) return null;
 
@@ -188,14 +134,12 @@ function detectLowComprehension(
   }
 }
 
-function detectDecliningDirection(
-  db: AnalyzerContext["db"],
+async function detectDecliningDirection(
+  db: AnalyzerContext["analytics"],
   existing: AlertsFile,
-): BlindSpotAlert | null {
+): Promise<BlindSpotAlert | null> {
   try {
-    const result = db.exec(`
-      SELECT rdi FROM metric_snapshots ORDER BY date DESC LIMIT 28
-    `);
+    const result = await db.exec(`SELECT rdi FROM metric_snapshots ORDER BY date DESC LIMIT 28`);
 
     if (!result[0]?.values || result[0].values.length < 14) return null;
 
@@ -228,8 +172,6 @@ function detectDecliningDirection(
 
 function loadExistingAlerts(repoRoot: string): AlertsFile {
   try {
-    const { existsSync, readFileSync } = require("node:fs") as typeof import("node:fs");
-    const { join } = require("node:path") as typeof import("node:path");
     const path = join(repoRoot, ".unfade", "intelligence", "alerts.json");
     if (!existsSync(path))
       return { alerts: [], maxPerWeek: MAX_ALERTS_PER_WEEK, lastGeneratedAt: "", updatedAt: "" };
@@ -262,3 +204,98 @@ function getWeekKey(): string {
   );
   return `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
 }
+
+// ---------------------------------------------------------------------------
+// Full computation — assembles alerts into an AlertsFile output
+// ---------------------------------------------------------------------------
+
+async function computeAlerts(
+  db: AnalyzerContext["analytics"],
+  repoRoot: string,
+): Promise<AlertsFile> {
+  const now = new Date().toISOString();
+
+  const existing = loadExistingAlerts(repoRoot);
+  const activeCount = countAlertsThisWeek(existing);
+
+  const { baselines } = await computePhaseBaselines(db);
+
+  const newAlerts: BlindSpotAlert[] = [];
+
+  if (activeCount < MAX_ALERTS_PER_WEEK) {
+    const highAcceptance = await detectHighAcceptance(db, existing, baselines);
+    if (highAcceptance && activeCount + newAlerts.length < MAX_ALERTS_PER_WEEK) {
+      newAlerts.push(highAcceptance);
+    }
+
+    const lowComprehension = await detectLowComprehension(db, existing);
+    if (lowComprehension && activeCount + newAlerts.length < MAX_ALERTS_PER_WEEK) {
+      newAlerts.push(lowComprehension);
+    }
+
+    const decliningDirection = await detectDecliningDirection(db, existing);
+    if (decliningDirection && activeCount + newAlerts.length < MAX_ALERTS_PER_WEEK) {
+      newAlerts.push(decliningDirection);
+    }
+  }
+
+  const allAlerts = [...existing.alerts.filter((a) => !isExpired(a)), ...newAlerts];
+
+  return {
+    alerts: allAlerts.slice(-20),
+    maxPerWeek: MAX_ALERTS_PER_WEEK,
+    lastGeneratedAt: now,
+    updatedAt: now,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// IncrementalAnalyzer export
+// ---------------------------------------------------------------------------
+
+export const blindSpotDetectorAnalyzer: IncrementalAnalyzer<BlindSpotState, AlertsFile> = {
+  name: "blind-spot-detector",
+  outputFile: "alerts.json",
+  eventFilter: { sources: ["ai-session", "mcp-active"], requireFields: ["humanDirectionScore"] },
+  minDataPoints: 20,
+
+  async initialize(ctx: AnalyzerContext): Promise<IncrementalState<BlindSpotState>> {
+    const output = await computeAlerts(ctx.analytics, ctx.repoRoot);
+    return {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: 0,
+      updatedAt: output.updatedAt,
+    };
+  },
+
+  async update(
+    state: IncrementalState<BlindSpotState>,
+    newEvents: NewEventBatch,
+    ctx: AnalyzerContext,
+  ): Promise<UpdateResult<BlindSpotState>> {
+    if (newEvents.events.length === 0) {
+      return { state, changed: false };
+    }
+
+    const output = await computeAlerts(ctx.analytics, ctx.repoRoot);
+    const oldCount = state.value.output.alerts.length;
+    const newCount = output.alerts.length;
+    const changed = newCount !== oldCount;
+
+    return {
+      state: {
+        value: { output },
+        watermark: output.updatedAt,
+        eventCount: state.eventCount + newEvents.events.length,
+        updatedAt: output.updatedAt,
+      },
+      changed,
+      changeMagnitude: Math.abs(newCount - oldCount),
+    };
+  },
+
+  derive(state: IncrementalState<BlindSpotState>): AlertsFile {
+    return state.value.output;
+  },
+};

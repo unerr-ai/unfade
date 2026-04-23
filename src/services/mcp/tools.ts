@@ -9,7 +9,6 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { applyFeatureTag } from "../../commands/tag.js";
 import { loadConfig } from "../../config/manager.js";
-import { localToday } from "../../utils/date.js";
 import { getAmplification } from "../../tools/unfade-amplify.js";
 import { getCoachInsights } from "../../tools/unfade-coach.js";
 import { getComprehension } from "../../tools/unfade-comprehension.js";
@@ -21,6 +20,7 @@ import { logReasoningEvent, UnfadeLogInputSchema } from "../../tools/unfade-log.
 import { getProfile } from "../../tools/unfade-profile.js";
 import { queryEvents } from "../../tools/unfade-query.js";
 import { getSimilar } from "../../tools/unfade-similar.js";
+import { localToday } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getProjectDataDir } from "../../utils/paths.js";
 import { CacheManager } from "../cache/manager.js";
@@ -145,8 +145,12 @@ export function registerTools(server: McpServer): void {
           scope: args.scope ?? "today",
           project: args.project,
         });
+        const enrichedMeta = enrichMcpMeta(
+          result._meta ?? { tool: "unfade-context", durationMs: 0, degraded: false },
+        );
+        const enrichedResult = result._meta ? { ...result, _meta: enrichedMeta } : result;
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          content: [{ type: "text" as const, text: JSON.stringify(enrichedResult, null, 2) }],
         };
       } catch (err) {
         logger.error("MCP unfade_context error", {
@@ -690,7 +694,7 @@ export function registerTools(server: McpServer): void {
           };
         }
 
-        const rows = db.exec(
+        const rows = await db.exec(
           "SELECT id FROM events WHERE type = 'ai-conversation' ORDER BY ts DESC LIMIT ?",
           [args.last ?? 5],
         );

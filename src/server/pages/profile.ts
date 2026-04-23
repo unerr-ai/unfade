@@ -4,7 +4,8 @@
 // patterns with confidence bars, trade-off preferences,
 // temporal activity patterns.
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { USER_TERMS } from "../../constants/terminology.js";
@@ -17,16 +18,16 @@ export const profilePage = new Hono();
 /**
  * Load v2 reasoning profile from disk. Returns null if missing or not v2.
  */
-function loadProfileV2(cwd?: string): {
+async function loadProfileV2(cwd?: string): Promise<{
   profile: ReasoningModelV2 | null;
   lastUpdated: string | null;
-} {
+}> {
   const profilePath = join(getProfileDir(cwd), "reasoning_model.json");
   if (!existsSync(profilePath)) return { profile: null, lastUpdated: null };
   try {
-    const raw = readFileSync(profilePath, "utf-8");
+    const raw = await readFile(profilePath, "utf-8");
     const parsed = JSON.parse(raw);
-    const lastUpdated = statSync(profilePath).mtime.toISOString();
+    const lastUpdated = (await stat(profilePath)).mtime.toISOString();
     if (parsed.version === 2) return { profile: parsed as ReasoningModelV2, lastUpdated };
     return { profile: null, lastUpdated: null };
   } catch {
@@ -79,8 +80,8 @@ function trendArrow(trend: string): string {
   return `<span class="text-muted" title="Stable">—</span>`;
 }
 
-profilePage.get("/profile", (c) => {
-  const { profile, lastUpdated } = loadProfileV2();
+profilePage.get("/profile", async (c) => {
+  const { profile, lastUpdated } = await loadProfileV2();
 
   if (!profile || profile.dataPoints < 2) {
     const content = `

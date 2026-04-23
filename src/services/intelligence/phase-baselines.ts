@@ -32,28 +32,26 @@ export interface PhaseBaselineReport {
   updatedAt: string;
 }
 
-type DbLike = {
-  exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }>;
-};
+import type { DbLike } from "../cache/manager.js";
 
 /**
  * Compute per-execution-phase HDS baselines from 30-day rolling window.
  * Returns baselines keyed by phase name.
  */
-export function computePhaseBaselines(db: DbLike): PhaseBaselineReport {
+export async function computePhaseBaselines(db: DbLike): Promise<PhaseBaselineReport> {
   const now = new Date().toISOString();
   const baselines: Record<string, PhaseBaseline> = {};
 
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT
-        json_extract(e.metadata, '$.execution_phase') as phase,
-        CAST(json_extract(e.metadata, '$.direction_signals.human_direction_score') AS REAL) as hds
+        e.execution_phase as phase,
+        e.human_direction_score as hds
       FROM events e
       WHERE e.source IN ('ai-session', 'mcp-active')
-        AND e.ts >= datetime('now', '-${ROLLING_WINDOW_DAYS} days')
-        AND json_extract(e.metadata, '$.execution_phase') IS NOT NULL
-        AND json_extract(e.metadata, '$.direction_signals.human_direction_score') IS NOT NULL
+        AND e.ts >= now() - INTERVAL '30 days'
+        AND e.execution_phase IS NOT NULL
+        AND e.human_direction_score IS NOT NULL
     `);
 
     if (!result[0]?.values?.length) return { baselines, updatedAt: now };

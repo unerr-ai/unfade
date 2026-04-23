@@ -34,20 +34,6 @@ type ConversationTurn struct {
 	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 
-// DirectionSignals holds heuristic classification data computed at ingest time.
-// Populated by the classifier (Sprint 5.5B) — defined here so parsers and
-// classifier share a single type across the package boundary.
-type DirectionSignals struct {
-	RejectionCount          int     `json:"rejection_count"`
-	ModificationAfterAccept bool    `json:"modification_after_accept"`
-	PromptSpecificity       float64 `json:"prompt_specificity"`
-	DomainInjection         bool    `json:"domain_injection"`
-	AlternativeEvaluation   bool    `json:"alternative_evaluation"`
-	CourseCorrection        bool    `json:"course_correction"`
-	HumanDirectionScore     float64 `json:"human_direction_score"`
-	Confidence              string  `json:"confidence"` // "high" or "low"
-}
-
 // AIToolParser is the interface every AI tool parser implements.
 // Each parser understands one tool's native data format and produces
 // normalized ConversationTurn structs.

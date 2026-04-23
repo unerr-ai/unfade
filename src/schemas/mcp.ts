@@ -105,6 +105,10 @@ export type ContextOutput = z.infer<typeof ContextOutputSchema>;
 export const DecisionsInputSchema = z.object({
   limit: z.number().int().min(1).max(50).default(10),
   domain: z.string().optional(),
+  /** Substring match on decision + rationale (distill-backed list). */
+  q: z.string().optional(),
+  /** Filter decisions to those on or after (today − N days), by distill file date. */
+  period: z.enum(["7d", "30d", "90d"]).optional(),
   project: z.string().optional(),
 });
 

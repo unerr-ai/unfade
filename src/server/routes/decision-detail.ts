@@ -3,7 +3,8 @@
 // with linked evidence events (conversation excerpts from the original AI session).
 // Falls back to keyword match if no explicit evidence_event_ids.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { readEvents } from "../../services/capture/event-store.js";
@@ -35,13 +36,13 @@ interface EvidenceEvent {
 }
 
 // GET /api/decisions/:index — single decision with evidence (current project)
-decisionDetailRoutes.get("/api/decisions/:index", (c) => {
+decisionDetailRoutes.get("/api/decisions/:index", async (c) => {
   const index = Number.parseInt(c.req.param("index"), 10);
   if (Number.isNaN(index) || index < 0) {
     return c.json({ error: "Invalid decision index" }, 400);
   }
 
-  const decisions = loadDecisions();
+  const decisions = await loadDecisions();
   if (index >= decisions.length) {
     return c.json({ error: "Decision not found" }, 404);
   }
@@ -57,7 +58,7 @@ decisionDetailRoutes.get("/api/decisions/:index", (c) => {
 });
 
 // GET /api/repos/:id/decisions/:index — decision with evidence for a specific repo
-decisionDetailRoutes.get("/api/repos/:repoId/decisions/:index", (c) => {
+decisionDetailRoutes.get("/api/repos/:repoId/decisions/:index", async (c) => {
   const repoId = c.req.param("repoId");
   const index = Number.parseInt(c.req.param("index"), 10);
 
@@ -68,7 +69,7 @@ decisionDetailRoutes.get("/api/repos/:repoId/decisions/:index", (c) => {
     return c.json({ error: "Invalid decision index" }, 400);
   }
 
-  const decisions = loadDecisions(repo.root);
+  const decisions = await loadDecisions(repo.root);
   if (index >= decisions.length) {
     return c.json({ error: "Decision not found" }, 404);
   }
@@ -85,11 +86,11 @@ decisionDetailRoutes.get("/api/repos/:repoId/decisions/:index", (c) => {
   });
 });
 
-function loadDecisions(cwd?: string): DecisionRecord[] {
+async function loadDecisions(cwd?: string): Promise<DecisionRecord[]> {
   const filePath = join(getGraphDir(cwd), "decisions.jsonl");
   if (!existsSync(filePath)) return [];
 
-  const content = readFileSync(filePath, "utf-8").trim();
+  const content = (await readFile(filePath, "utf-8")).trim();
   if (!content) return [];
 
   const decisions: DecisionRecord[] = [];

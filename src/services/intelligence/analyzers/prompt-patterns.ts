@@ -3,7 +3,27 @@
 // correlates with outcome (direction score), surfaces effective/anti patterns.
 
 import type { PromptPatterns } from "../../../schemas/intelligence/prompt-patterns.js";
-import type { Analyzer, AnalyzerContext, AnalyzerResult } from "./index.js";
+import { logger } from "../../../utils/logger.js";
+import { classifyDomainFast } from "../domain-classifier.js";
+import type {
+  IncrementalAnalyzer,
+  IncrementalState,
+  NewEventBatch,
+  UpdateResult,
+} from "../incremental-state.js";
+import type { AnalyzerContext, AnalyzerResult } from "./index.js";
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+interface PromptPatternsState {
+  output: PromptPatterns;
+}
+
+// ---------------------------------------------------------------------------
+// Feature extraction types
+// ---------------------------------------------------------------------------
 
 interface PromptFeatures {
   hasConstraints: boolean;
@@ -15,59 +35,25 @@ interface PromptFeatures {
   directionScore: number;
 }
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
 const CONSTRAINT_PATTERNS = /must|should|require|constraint|limit|rule|boundary|never|always|only/i;
 const EXAMPLE_PATTERNS = /example|for instance|e\.g\.|such as|like this/i;
 const SCHEMA_PATTERNS = /schema|type|interface|struct|model|class|enum/i;
 const QUESTION_PATTERN = /\?/g;
 
-export const promptPatternsAnalyzer: Analyzer = {
-  name: "prompt-patterns",
-  outputFile: "prompt-patterns.json",
-  minDataPoints: 10,
+// ---------------------------------------------------------------------------
+// Compute helpers — all take db (analytics) only
+// ---------------------------------------------------------------------------
 
-  async run(ctx: AnalyzerContext): Promise<AnalyzerResult> {
-    const db = ctx.db;
-    const now = new Date().toISOString();
-
-    const features = extractPromptFeatures(db);
-    if (features.length < 10) {
-      return {
-        analyzer: "prompt-patterns",
-        updatedAt: now,
-        data: { effectivePatterns: [], antiPatterns: [], updatedAt: now, totalPromptsAnalyzed: 0 },
-        insightCount: 0,
-        sourceEventIds: [],
-      };
-    }
-
-    const effectivePatterns = findEffectivePatterns(features);
-    const antiPatterns = findAntiPatterns(features);
-
-    const patterns: PromptPatterns = {
-      effectivePatterns,
-      antiPatterns,
-      updatedAt: now,
-      totalPromptsAnalyzed: features.length,
-    };
-
-    const sourceEventIds = collectSourceEventIds(db);
-
-    return {
-      analyzer: "prompt-patterns",
-      updatedAt: now,
-      data: patterns as unknown as Record<string, unknown>,
-      insightCount: effectivePatterns.length + antiPatterns.length,
-      sourceEventIds,
-    };
-  },
-};
-
-function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
+async function collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
   try {
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT id FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND (json_extract(metadata, '$.prompt_full') IS NOT NULL OR content_summary IS NOT NULL)
+        AND (metadata_extra->>'prompt_full' IS NOT NULL OR content_summary IS NOT NULL)
       ORDER BY ts DESC
       LIMIT 20
     `);
@@ -78,19 +64,17 @@ function collectSourceEventIds(db: AnalyzerContext["db"]): string[] {
   }
 }
 
-function extractPromptFeatures(db: AnalyzerContext["db"]): PromptFeatures[] {
+async function extractPromptFeatures(db: AnalyzerContext["analytics"]): Promise<PromptFeatures[]> {
   try {
-    // Read full prompt text from metadata.prompt_full when available,
-    // falling back to content_summary + content_detail for older events.
-    const result = db.exec(`
+    const result = await db.exec(`
       SELECT
-        COALESCE(json_extract(metadata, '$.prompt_full'), content_summary) as prompt_text,
-        COALESCE(json_extract(metadata, '$.prompts_all'), content_detail) as prompts_context,
-        json_extract(metadata, '$.direction_signals.human_direction_score') as hds,
-        json_extract(metadata, '$.direction_signals.prompt_specificity') as spec
+        COALESCE(metadata_extra->>'prompt_full', content_summary) as prompt_text,
+        COALESCE(metadata_extra->>'prompts_all', content_detail) as prompts_context,
+        human_direction_score as hds,
+        prompt_specificity as spec
       FROM events
       WHERE source IN ('ai-session', 'mcp-active')
-        AND (json_extract(metadata, '$.prompt_full') IS NOT NULL OR content_summary IS NOT NULL)
+        AND (metadata_extra->>'prompt_full' IS NOT NULL OR content_summary IS NOT NULL)
       ORDER BY ts DESC
       LIMIT 500
     `);
@@ -113,7 +97,7 @@ function extractPromptFeatures(db: AnalyzerContext["db"]): PromptFeatures[] {
         hasSchema: SCHEMA_PATTERNS.test(text),
         questionCount: (text.match(QUESTION_PATTERN) ?? []).length,
         length,
-        domain: classifyDomain(text),
+        domain: classifyDomainFast(text),
         directionScore: hds,
       };
     });
@@ -230,14 +214,86 @@ function mean(values: number[]): number {
   return values.reduce((s, v) => s + v, 0) / values.length;
 }
 
-function classifyDomain(text: string): string {
-  const lower = text.toLowerCase();
-  if (/api|endpoint|route|handler|rest|graphql/.test(lower)) return "api";
-  if (/auth|login|session|token|jwt|oauth/.test(lower)) return "auth";
-  if (/database|sql|query|migration|orm/.test(lower)) return "database";
-  if (/css|style|layout|flex|grid|tailwind/.test(lower)) return "css";
-  if (/test|spec|mock|assert|expect/.test(lower)) return "testing";
-  if (/deploy|docker|ci|pipeline|infra/.test(lower)) return "infra";
-  if (/error|exception|retry|fallback/.test(lower)) return "error-handling";
-  return "general";
+// ---------------------------------------------------------------------------
+// Full computation — assembles prompt features into a PromptPatterns output
+// ---------------------------------------------------------------------------
+
+async function computePromptPatterns(db: AnalyzerContext["analytics"]): Promise<PromptPatterns> {
+  const now = new Date().toISOString();
+
+  const features = await extractPromptFeatures(db);
+  if (features.length < 10) {
+    return {
+      effectivePatterns: [],
+      antiPatterns: [],
+      updatedAt: now,
+      totalPromptsAnalyzed: 0,
+    };
+  }
+
+  const effectivePatterns = findEffectivePatterns(features);
+  const antiPatterns = findAntiPatterns(features);
+
+  return {
+    effectivePatterns,
+    antiPatterns,
+    updatedAt: now,
+    totalPromptsAnalyzed: features.length,
+  };
 }
+
+// ---------------------------------------------------------------------------
+// IncrementalAnalyzer export
+// ---------------------------------------------------------------------------
+
+export const promptPatternsAnalyzer: IncrementalAnalyzer<PromptPatternsState, PromptPatterns> = {
+  name: "prompt-patterns",
+  outputFile: "prompt-patterns.json",
+  eventFilter: { sources: ["ai-session", "mcp-active"] },
+  minDataPoints: 10,
+
+  async initialize(ctx: AnalyzerContext): Promise<IncrementalState<PromptPatternsState>> {
+    logger.debug("prompt-patterns: initializing");
+    const output = await computePromptPatterns(ctx.analytics);
+    return {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: output.totalPromptsAnalyzed,
+      updatedAt: output.updatedAt,
+    };
+  },
+
+  async update(
+    state: IncrementalState<PromptPatternsState>,
+    newEvents: NewEventBatch,
+    ctx: AnalyzerContext,
+  ): Promise<UpdateResult<PromptPatternsState>> {
+    if (newEvents.events.length === 0) {
+      return { state, changed: false };
+    }
+
+    const output = await computePromptPatterns(ctx.analytics);
+    const oldEffective = state.value.output.effectivePatterns.length;
+    const newEffective = output.effectivePatterns.length;
+    const oldAnti = state.value.output.antiPatterns.length;
+    const newAnti = output.antiPatterns.length;
+    const changed = oldEffective !== newEffective || oldAnti !== newAnti;
+
+    const newState: IncrementalState<PromptPatternsState> = {
+      value: { output },
+      watermark: output.updatedAt,
+      eventCount: state.eventCount + newEvents.events.length,
+      updatedAt: output.updatedAt,
+    };
+
+    return {
+      state: newState,
+      changed,
+      changeMagnitude: Math.abs(newEffective - oldEffective) + Math.abs(newAnti - oldAnti),
+    };
+  },
+
+  derive(state: IncrementalState<PromptPatternsState>): PromptPatterns {
+    return state.value.output;
+  },
+};

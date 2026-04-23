@@ -2,11 +2,13 @@
 // UF-229: GET /api/repos — registry + per-repo summaries (parallel read).
 // UF-230: GET /api/repos/:id/events — events from a specific repo's .unfade/.
 
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { readEventRange } from "../../services/capture/event-store.js";
-import type { SummaryJson } from "../../services/intelligence/summary-writer.js";
+import {
+  type SummaryJson,
+  readSummary,
+} from "../../services/intelligence/summary-writer.js";
 import type { RepoEntry } from "../../services/registry/registry.js";
 import { findRepoById, loadRegistry } from "../../services/registry/registry.js";
 import { localToday } from "../../utils/date.js";
@@ -22,31 +24,19 @@ interface RepoWithSummary {
   summary: SummaryJson | null;
 }
 
-function readRepoSummary(_repo: RepoEntry): SummaryJson | null {
-  const { getStateDir } = require("../../utils/paths.js") as typeof import("../../utils/paths.js");
-  const summaryPath = join(getStateDir(), "summary.json");
-  if (!existsSync(summaryPath)) return null;
-  try {
-    return JSON.parse(readFileSync(summaryPath, "utf-8")) as SummaryJson;
-  } catch {
-    return null;
-  }
-}
-
 // GET /api/repos — all registered repos with summary data
-reposRoutes.get("/api/repos", async (c) => {
+reposRoutes.get("/api/repos", (c) => {
   try {
     const registry = loadRegistry();
-    const results: RepoWithSummary[] = await Promise.all(
-      registry.repos.map(async (repo) => ({
-        id: repo.id,
-        root: repo.root,
-        label: repo.label,
-        lastSeenAt: repo.lastSeenAt,
-        capabilities: repo.capabilities,
-        summary: readRepoSummary(repo),
-      })),
-    );
+    const summary = readSummary();
+    const results: RepoWithSummary[] = registry.repos.map((repo) => ({
+      id: repo.id,
+      root: repo.root,
+      label: repo.label,
+      lastSeenAt: repo.lastSeenAt,
+      capabilities: repo.capabilities,
+      summary,
+    }));
     return c.json(results);
   } catch {
     return c.json([]);
@@ -66,7 +56,7 @@ reposRoutes.get("/api/repos/:id", (c) => {
     label: repo.label,
     lastSeenAt: repo.lastSeenAt,
     capabilities: repo.capabilities,
-    summary: readRepoSummary(repo),
+    summary: readSummary(),
   });
 });
 

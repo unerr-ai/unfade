@@ -24,7 +24,7 @@ export async function savingsCommand(options: SavingsOptions): Promise<void> {
     }
 
     const { computeValueReceipt } = await import("../services/intelligence/value-receipt.js");
-    const receipt = computeValueReceipt(db);
+    const receipt = await computeValueReceipt(db);
 
     if (options.json) {
       process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);

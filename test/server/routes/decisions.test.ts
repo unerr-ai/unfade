@@ -1,7 +1,7 @@
 // Tests for UF-051: GET /unfade/decisions route
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../../src/server/http.js";
 import { invalidateSetupCache } from "../../../src/server/setup-state.js";
 
@@ -105,5 +105,29 @@ describe("GET /unfade/decisions", () => {
     const res = await app.request("/unfade/decisions");
     const body = await res.json();
     expect(body._meta.degraded).toBe(true);
+  });
+
+  it("filters by search query q", async () => {
+    writeDistillMd(tmpDir, "2026-04-15", distillWithDecisions);
+
+    const app = createApp();
+    const res = await app.request("/unfade/decisions?q=Redis");
+    const body = await res.json();
+    expect(body.data.decisions.length).toBe(1);
+    expect(body.data.decisions[0].decision).toContain("Redis");
+  });
+
+  it("filters by period (30d window)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-23T12:00:00Z"));
+    writeDistillMd(tmpDir, "2026-04-15", distillWithDecisions);
+    writeDistillMd(tmpDir, "2020-01-01", distillWithDecisions);
+
+    const app = createApp();
+    const res = await app.request("/unfade/decisions?period=30d&limit=50");
+    const body = await res.json();
+    expect(body.data.decisions.length).toBe(2);
+    expect(body.data.decisions.every((d: { date: string }) => d.date === "2026-04-15")).toBe(true);
+    vi.useRealTimers();
   });
 });

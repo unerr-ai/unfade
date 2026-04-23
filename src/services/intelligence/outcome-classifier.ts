@@ -20,13 +20,13 @@ interface EventRow {
  * Called post-materialization with event IDs that need classification.
  * Updates the metadata JSON column in the events table with an "outcome" field.
  */
-export function classifyOutcomes(db: DbLike, eventIds: string[]): number {
+export async function classifyOutcomes(db: DbLike, eventIds: string[]): Promise<number> {
   if (eventIds.length === 0) return 0;
 
   let classified = 0;
 
   for (const eventId of eventIds) {
-    const rows = db.exec(
+    const rows = await db.exec(
       "SELECT id, metadata, type, source FROM events WHERE id = ? AND type = 'ai-conversation'",
       [eventId],
     );
@@ -43,7 +43,7 @@ export function classifyOutcomes(db: DbLike, eventIds: string[]): number {
     const metadata = safeParseJson(row.metadata);
     if (!metadata || metadata.outcome) continue; // Already classified
 
-    const outcome = deriveOutcome(metadata, db, eventId);
+    const outcome = await deriveOutcome(metadata, db, eventId);
     metadata.outcome = outcome;
 
     db.run("UPDATE events SET metadata = ? WHERE id = ?", [JSON.stringify(metadata), eventId]);
@@ -61,8 +61,8 @@ export function classifyOutcomes(db: DbLike, eventIds: string[]): number {
  * Classify all unclassified AI conversation events in the database.
  * Used for backfill after initial deployment.
  */
-export function classifyAllUnclassified(db: DbLike): number {
-  const rows = db.exec(
+export async function classifyAllUnclassified(db: DbLike): Promise<number> {
+  const rows = await db.exec(
     "SELECT id FROM events WHERE type = 'ai-conversation' AND json_extract(metadata, '$.outcome') IS NULL",
   );
 
@@ -80,7 +80,7 @@ export function classifyAllUnclassified(db: DbLike): number {
  * 4. Context switch (next event touches different files) → partial
  * 5. conversation_complete with output → success
  */
-function deriveOutcome(metadata: Record<string, unknown>, db: DbLike, eventId: string): Outcome {
+async function deriveOutcome(metadata: Record<string, unknown>, db: DbLike, eventId: string): Promise<Outcome> {
   const filesModified = metadata.files_modified as string[] | undefined;
   const iterationCount = (metadata.iteration_count as number) ?? 0;
   const promptsAll = metadata.prompts_all as string[] | undefined;
@@ -109,7 +109,7 @@ function deriveOutcome(metadata: Record<string, unknown>, db: DbLike, eventId: s
 
   // Rule 4: Context switch detection (next event touches entirely different files)
   if (filesModified && filesModified.length === 0) {
-    const hasContextSwitch = detectContextSwitch(db, eventId, metadata);
+    const hasContextSwitch = await detectContextSwitch(db, eventId, metadata);
     if (hasContextSwitch) {
       return "partial";
     }
@@ -128,11 +128,11 @@ function deriveOutcome(metadata: Record<string, unknown>, db: DbLike, eventId: s
  * Detect context switch: the next event from the same session touches
  * entirely different files.
  */
-function detectContextSwitch(
+async function detectContextSwitch(
   db: DbLike,
   eventId: string,
   metadata: Record<string, unknown>,
-): boolean {
+): Promise<boolean> {
   const sessionId = metadata.session_id as string | undefined;
   if (!sessionId) return false;
 
@@ -143,10 +143,10 @@ function detectContextSwitch(
   if (currentFiles.length === 0) return false;
 
   // Find the next event in the same session
-  const nextRows = db.exec(
+  const nextRows = await db.exec(
     `SELECT metadata FROM events
      WHERE json_extract(metadata, '$.session_id') = ?
-     AND json_extract(metadata, '$.sequence_id') > ?
+     AND CAST(json_extract(metadata, '$.sequence_id') AS INTEGER) > ?
      ORDER BY json_extract(metadata, '$.sequence_id') ASC
      LIMIT 1`,
     [sessionId, (metadata.sequence_id as number) ?? 0],

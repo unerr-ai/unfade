@@ -286,27 +286,25 @@ func (c *Coordinator) routeToWorker(req platform.IPCRequest, worker *RepoWorker)
 		}
 
 	case "backfill":
-		days := 30
+		var since time.Time
 		if d, ok := req.Args["days"].(float64); ok {
-			days = int(d)
+			since = time.Now().AddDate(0, 0, -int(d))
 		}
-		since := time.Now().AddDate(0, 0, -days)
 		count, err := orch.Backfill(since)
 		if err != nil {
 			return platform.IPCResponse{OK: false, Error: err.Error()}
 		}
-		return platform.IPCResponse{OK: true, Data: map[string]any{"count": count, "days": days}}
+		return platform.IPCResponse{OK: true, Data: map[string]any{"count": count}}
 
 	case "ingest":
-		days := 7
+		var since time.Time
 		if d, ok := req.Args["days"].(float64); ok {
-			days = int(d)
+			since = time.Now().AddDate(0, 0, -int(d))
 		}
-		since := time.Now().AddDate(0, 0, -days)
 		if err := orch.StartIngest(since); err != nil {
 			return platform.IPCResponse{OK: false, Error: err.Error()}
 		}
-		return platform.IPCResponse{OK: true, Data: map[string]any{"days": days, "message": "ingest started"}}
+		return platform.IPCResponse{OK: true, Data: map[string]any{"message": "ingest started"}}
 
 	case "ingest-status":
 		status := orch.IngestStatus()

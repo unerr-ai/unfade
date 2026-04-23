@@ -45,19 +45,19 @@ describe("Home page (GET /)", () => {
     expect(html).toContain("sidebar");
   });
 
-  it("includes SSE connection in layout", async () => {
+  it("includes shared client for SSE (local bundle)", async () => {
     const app = createApp();
     const res = await app.request("/");
     const html = await res.text();
-    expect(html).toContain("EventSource");
-    expect(html).toContain("/api/stream");
+    expect(html).toContain("/public/js/unfade-core.js");
+    expect(html).toContain('id="live-dot"');
   });
 
   it("includes htmx script tag", async () => {
     const app = createApp();
     const res = await app.request("/");
     const html = await res.text();
-    expect(html).toContain("htmx.org");
+    expect(html).toContain("/public/js/htmx.min.js");
   });
 
   it("includes sidebar nav links", async () => {
@@ -65,9 +65,8 @@ describe("Home page (GET /)", () => {
     const res = await app.request("/");
     const html = await res.text();
     expect(html).toContain('href="/intelligence"');
-    expect(html).toContain('href="/coach"');
+    expect(html).toContain('href="/decisions"');
     expect(html).toContain('href="/settings"');
-    expect(html).toContain('href="/intelligence"');
   });
 
   it("includes home activation and dashboard structure", async () => {

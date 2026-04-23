@@ -181,16 +181,13 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
 
 async function triggerIngestWhenReady(repoRoot: string): Promise<void> {
   try {
-    // Fix 5: Check ingest state — skip if already completed or running
+    // Check if ingest is actively running — only skip if still in progress.
+    // The Go daemon handles "completed" state internally: it uses the last
+    // completion timestamp as the new boundary to collect missed data.
     const ingestPath = join(repoRoot, ".unfade", "state", "ingest.json");
     if (existsSync(ingestPath)) {
       const ingest = JSON.parse(readFileSync(ingestPath, "utf-8"));
-      if (ingest.status === "completed") {
-        logger.debug("Ingest already completed, skipping", { repoRoot });
-        return;
-      }
       if (ingest.status === "running") {
-        // Crash recovery: if running for > 1 hour, mark as failed
         const startedAt = Date.parse(ingest.startedAt ?? "");
         if (startedAt > 0 && Date.now() - startedAt > 3600_000) {
           logger.warn("Stale ingest detected (>1h), marking as failed for re-trigger", {
@@ -214,7 +211,7 @@ async function triggerIngestWhenReady(repoRoot: string): Promise<void> {
 
     const ready = await waitForDaemonIPCReady(repoRoot, 10_000);
     if (ready) {
-      await sendIPCCommand({ cmd: "ingest", args: { days: 7 } }, repoRoot, 5000);
+      await sendIPCCommand({ cmd: "ingest" }, repoRoot, 5000);
     }
   } catch {
     // non-fatal

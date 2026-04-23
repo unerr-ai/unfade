@@ -2,7 +2,8 @@
 // Distill viewer page (GET /distill) — date navigation,
 // markdown rendered as HTML, re-generate button via htmx.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
 import { USER_TERMS } from "../../constants/terminology.js";
 import { localToday } from "../../utils/date.js";
@@ -14,12 +15,12 @@ export const distillPage = new Hono();
 /**
  * Read a distill file for the given date.
  */
-function readDistillContent(date: string): string | null {
+async function readDistillContent(date: string): Promise<string | null> {
   const dir = getDistillsDir();
   const filePath = `${dir}/${date}.md`;
   if (!existsSync(filePath)) return null;
   try {
-    return readFileSync(filePath, "utf-8");
+    return await readFile(filePath, "utf-8");
   } catch {
     return null;
   }
@@ -42,7 +43,7 @@ function getAvailableDates(): string[] {
   }
 }
 
-distillPage.get("/distill", (c) => {
+distillPage.get("/distill", async (c) => {
   const today = localToday();
   const requestedDate = c.req.query("date") ?? today;
 
@@ -56,7 +57,7 @@ distillPage.get("/distill", (c) => {
   }
 
   const dates = getAvailableDates();
-  const md = readDistillContent(requestedDate);
+  const md = await readDistillContent(requestedDate);
 
   const dateIdx = dates.indexOf(requestedDate);
   const prevDate = dateIdx >= 0 && dateIdx < dates.length - 1 ? dates[dateIdx + 1] : null;

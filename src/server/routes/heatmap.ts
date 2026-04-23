@@ -29,13 +29,14 @@ heatmapRoutes.get("/api/repos/:id/heatmap", async (c) => {
   }
 
   const cache = new CacheManager(repo.root);
-  const db = await cache.getDb();
-  if (!db) {
+  await cache.getDb();
+  const analyticsDb = cache.analytics;
+  if (!analyticsDb) {
     return c.json({ modules: [] });
   }
 
-  const directionEntries = readDirectionByFile(db);
-  const comprehensionEntries = readModuleComprehension(db);
+  const directionEntries = await readDirectionByFile(analyticsDb);
+  const comprehensionEntries = await readModuleComprehension(analyticsDb);
 
   const comprehensionMap = new Map(comprehensionEntries.map((m) => [m.module, m.score]));
 
@@ -64,8 +65,8 @@ heatmapRoutes.get("/api/heatmap", async (c) => {
     return c.json({ modules: [] });
   }
 
-  const directionEntries = readDirectionByFile(db);
-  const comprehensionEntries = readModuleComprehension(db);
+  const directionEntries = await readDirectionByFile(db);
+  const comprehensionEntries = await readModuleComprehension(db);
 
   const comprehensionMap = new Map(comprehensionEntries.map((m) => [m.module, m.score]));
 

@@ -1,13 +1,17 @@
 // FILE: src/services/intelligence/analyzers/index.ts
-// UF-100: Pluggable analyzer interface for the Intelligence Engine.
+// Canonical AnalyzerContext for the intelligence layer.
+// Dual-DB: analyzers query DuckDB (analytics) for typed-column aggregations.
+// Lineage writes go to SQLite (operational) via the engine.
+
+import type { DbLike } from "../../cache/manager.js";
+import type { IncrementalState } from "../incremental-state.js";
 
 export interface AnalyzerContext {
+  analytics: DbLike;
+  operational: DbLike;
   repoRoot: string;
-  db: {
-    run(sql: string, params?: unknown[]): void;
-    exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }>;
-  };
   config: Record<string, unknown>;
+  dependencyStates?: Map<string, IncrementalState<unknown>>;
 }
 
 export interface AnalyzerResult {
@@ -15,13 +19,5 @@ export interface AnalyzerResult {
   updatedAt: string;
   data: Record<string, unknown>;
   insightCount: number;
-  /** IDs of source events that contributed to this result (max 20). */
   sourceEventIds: string[];
-}
-
-export interface Analyzer {
-  name: string;
-  outputFile: string;
-  minDataPoints: number;
-  run(ctx: AnalyzerContext): Promise<AnalyzerResult>;
 }

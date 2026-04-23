@@ -43,8 +43,8 @@ const REVISION_WINDOW_DAYS = 28;
  * Compute decision durability from decisions table + event_links.
  * Only tracks decisions with triggered_commit links (need concrete git evidence).
  */
-export function computeDecisionDurability(db: DbLike): DurabilityReport {
-  const decisions = loadTrackedDecisions(db);
+export async function computeDecisionDurability(db: DbLike): Promise<DurabilityReport> {
+  const decisions = await loadTrackedDecisions(db);
   const now = Date.now();
 
   for (const d of decisions) {
@@ -56,7 +56,7 @@ export function computeDecisionDurability(db: DbLike): DurabilityReport {
       continue;
     }
 
-    const revised = checkRevised(db, d);
+    const revised = await checkRevised(db, d);
     if (revised) {
       d.status = "revised";
       d.revisionDetectedAt = new Date().toISOString();
@@ -112,18 +112,18 @@ export function writeDecisionDurability(report: DurabilityReport, repoRoot?: str
   renameSync(tmp, target);
 }
 
-function loadTrackedDecisions(db: DbLike): DurabilityRecord[] {
+async function loadTrackedDecisions(db: DbLike): Promise<DurabilityRecord[]> {
   try {
-    const result = db.exec(`
-      SELECT d.id, d.date, d.domain, d.description, d.alternatives_count,
+    const result = await db.exec(
+      `SELECT d.id, d.date, d.domain, d.description, d.alternatives_count,
              GROUP_CONCAT(DISTINCT el.to_event) as linked_files
       FROM decisions d
       LEFT JOIN event_links el ON el.from_event = d.id AND el.link_type = 'triggered_commit'
-      WHERE d.date >= date('now', '-${REVISION_WINDOW_DAYS} days')
+      WHERE d.date >= now() - INTERVAL '28 days'
       GROUP BY d.id
       ORDER BY d.date DESC
-      LIMIT 100
-    `);
+      LIMIT 100`,
+    );
     if (!result[0]?.values.length) return [];
 
     return result[0].values.map((row) => {
@@ -150,7 +150,7 @@ function loadTrackedDecisions(db: DbLike): DurabilityRecord[] {
  * Check if decision-linked files have been substantially changed.
  * Uses events table to find subsequent modifications to the same files.
  */
-function checkRevised(db: DbLike, decision: DurabilityRecord): boolean {
+async function checkRevised(db: DbLike, decision: DurabilityRecord): Promise<boolean> {
   if (decision.files.length === 0) return false;
 
   try {
@@ -161,15 +161,15 @@ function checkRevised(db: DbLike, decision: DurabilityRecord): boolean {
       .slice(0, 10);
 
     for (const file of decision.files) {
-      const result = db.exec(
+      const pattern = `%${file.replace(/%/g, "")}%`;
+      const result = await db.exec(
         `SELECT COUNT(*) FROM events
-         WHERE ts > '${cutoff}' AND ts <= '${windowEnd}'
-           AND (content_summary LIKE '%${escapeSql(file)}%'
-                OR content_detail LIKE '%${escapeSql(file)}%')
+         WHERE ts > $1::TIMESTAMP AND ts <= $2::TIMESTAMP
+           AND (content_summary LIKE $3 OR content_detail LIKE $3)
            AND source IN ('git-commit', 'ai-session')`,
+        [cutoff, windowEnd, pattern],
       );
       const count = (result[0]?.values[0]?.[0] as number) ?? 0;
-      // More than 3 subsequent touches to the same file = likely revised
       if (count > 3) return true;
     }
 
@@ -179,6 +179,3 @@ function checkRevised(db: DbLike, decision: DurabilityRecord): boolean {
   }
 }
 
-function escapeSql(s: string): string {
-  return s.replace(/'/g, "''").replace(/%/g, "");
-}

@@ -6,7 +6,7 @@
 import { mean } from "simple-statistics";
 import type { CaptureEvent } from "../../schemas/event.js";
 import { listEventDates, readEvents } from "../capture/event-store.js";
-import { aggregateDomains, topDomain } from "./domain-tagger.js";
+import { aggregateDomains, topDomain } from "./domain-classifier.js";
 
 export interface DomainBreakdown {
   domain: string;

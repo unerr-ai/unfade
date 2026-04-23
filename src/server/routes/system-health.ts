@@ -1,7 +1,8 @@
 // FILE: src/server/routes/system-health.ts
 // Fix 2: Unified system health endpoint — aggregates daemon, materializer, config, and ingest status.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getProjectDataDir, getStateDir } from "../../utils/paths.js";
@@ -37,7 +38,7 @@ interface SystemHealthResponse {
  * GET /api/system/health — unified health aggregating all subsystems.
  * Used by UI health chips, CLI `unfade status`, and monitoring.
  */
-systemHealthRoutes.get("/api/system/health", (c) => {
+systemHealthRoutes.get("/api/system/health", async (c) => {
   const repoManager = (globalThis as Record<string, unknown>).__unfade_repo_manager as
     | {
         getHealthStatus(): RepoHealth[];
@@ -54,7 +55,7 @@ systemHealthRoutes.get("/api/system/health", (c) => {
   try {
     const configPath = join(getProjectDataDir(), "config.json");
     if (existsSync(configPath)) {
-      const raw = JSON.parse(readFileSync(configPath, "utf-8"));
+      const raw = JSON.parse(await readFile(configPath, "utf-8"));
       configuredProvider = raw?.distill?.provider ?? "none";
       configuredModel = raw?.distill?.model ?? "llama3.2";
     }
@@ -71,7 +72,7 @@ systemHealthRoutes.get("/api/system/health", (c) => {
   try {
     const ingestPath = join(getStateDir(), "ingest.json");
     if (existsSync(ingestPath)) {
-      const ingest = JSON.parse(readFileSync(ingestPath, "utf-8"));
+      const ingest = JSON.parse(await readFile(ingestPath, "utf-8"));
       ingestStatus = ingest.status ?? null;
     }
   } catch {

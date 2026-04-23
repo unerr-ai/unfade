@@ -89,7 +89,7 @@ describe("12A.7: Intelligence files generated", () => {
     for (const a of allAnalyzers) engine.register(a);
 
     const db = makeInMemoryDb(35); // enough for all analyzers (max minDataPoints is 30)
-    const ctx: AnalyzerContext = { repoRoot: testDir, db, config: {} };
+    const ctx: AnalyzerContext = { repoRoot: testDir, analytics: db, operational: db, db, config: {} };
 
     const results = await engine.run(ctx);
 
@@ -113,7 +113,7 @@ describe("12A.7: Intelligence files generated", () => {
     for (const a of allAnalyzers) engine.register(a);
 
     const db = makeInMemoryDb(35);
-    const ctx: AnalyzerContext = { repoRoot: testDir, db, config: {} };
+    const ctx: AnalyzerContext = { repoRoot: testDir, analytics: db, operational: db, db, config: {} };
 
     const first = await engine.run(ctx);
     const second = await engine.run(ctx);
@@ -127,7 +127,7 @@ describe("12A.7: Intelligence files generated", () => {
     for (const a of allAnalyzers) engine.register(a);
 
     const db = makeInMemoryDb(2); // fewer than any analyzer's minDataPoints
-    const ctx: AnalyzerContext = { repoRoot: testDir, db, config: {} };
+    const ctx: AnalyzerContext = { repoRoot: testDir, analytics: db, operational: db, db, config: {} };
 
     const results = await engine.run(ctx);
     expect(results).toHaveLength(0);
@@ -150,7 +150,7 @@ describe("12A.7: Intelligence files generated", () => {
     engine.register(allAnalyzers[0]);
 
     const db = makeInMemoryDb(10);
-    const ctx: AnalyzerContext = { repoRoot: testDir, db, config: {} };
+    const ctx: AnalyzerContext = { repoRoot: testDir, analytics: db, operational: db, db, config: {} };
 
     const results = await engine.run(ctx);
     // The working analyzer should still produce output
@@ -161,11 +161,11 @@ describe("12A.7: Intelligence files generated", () => {
 
 describe("12A.8: Intelligence routes return data or 202", () => {
   it("returns 202 warming_up when file does not exist", async () => {
-    // Point getProjectDataDir to a temp dir with no intelligence files
     const emptyDir = join(testDir, ".unfade-empty");
     mkdirSync(emptyDir, { recursive: true });
     vi.doMock("../../src/utils/paths.js", () => ({
       getProjectDataDir: () => emptyDir,
+      getIntelligenceDir: () => join(emptyDir, "intelligence"),
     }));
     const { intelligenceRoutes } = await import("../../src/server/routes/intelligence.js");
 
@@ -176,14 +176,13 @@ describe("12A.8: Intelligence routes return data or 202", () => {
   });
 
   it("returns 200 with data when intelligence file exists", async () => {
-    // Write a mock intelligence file
     const dataDir = join(testDir, ".unfade", "intelligence");
     mkdirSync(dataDir, { recursive: true });
     writeFileSync(join(dataDir, "efficiency.json"), JSON.stringify({ score: 85 }));
 
-    // Mock getProjectDataDir to point to our test dir
     vi.doMock("../../src/utils/paths.js", () => ({
       getProjectDataDir: () => join(testDir, ".unfade"),
+      getIntelligenceDir: () => dataDir,
     }));
 
     // Re-import after mock
@@ -204,6 +203,7 @@ describe("13E / UF-419: Decision durability API route", () => {
     mkdirSync(emptyDir, { recursive: true });
     vi.doMock("../../src/utils/paths.js", () => ({
       getProjectDataDir: () => emptyDir,
+      getIntelligenceDir: () => join(emptyDir, "intelligence"),
     }));
     const { intelligenceRoutes } = await import("../../src/server/routes/intelligence.js");
     const res = await intelligenceRoutes.request("/api/intelligence/decision-durability");
@@ -225,6 +225,7 @@ describe("13E / UF-419: Decision durability API route", () => {
     );
     vi.doMock("../../src/utils/paths.js", () => ({
       getProjectDataDir: () => dataDir,
+      getIntelligenceDir: () => join(dataDir, "intelligence"),
     }));
     const { intelligenceRoutes } = await import("../../src/server/routes/intelligence.js");
     const res = await intelligenceRoutes.request("/api/intelligence/decision-durability");
@@ -238,7 +239,7 @@ describe("12A.10: Lineage population", () => {
     for (const a of allAnalyzers) engine.register(a);
 
     const db = makeInMemoryDb(35);
-    const ctx: AnalyzerContext = { repoRoot: testDir, db, config: {} };
+    const ctx: AnalyzerContext = { repoRoot: testDir, analytics: db, operational: db, db, config: {} };
 
     await engine.run(ctx);
 

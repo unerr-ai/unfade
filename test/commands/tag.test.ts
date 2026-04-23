@@ -45,9 +45,9 @@ function createMockTagDb() {
 }
 
 describe("applyFeatureTag", () => {
-  it("T-334a: creates feature and tags events with source=user", () => {
+  it("T-334a: creates feature and tags events with source=user", async () => {
     const db = createMockTagDb();
-    const tagged = applyFeatureTag(db, "auth-refactor", ["ev-1", "ev-2", "ev-3"]);
+    const tagged = await applyFeatureTag(db, "auth-refactor", ["ev-1", "ev-2", "ev-3"]);
 
     expect(tagged).toBe(3);
     expect(db.getFeatures()).toHaveLength(1);
@@ -57,27 +57,27 @@ describe("applyFeatureTag", () => {
     expect(db.getEventFeatures()[0].source).toBe("user");
   });
 
-  it("T-334b: reuses existing feature entry", () => {
+  it("T-334b: reuses existing feature entry", async () => {
     const db = createMockTagDb();
     // First call creates the feature
-    applyFeatureTag(db, "login flow", ["ev-1"]);
+    await applyFeatureTag(db, "login flow", ["ev-1"]);
     // Second call reuses it
-    applyFeatureTag(db, "login flow", ["ev-2", "ev-3"]);
+    await applyFeatureTag(db, "login flow", ["ev-2", "ev-3"]);
 
     expect(db.getFeatures()).toHaveLength(1);
     expect(db.getEventFeatures()).toHaveLength(3);
   });
 
-  it("T-334c: feature ID normalizes spaces to hyphens and lowercases", () => {
+  it("T-334c: feature ID normalizes spaces to hyphens and lowercases", async () => {
     const db = createMockTagDb();
-    applyFeatureTag(db, "My Feature Name", ["ev-1"]);
+    await applyFeatureTag(db, "My Feature Name", ["ev-1"]);
 
     expect(db.getFeatures()[0].id).toBe("user-my-feature-name");
   });
 
-  it("T-334d: empty eventIds returns 0", () => {
+  it("T-334d: empty eventIds returns 0", async () => {
     const db = createMockTagDb();
-    const tagged = applyFeatureTag(db, "empty", []);
+    const tagged = await applyFeatureTag(db, "empty", []);
     expect(tagged).toBe(0);
   });
 });

@@ -1,11 +1,14 @@
 // FILE: src/server/pages/home.ts
 // Enterprise home: inline activation + steady-state activity dashboard. Single SSE path via window.__unfade.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { readSummary } from "../../services/intelligence/summary-writer.js";
+import { findRepoById } from "../../services/registry/registry.js";
 import { getStateDir } from "../../utils/paths.js";
+import { kpiCard } from "../components/metric-card.js";
 import { activationSection } from "../components/system-reveal.js";
 import {
   iconAlertTriangle,
@@ -23,7 +26,11 @@ export const homePage = new Hono();
 
 const ACTIVATION_GRACE_MS = 120_000;
 
-homePage.get("/", (c) => {
+homePage.get("/", async (c) => {
+  const projectId = c.req.query("project") ?? null;
+  const projectRepo = projectId ? findRepoById(projectId) : null;
+  const projectLabel = projectRepo?.label ?? null;
+
   const summary = readSummary();
   const warm = !!summary && (summary.eventCount24h >= 5 || summary.firstRunComplete === true);
   let needsActivation = !warm;
@@ -31,7 +38,7 @@ homePage.get("/", (c) => {
   try {
     const setupPath = join(getStateDir(), "setup-status.json");
     if (existsSync(setupPath)) {
-      const setup = JSON.parse(readFileSync(setupPath, "utf-8")) as { initializedAt?: string };
+      const setup = JSON.parse(await readFile(setupPath, "utf-8")) as { initializedAt?: string };
       if (setup.initializedAt) {
         sessionId = setup.initializedAt;
         const initAge = Date.now() - Date.parse(setup.initializedAt);
@@ -63,8 +70,6 @@ homePage.get("/", (c) => {
       .de-row:last-child { border-bottom: none; }
       .de-src { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; min-width: 44px; font-variant-numeric: tabular-nums; }
       .de-time { font-size: 11px; font-family: 'JetBrains Mono', monospace; color: rgba(250,250,250,0.4); margin-left: auto; font-variant-numeric: tabular-nums; }
-      .mk-val { font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-      .mk-lab { font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: rgba(250,250,250,0.45); margin-top: 8px; }
     </style>
 
     <div id="home-root" class="home-mode-${needsActivation ? "activation" : "dashboard"}" data-needs-activation="${needsActivation ? "true" : "false"}" data-session-id="${sessionAttr}">
@@ -93,7 +98,12 @@ homePage.get("/", (c) => {
           </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4 mb-8">
+        ${projectLabel ? `<div class="bg-accent/10 border border-accent/30 rounded-lg px-5 py-3 mb-4 flex items-center gap-3">
+          <span class="text-accent font-semibold text-sm">Project: ${escapeHtml(projectLabel)}</span>
+          <a href="/" class="ml-auto text-xs text-muted hover:text-foreground no-underline">← All projects</a>
+        </div>` : ""}
+
+        <div class="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4 mb-8" data-project="${escapeHtml(projectId ?? "")}">
           <div class="bg-surface border border-border rounded-lg p-6 min-h-[320px]">
             <div class="text-[11px] uppercase tracking-wider text-muted font-medium mb-4">Event stream</div>
             <div id="dash-events" class="min-h-[200px]">
@@ -101,27 +111,11 @@ homePage.get("/", (c) => {
             </div>
           </div>
           <div class="flex flex-col gap-4">
-            <div class="bg-surface border border-border rounded-lg p-6 flex-1">
-              <div class="text-[11px] uppercase tracking-wider text-muted font-medium mb-6">Metrics</div>
-              <div class="space-y-6">
-                <div>
-                  <div class="mk-val text-cyan" id="dash-dir">—</div>
-                  <div class="mk-lab">Direction (24h)</div>
-                </div>
-                <div>
-                  <div class="mk-val text-foreground" id="dash-ev">—</div>
-                  <div class="mk-lab">Events (24h)</div>
-                </div>
-                <div>
-                  <div class="mk-val text-accent" id="dash-comp">—</div>
-                  <div class="mk-lab">Comprehension</div>
-                </div>
-                <div>
-                  <div class="mk-val text-accent" id="dash-cost">—</div>
-                  <div class="mk-lab">Cost (est.)</div>
-                  <div class="inline-block mt-2 text-[10px] px-1.5 py-0.5 rounded" style="background:var(--proxy);color:var(--accent)">estimate</div>
-                </div>
-              </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div id="kpi-dir">${kpiCard({ value: "—", label: "Direction (24h)", href: "/intelligence?tab=efficiency" })}</div>
+              <div id="kpi-ev">${kpiCard({ value: "—", label: "Events (24h)" })}</div>
+              <div id="kpi-comp">${kpiCard({ value: "—", label: "Comprehension", href: "/intelligence?tab=comprehension" })}</div>
+              <div id="kpi-cost">${kpiCard({ value: "—", label: "Cost (est.)", badge: "estimate", href: "/intelligence?tab=cost" })}</div>
             </div>
             <div class="bg-surface border border-border rounded-lg p-6">
               <div class="text-[11px] uppercase tracking-wider text-muted font-medium mb-4">Quick actions</div>
@@ -130,9 +124,7 @@ homePage.get("/", (c) => {
                 <a href="/projects" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconFolder({ size: 16 })}<span class="flex-1 ml-2">Projects</span><span class="text-muted">→</span></a>
                 <a href="/distill" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconCalendar({ size: 16 })}<span class="flex-1 ml-2">Distill</span><span class="text-muted">→</span></a>
                 <a href="/coach" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconTarget({ size: 16 })}<span class="flex-1 ml-2">Coach</span><span class="text-muted">→</span></a>
-                <a href="/alerts" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconAlertTriangle({ size: 16 })}<span class="flex-1 ml-2">Alerts</span><span class="text-muted">→</span></a>
-                <a href="/cards" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2 border-b border-white/5">${iconCards({ size: 16 })}<span class="flex-1 ml-2">Cards</span><span class="text-muted">→</span></a>
-                <a href="/velocity" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2">${iconTrendingUp({ size: 16 })}<span class="flex-1 ml-2">Velocity</span><span class="text-muted">→</span></a>
+                <a href="/cards" class="flex items-center justify-between text-[13px] text-muted hover:text-foreground no-underline py-2">${iconCards({ size: 16 })}<span class="flex-1 ml-2">Cards</span><span class="text-muted">→</span></a>
               </div>
             </div>
           </div>
@@ -231,12 +223,14 @@ homePage.get("/", (c) => {
         if(cnt) cnt.textContent = String(n);
       }
 
+      function kpiVal(id){ var el=document.getElementById(id); return el?el.querySelector('.font-mono'):null; }
+
       function applySummaryToDashboard(s){
         if(!s) return;
-        var dir = document.getElementById('dash-dir');
-        var ev = document.getElementById('dash-ev');
-        var comp = document.getElementById('dash-comp');
-        var cost = document.getElementById('dash-cost');
+        var dir = kpiVal('kpi-dir');
+        var ev = kpiVal('kpi-ev');
+        var comp = kpiVal('kpi-comp');
+        var cost = kpiVal('kpi-cost');
         if(dir) dir.textContent = (s.directionDensity24h!=null?s.directionDensity24h:'—')+(s.directionDensity24h!=null?'%':'');
         if(ev) ev.textContent = s.eventCount24h!=null?String(s.eventCount24h):'—';
         if(comp) comp.textContent = s.comprehensionScore!=null?s.comprehensionScore:'—';
