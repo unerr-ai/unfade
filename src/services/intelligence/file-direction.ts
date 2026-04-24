@@ -4,13 +4,7 @@
 // Full reconciliation every ~150 events.
 
 import type { DbLike } from "../cache/manager.js";
-import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 export interface FileDirectionEntry {
   path: string;

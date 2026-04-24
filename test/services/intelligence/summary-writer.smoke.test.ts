@@ -1,8 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { readSummary, summaryWriterAnalyzer } from "../../../src/services/intelligence/summary-writer.js";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  readSummary,
+  summaryWriterAnalyzer,
+} from "../../../src/services/intelligence/summary-writer.js";
 
 describe("summary-writer (UF-215) + token/cost wiring", () => {
   let root: string;

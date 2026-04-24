@@ -1,5 +1,5 @@
 // T-337/T-338: Narrative synthesizer tests
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CorrelationReport } from "../../../src/services/intelligence/cross-analyzer.js";
@@ -8,7 +8,7 @@ import {
   synthesizeNarratives,
 } from "../../../src/services/intelligence/narrative-synthesizer.js";
 
-const TEST_ROOT = join("/tmp", "narrative-test-" + process.pid);
+const TEST_ROOT = join("/tmp", `narrative-test-${process.pid}`);
 const INTEL_DIR = join(TEST_ROOT, ".unfade", "intelligence");
 
 beforeEach(() => {
@@ -49,10 +49,10 @@ describe("narrative synthesizer", () => {
 
     const loopInsight = insights.find((i) => i.correlationId === "efficiency-loops");
     expect(loopInsight).toBeDefined();
-    expect(loopInsight!.claim).toContain("efficiency");
-    expect(loopInsight!.severity).toMatch(/^(info|warning|critical)$/);
-    expect(loopInsight!.sources).toContain("efficiency");
-    expect(loopInsight!.sources).toContain("loop-detector");
+    expect(loopInsight?.claim).toContain("efficiency");
+    expect(loopInsight?.severity).toMatch(/^(info|warning|critical)$/);
+    expect(loopInsight?.sources).toContain("efficiency");
+    expect(loopInsight?.sources).toContain("loop-detector");
   });
 
   it("writes to narratives.jsonl ring buffer", () => {
@@ -127,7 +127,7 @@ describe("narrative synthesizer", () => {
         correlationId: "test",
       }),
     );
-    writeFileSync(join(INTEL_DIR, "narratives.jsonl"), existing.join("\n") + "\n", "utf-8");
+    writeFileSync(join(INTEL_DIR, "narratives.jsonl"), `${existing.join("\n")}\n`, "utf-8");
 
     const report: CorrelationReport = {
       correlations: [

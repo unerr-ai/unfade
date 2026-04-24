@@ -40,7 +40,7 @@ export function normalizeOpenAICompatibleApiBase(raw?: string): string | undefin
   const s = raw?.trim();
   if (!s) return undefined;
   let u = s.replace(/\/+$/, "");
-  u = u.replace(/\/v1\/chat\/completions\/?$/i, "/v1");
+  // Strip /chat/completions suffix if user pasted the full endpoint URL
   u = u.replace(/\/chat\/completions\/?$/i, "");
   u = u.replace(/\/+$/, "");
   return u || undefined;

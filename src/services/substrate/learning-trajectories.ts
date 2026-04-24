@@ -42,7 +42,7 @@ const LEVEL_SCORES: Record<string, number> = {
 
 const LEVEL_NAMES = ["novice", "developing", "proficient", "expert"];
 
-function scoreToLevel(score: number): string {
+function _scoreToLevel(score: number): string {
   if (score >= 0.75) return "expert";
   if (score >= 0.5) return "proficient";
   if (score >= 0.25) return "developing";
@@ -55,7 +55,7 @@ function scoreToLevel(score: number): string {
 
 export async function computeTrajectories(
   engine: SubstrateEngine,
-  projectId: string,
+  _projectId: string,
 ): Promise<TrajectoryReport> {
   const trajectories: LearningTrajectory[] = [];
 
@@ -71,13 +71,13 @@ export async function computeTrajectories(
       const capId = row[0] as string;
       const state =
         typeof row[1] === "string" ? JSON.parse(row[1]) : (row[1] as Record<string, unknown>);
-      const confidence = row[2] as number;
+      const _confidence = row[2] as number;
       const createdAt = row[3] as number;
       const lastUpdated = row[4] as number;
 
       const name = (state.name as string) ?? capId;
       const levelStr = (state.level as string) ?? "novice";
-      const evidenceCount = (state.evidenceCount as number) ?? 0;
+      const _evidenceCount = (state.evidenceCount as number) ?? 0;
 
       const levelScore = LEVEL_SCORES[levelStr] ?? 0.25;
 
@@ -122,7 +122,7 @@ export async function computeTrajectories(
 // ---------------------------------------------------------------------------
 
 function buildDataPoints(
-  capId: string,
+  _capId: string,
   state: Record<string, unknown>,
   createdAt: number,
   lastUpdated: number,

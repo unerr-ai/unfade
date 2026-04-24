@@ -19,7 +19,7 @@ const arrayUnion: MergeStrategy = (old, next) => {
 };
 const sum: MergeStrategy = (old, next) => ((old as number) ?? 0) + ((next as number) ?? 0);
 const max: MergeStrategy = (old, next) => Math.max((old as number) ?? 0, (next as number) ?? 0);
-const min: MergeStrategy = (old, next) =>
+const _min: MergeStrategy = (old, next) =>
   Math.min(
     (old as number) ?? Number.POSITIVE_INFINITY,
     (next as number) ?? Number.POSITIVE_INFINITY,

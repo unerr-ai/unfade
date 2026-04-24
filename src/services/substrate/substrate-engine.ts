@@ -268,7 +268,7 @@ export class SubstrateEngine {
       if (lifecycle === "established" && confidence >= 0.7) lifecycle = "confirmed";
     }
 
-    const safeState = safeJsonForDatalog(mergedState);
+    const _safeState = safeJsonForDatalog(mergedState);
 
     await this.db.run(
       `?[id, type, project_id, created_at, last_updated, confidence, lifecycle, state] <- [

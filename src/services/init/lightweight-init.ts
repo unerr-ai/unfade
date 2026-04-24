@@ -4,7 +4,7 @@
 // Steps: scaffold → binary → shell hooks → config existence check.
 // Returns { firstRun: true } if this was the first initialization.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import {

@@ -2,13 +2,9 @@
 // UF-229: GET /api/repos — registry + per-repo summaries (parallel read).
 // UF-230: GET /api/repos/:id/events — events from a specific repo's .unfade/.
 
-import { join } from "node:path";
 import { Hono } from "hono";
 import { readEventRange } from "../../services/capture/event-store.js";
-import {
-  type SummaryJson,
-  readSummary,
-} from "../../services/intelligence/summary-writer.js";
+import { readSummary, type SummaryJson } from "../../services/intelligence/summary-writer.js";
 import type { RepoEntry } from "../../services/registry/registry.js";
 import { findRepoById, loadRegistry } from "../../services/registry/registry.js";
 import { localToday } from "../../utils/date.js";

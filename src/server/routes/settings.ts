@@ -10,7 +10,6 @@ import { Hono } from "hono";
 import { UnfadeConfigSchema } from "../../schemas/config.js";
 import {
   checkOllamaReady,
-  normalizeOllamaOriginForChecks,
   normalizeOpenAICompatibleApiBase,
 } from "../../services/distill/providers/ai.js";
 import { logger } from "../../utils/logger.js";

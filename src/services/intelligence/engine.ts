@@ -332,7 +332,7 @@ export class IntelligenceScheduler {
       node.lastChangeMagnitude = 0;
     }
 
-    for (const [name, node] of this.graph) {
+    for (const [_name, node] of this.graph) {
       const filtered = filterBatch(batch, node.analyzer.eventFilter);
       if (filtered.events.length > 0) {
         node.dirty = true;

@@ -4,12 +4,7 @@
 // as an indicator of implementation discipline.
 
 import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,7 +88,7 @@ export const commitAnalyzer: IncrementalAnalyzer<CommitAnalyzerState, CommitStat
     return state.value.output;
   },
 
-  contributeEntities(state, batch) {
+  contributeEntities(_state, batch) {
     const contributions: import("../substrate/substrate-engine.js").EntityContribution[] = [];
 
     for (const evt of batch.events) {

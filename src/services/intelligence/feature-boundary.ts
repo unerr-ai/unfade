@@ -266,18 +266,20 @@ async function loadActiveFeatures(db: DbLike): Promise<Feature[]> {
     );
     if (!result[0]?.values.length) return [];
 
-    return Promise.all(result[0].values.map(async (row) => ({
-      id: row[0] as string,
-      name: row[1] as string,
-      branch: row[2] as string | null,
-      files: await loadFeatureFiles(db, row[0] as string),
-      firstSeen: row[3] as string,
-      lastSeen: row[4] as string,
-      eventCount: row[5] as number,
-      fileCount: row[6] as number,
-      sessionCount: row[7] as number,
-      status: row[8] as "active" | "completed" | "stale",
-    })));
+    return Promise.all(
+      result[0].values.map(async (row) => ({
+        id: row[0] as string,
+        name: row[1] as string,
+        branch: row[2] as string | null,
+        files: await loadFeatureFiles(db, row[0] as string),
+        firstSeen: row[3] as string,
+        lastSeen: row[4] as string,
+        eventCount: row[5] as number,
+        fileCount: row[6] as number,
+        sessionCount: row[7] as number,
+        status: row[8] as "active" | "completed" | "stale",
+      })),
+    );
   } catch {
     return [];
   }

@@ -1,5 +1,5 @@
 // T-002, T-003: Logger tests — verifies Pino logger behavior
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 describe("Logger", () => {
   it("T-002: logger module exports expected API", async () => {

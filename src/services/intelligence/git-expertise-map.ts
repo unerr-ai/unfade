@@ -4,12 +4,7 @@
 // you understand deeply vs. rely on AI blindly?"
 
 import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -186,7 +181,7 @@ async function computeExpertise(ctx: AnalyzerContext): Promise<ExpertiseMapOutpu
       if (totalActivity < 2) continue;
 
       const gitRatio = totalActivity > 0 ? data.gitCount / totalActivity : 0;
-      const aiRatio = totalActivity > 0 ? (data.aiRefCount + data.aiModCount) / totalActivity : 0;
+      const _aiRatio = totalActivity > 0 ? (data.aiRefCount + data.aiModCount) / totalActivity : 0;
 
       const expertiseScore = Math.min(
         1,

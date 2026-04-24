@@ -3,7 +3,7 @@
 // If files from a decision are significantly changed within 2-4 weeks (>50% lines modified),
 // marks as "revised." Tracks revision rate by deliberation depth.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getIntelligenceDir } from "../../utils/paths.js";
 import type { DbLike } from "../cache/manager.js";
@@ -178,4 +178,3 @@ async function checkRevised(db: DbLike, decision: DurabilityRecord): Promise<boo
     return false;
   }
 }
-

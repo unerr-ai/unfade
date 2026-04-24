@@ -50,7 +50,7 @@ export const narrativeTemplates: NarrativeTemplate[] = [
     id: "stuck-in-weak-area",
     triggerCorrelation: "blindspots-loops",
     condition: (pair) => pair.direction === "positive" && pair.r >= 0.6,
-    formatClaim: (pair, data) => {
+    formatClaim: (_pair, data) => {
       const blindSpots = getNestedValue(data, "comprehension-radar.blindSpots") as
         | string[]
         | undefined;
@@ -88,7 +88,7 @@ export const narrativeTemplates: NarrativeTemplate[] = [
     id: "spending-on-dead-ends",
     triggerCorrelation: "cost-outcomes",
     condition: (pair) => pair.direction === "negative" && Math.abs(pair.r) >= 0.6,
-    formatClaim: (pair, data) => {
+    formatClaim: (_pair, data) => {
       const waste = getNestedValue(data, "cost-attribution.abandonedWaste.estimatedCost") as
         | number
         | undefined;
@@ -125,7 +125,7 @@ export const narrativeTemplates: NarrativeTemplate[] = [
   {
     id: "learning-curve-expected",
     triggerCorrelation: "comprehension-velocity",
-    condition: (pair, data) => {
+    condition: (_pair, data) => {
       const newDomains = getNestedValue(data, "comprehension-radar.byModule") as
         | Record<string, { decisionsCount: number }>
         | undefined;

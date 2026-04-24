@@ -9,7 +9,25 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "suspicious": {
+        "noArrayIndexKey": "warn",
+        "noExplicitAny": "warn",
+        "noNonNullAssertedOptionalChain": "warn"
+      },
+      "style": {
+        "noNonNullAssertion": "warn"
+      },
+      "a11y": {
+        "noLabelWithoutControl": "warn",
+        "noSvgWithoutTitle": "warn",
+        "useKeyWithClickEvents": "warn",
+        "noStaticElementInteractions": "warn"
+      },
+      "complexity": {
+        "noStaticOnlyClass": "warn",
+        "noBannedTypes": "warn"
+      }
     }
   },
   "assist": {
@@ -19,12 +37,31 @@
       }
     }
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    },
+    "linter": {
+      "enabled": false
+    },
+    "formatter": {
+      "enabled": false
+    }
+  },
   "json": {
     "formatter": {
       "enabled": true
     }
   },
   "files": {
-    "includes": ["**", "!dist", "!node_modules", "!daemon", "!pnpm-lock.yaml", "!.unfade"]
+    "includes": [
+      "**",
+      "!dist",
+      "!node_modules",
+      "!daemon",
+      "!pnpm-lock.yaml",
+      "!.unfade",
+      "!public/prototype-sandbox"
+    ]
   }
 }

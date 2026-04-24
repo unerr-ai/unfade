@@ -54,7 +54,10 @@ export async function getInsightsForEvent(db: DbLike, eventId: string): Promise<
 /**
  * Reverse query: given an insight ID, find all events that contributed to it.
  */
-export async function getEventsForInsight(db: DbLike, insightId: string): Promise<InsightMapping[]> {
+export async function getEventsForInsight(
+  db: DbLike,
+  insightId: string,
+): Promise<InsightMapping[]> {
   const result = await db.exec(
     `SELECT event_id, insight_id, analyzer, contribution_weight, computed_at FROM event_insight_map WHERE insight_id = '${insightId}'`,
   );

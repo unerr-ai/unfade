@@ -3,7 +3,6 @@
 // the graph queryable at a higher level: chains, derived relations, contextual
 // ranking, narrative synthesis, predictive queries, graph algorithms, and caching.
 
-import { logger } from "../../utils/logger.js";
 import type { GraphQueryResult, SubstrateEngine } from "./substrate-engine.js";
 
 // ---------------------------------------------------------------------------

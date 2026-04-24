@@ -4,7 +4,7 @@
 import { Hono } from "hono";
 import { loadConfig } from "../../config/manager.js";
 import { detectRuleTarget } from "../../services/actions/auto-rules.js";
-import { atomicWriteFile, replaceMarkerSection } from "../../services/actions/runner.js";
+import { replaceMarkerSection } from "../../services/actions/runner.js";
 import { localToday } from "../../utils/date.js";
 import { getDaemonProjectRoot } from "../../utils/paths.js";
 

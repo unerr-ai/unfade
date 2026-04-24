@@ -61,7 +61,9 @@ describe("Substrate API endpoints (Sprint 15G)", () => {
   it("GET /api/substrate/entity/:id/neighborhood returns entity data", async () => {
     writeFileSync(
       join(tmpDir, ".unfade", "intelligence", "substrate-topology.json"),
-      JSON.stringify({ entities: [{ id: "dec-42", neighbors: [{ id: "feat-7", type: "caused" }] }] }),
+      JSON.stringify({
+        entities: [{ id: "dec-42", neighbors: [{ id: "feat-7", type: "caused" }] }],
+      }),
     );
     const app = createApp();
     const res = await app.request("/api/substrate/entity/dec-42/neighborhood");

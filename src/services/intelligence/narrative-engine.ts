@@ -1,18 +1,4 @@
-// FILE: src/services/intelligence/narrative-engine.ts
-// Narrative Synthesis Engine — transforms raw intelligence metrics into
-// Transmission Thesis-aligned narratives. Three narrative types:
-//   1. Diagnostics: "your steering is loose in X" (observation + evidence)
-//   2. Prescriptions: "apply constraint-based prompting here" (action + rationale)
-//   3. Progress: "you moved from Phase 2.1 to 2.7" (trajectory + what changed)
-// Rule-based template engine with zero LLM cost.
-
-import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 import type { MaturityAssessment, MaturityDimension } from "./maturity-model.js";
 
 // ---------------------------------------------------------------------------
@@ -98,7 +84,7 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const cl = ctx.dimensions.find((d) => d.name === "context-leverage");
       return (cl?.score ?? 1) < 0.2;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "diag-no-mirrors",
       type: "diagnostic",
       headline: "You're not using your mirrors",
@@ -118,7 +104,7 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const lr = ctx.dimensions.find((d) => d.name === "loop-resilience");
       return (lr?.score ?? 1) < 0.3;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "diag-loop-prone",
       type: "diagnostic",
       headline: "Your suspension bottoms out on complex problems",
@@ -138,7 +124,7 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const dd = ctx.dimensions.find((d) => d.name === "decision-durability");
       return (dd?.score ?? 1) < 0.35;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "diag-decision-churn",
       type: "diagnostic",
       headline: "Your decisions don't stick",
@@ -159,7 +145,7 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const dir = ctx.dimensions.find((d) => d.name === "direction");
       return (pe?.score ?? 1) < 0.35 && (dir?.score ?? 0) > 0.4;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "diag-rough-gear-shifts",
       type: "diagnostic",
       headline: "Your gear shifts are rough",
@@ -181,7 +167,7 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const lr = ctx.dimensions.find((d) => d.name === "loop-resilience");
       return (pe?.score ?? 1) < 0.3 && (lr?.score ?? 1) < 0.4;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "diag-redlining",
       type: "diagnostic",
       headline: "You're redlining in second gear",
@@ -202,7 +188,7 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const dir = ctx.dimensions.find((d) => d.name === "direction");
       return (mod?.score ?? 1) < 0.2 && (dir?.score ?? 1) < 0.25;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "diag-drafting",
       type: "diagnostic",
       headline: "You're drafting without knowing it",
@@ -223,7 +209,7 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const dc = ctx.dimensions.find((d) => d.name === "domain-consistency");
       return dc?.trend === "declining" && (dc?.score ?? 1) < 0.4;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "diag-declining-velocity",
       type: "diagnostic",
       headline: "Velocity dropping across domains",
@@ -262,7 +248,7 @@ const PRESCRIPTION_TEMPLATES: NarrativeTemplate[] = [
       const cl = ctx.dimensions.find((d) => d.name === "context-leverage");
       return (cl?.score ?? 1) < 0.3 && (ctx.maturity?.phase ?? 0) < 3;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "rx-context-files",
       type: "prescription",
       headline: "Add mirrors to your vehicle — create a CLAUDE.md",
@@ -282,7 +268,7 @@ const PRESCRIPTION_TEMPLATES: NarrativeTemplate[] = [
       const pe = ctx.dimensions.find((d) => d.name === "prompt-effectiveness");
       return (pe?.score ?? 1) < 0.4;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "rx-constraints",
       type: "prescription",
       headline: "Tighten your steering with explicit constraints",
@@ -302,7 +288,7 @@ const PRESCRIPTION_TEMPLATES: NarrativeTemplate[] = [
       const lr = ctx.dimensions.find((d) => d.name === "loop-resilience");
       return (lr?.score ?? 1) < 0.35;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "rx-decompose",
       type: "prescription",
       headline: "Break the road into sections — decompose before coding",
@@ -323,7 +309,7 @@ const PRESCRIPTION_TEMPLATES: NarrativeTemplate[] = [
       const pe = ctx.dimensions.find((d) => d.name === "prompt-effectiveness");
       return (lr?.score ?? 1) < 0.4 && (pe?.score ?? 0) > 0.3;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "rx-test-first",
       type: "prescription",
       headline: "Write the test before the fix — let the road show the way",
@@ -343,7 +329,7 @@ const PRESCRIPTION_TEMPLATES: NarrativeTemplate[] = [
       const dd = ctx.dimensions.find((d) => d.name === "decision-durability");
       return (dd?.score ?? 1) < 0.4;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "rx-document-decisions",
       type: "prescription",
       headline: "Keep a decision log — future-you will thank you",
@@ -363,7 +349,7 @@ const PRESCRIPTION_TEMPLATES: NarrativeTemplate[] = [
       const dc = ctx.dimensions.find((d) => d.name === "domain-consistency");
       return (dc?.score ?? 1) < 0.35 && (ctx.maturity?.phase ?? 0) >= 2;
     },
-    generate: (ctx) => ({
+    generate: (_ctx) => ({
       id: "rx-domain-breadth",
       type: "prescription",
       headline: "Broaden your drivetrain — apply your best techniques elsewhere",
@@ -390,15 +376,15 @@ const PROGRESS_TEMPLATES: NarrativeTemplate[] = [
     },
     generate: (ctx) => {
       const trajectory = ctx.maturity!.trajectory;
-      const prev = trajectory[trajectory.length - 2];
-      const curr = trajectory[trajectory.length - 1];
+      const prev = trajectory[trajectory.length - 2]!;
+      const curr = trajectory[trajectory.length - 1]!;
       return {
         id: `progress-phase-${Math.floor(curr.phase)}`,
         type: "progress",
-        headline: `Phase transition: ${ctx.maturity!.phaseLabel}`,
+        headline: `Phase transition: ${ctx.maturity?.phaseLabel}`,
         body:
           `You've moved from Phase ${prev.phase.toFixed(1)} to Phase ${curr.phase.toFixed(1)}. ` +
-          `Your vehicle now has ${describePhase(ctx.maturity!.phaseLabel)}. ` +
+          `Your vehicle now has ${describePhase(ctx.maturity?.phaseLabel ?? "unknown")}. ` +
           `Key improvements: ${
             ctx.dimensions
               .filter((d) => d.trend === "improving")
@@ -441,8 +427,8 @@ const PROGRESS_TEMPLATES: NarrativeTemplate[] = [
     },
     generate: (ctx) => {
       const trajectory = ctx.maturity!.trajectory;
-      const weekAgo = trajectory[trajectory.length - 7];
-      const now = trajectory[trajectory.length - 1];
+      const weekAgo = trajectory[trajectory.length - 7]!;
+      const now = trajectory[trajectory.length - 1]!;
       const direction = now.phase > weekAgo.phase ? "improved" : "declined";
       const improving = ctx.dimensions.filter((d) => d.trend === "improving").map((d) => d.name);
       const declining = ctx.dimensions.filter((d) => d.trend === "declining").map((d) => d.name);

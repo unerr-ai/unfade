@@ -15,6 +15,10 @@ interface GraphDecision {
   rationale: string;
   domain?: string;
   alternativesConsidered?: number;
+  projectId?: string;
+  evidenceEventIds?: string[];
+  humanDirectionScore?: number;
+  directionClassification?: string;
 }
 
 /**
@@ -176,6 +180,10 @@ export function getDecisions(input: DecisionsInput, cwd?: string): DecisionsOutp
       rationale: d.rationale,
       domain: d.domain,
       alternativesConsidered: d.alternativesConsidered,
+      projectId: d.projectId,
+      evidenceEventIds: d.evidenceEventIds,
+      humanDirectionScore: d.humanDirectionScore,
+      directionClassification: d.directionClassification,
     }));
   } else {
     decisions = extractDecisionsFromDistills(distillsDir);
@@ -207,10 +215,18 @@ export function getDecisions(input: DecisionsInput, cwd?: string): DecisionsOutp
     );
   }
 
-  // `project` reserved for future per-project distill paths; global-first uses ~/.unfade/distills.
+  // Filter by project if specified
+  if (input.project) {
+    const pid = input.project.toLowerCase();
+    decisions = decisions.filter((d) => d.projectId?.toLowerCase().includes(pid));
+  }
+
+  // Sort recent-first (most recent date at top)
+  decisions.sort((a, b) => b.date.localeCompare(a.date));
 
   const total = decisions.length;
-  decisions = decisions.slice(0, input.limit);
+  const offset = input.offset ?? 0;
+  decisions = decisions.slice(offset, offset + input.limit);
 
   const lastUpdated = getLastUpdated(distillsDir, graphDir);
 

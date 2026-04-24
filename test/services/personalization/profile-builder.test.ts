@@ -132,7 +132,7 @@ describe("updateProfileV2", () => {
     const profile = updateProfileV2(distill, makeSignals(), tmpDir);
     const tsDomain = profile.domainDistribution.find((d) => d.domain === "TypeScript");
     expect(tsDomain).toBeDefined();
-    expect(tsDomain!.frequency).toBe(2);
+    expect(tsDomain?.frequency).toBe(2);
   });
 
   it("T-041j: atomic write — no .tmp file left behind", () => {

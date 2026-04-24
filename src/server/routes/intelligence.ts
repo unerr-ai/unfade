@@ -7,9 +7,9 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { CacheManager } from "../../services/cache/manager.js";
 import { getEventsForInsight } from "../../services/intelligence/lineage.js";
 import { getIntelligenceDir, getProjectDataDir } from "../../utils/paths.js";
+import { getServerCache } from "../shared-cache.js";
 
 export const intelligenceRoutes = new Hono();
 
@@ -108,7 +108,7 @@ intelligenceRoutes.get("/api/intelligence/lineage/:insightId", async (c) => {
     return c.json({ data: null, _meta: { error: "Missing insightId" } }, 400);
   }
 
-  const cache = new CacheManager();
+  const cache = getServerCache();
   const db = await cache.getDb();
   if (!db) {
     return c.json(
@@ -259,9 +259,10 @@ intelligenceRoutes.get("/api/intelligence/autonomy", async (c) => {
   const trend: "improving" | "stable" | "declining" =
     (efficiency?.history?.length ?? 0) >= 7
       ? (() => {
-          const hist = efficiency!.history!;
+          const hist = efficiency?.history!;
           const recent = hist.slice(-3).reduce((s, h) => s + h.aes, 0) / 3;
-          const older = hist.slice(-7, -3).reduce((s, h) => s + h.aes, 0) / Math.min(4, hist.length - 3);
+          const older =
+            hist.slice(-7, -3).reduce((s, h) => s + h.aes, 0) / Math.min(4, hist.length - 3);
           return recent > older + 3 ? "improving" : recent < older - 3 ? "declining" : "stable";
         })()
       : "stable";

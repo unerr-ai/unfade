@@ -77,8 +77,8 @@ describe("GET /api/stream (UF-473 push transport)", () => {
     expect(ct.includes("text/event-stream")).toBe(true);
     const reader = res.body?.getReader();
     expect(reader).toBeTruthy();
-    const { value } = await reader!.read();
-    const chunk = value ? new TextDecoder().decode(value) : "";
+    const result = await reader!.read();
+    const chunk = result.value ? new TextDecoder().decode(result.value) : "";
     expect(chunk.length).toBeGreaterThan(0);
     expect(chunk.includes("event:") || chunk.includes("data:")).toBe(true);
     await reader!.cancel();

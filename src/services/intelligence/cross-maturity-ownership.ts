@@ -5,12 +5,7 @@
 // A developer at Phase 2 who owns 80% has genuine understanding.
 
 import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 // ---------------------------------------------------------------------------
 // Types

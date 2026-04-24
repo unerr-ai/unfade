@@ -250,7 +250,7 @@ function classifySegment(raw: RawSegment): PromptSegment {
 }
 
 function inferKind(text: string): SegmentKind {
-  const lower = text.toLowerCase();
+  const _lower = text.toLowerCase();
   const firstLine = text.split("\n")[0] ?? "";
 
   if (CONTEXT_SIGNALS.test(firstLine)) return "context";

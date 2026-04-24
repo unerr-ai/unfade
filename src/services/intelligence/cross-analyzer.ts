@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getIntelligenceDir } from "../../utils/paths.js";
 import type { AnalyzerContext } from "./analyzers/index.js";
-import type { IncrementalState, UpdateResult } from "./incremental-state.js";
+import type { UpdateResult } from "./incremental-state.js";
 
 // ---------------------------------------------------------------------------
 // Types

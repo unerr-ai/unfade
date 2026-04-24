@@ -11,6 +11,7 @@ export interface DiscoveredProject {
   label: string;
   hasGit: boolean;
   hasUnfadeMarker: boolean;
+  alreadyRegistered: boolean;
 }
 
 const SKIP_DIRS = new Set([
@@ -84,7 +85,7 @@ function scanDir(
 
   const hasGit = entries.some((e) => String(e.name) === ".git");
 
-  if (hasGit && !registeredRoots.has(dir)) {
+  if (hasGit) {
     const hasMarker = entries.some(
       (e) => String(e.name) === ".unfade" && (e.isDirectory() || e.isFile()),
     );
@@ -93,6 +94,7 @@ function scanDir(
       label: basename(dir),
       hasGit: true,
       hasUnfadeMarker: hasMarker,
+      alreadyRegistered: registeredRoots.has(dir),
     });
   }
 

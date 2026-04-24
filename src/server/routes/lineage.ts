@@ -2,8 +2,8 @@
 // Fix 13: GET /api/lineage/:id — bidirectional event↔insight lookup.
 
 import { Hono } from "hono";
-import { CacheManager } from "../../services/cache/manager.js";
 import { getEventsForInsight, getInsightsForEvent } from "../../services/intelligence/lineage.js";
+import { getServerCache } from "../shared-cache.js";
 
 export const lineageRoutes = new Hono();
 
@@ -17,7 +17,7 @@ lineageRoutes.get("/api/lineage/:id", async (c) => {
     return c.json({ data: null, _meta: { error: "Missing id parameter" } }, 400);
   }
 
-  const cache = new CacheManager();
+  const cache = getServerCache();
   const db = await cache.getDb();
   if (!db) {
     return c.json(

@@ -3,9 +3,14 @@
 // Binds to 127.0.0.1 ONLY. Writes server.json atomically on startup.
 // All JSON responses wrapped in { data, _meta } envelope via middleware.
 
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+// FILE: src/server/http.ts
+// Phase 17: Hono API server + React SPA serving.
+// Backend API routes only — all HTML UI served from Vite-built dist/ directory.
+
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer as createNodeServer } from "node:http";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
@@ -14,20 +19,6 @@ import type { UnfadeConfig } from "../schemas/config.js";
 import { mountMcpHttp } from "../services/mcp/server.js";
 import { logger } from "../utils/logger.js";
 import { getStateDir } from "../utils/paths.js";
-import { cardsPage } from "./pages/cards.js";
-import { decisionsPage } from "./pages/decisions.js";
-import { distillPage } from "./pages/distill.js";
-import { homePage } from "./pages/home.js";
-import { integrationsPage } from "./pages/integrations.js";
-import { intelligencePage } from "./pages/intelligence.js";
-import { livePage } from "./pages/live.js";
-import { logsPage } from "./pages/logs.js";
-// portfolio.ts removed in Phase 15 — merged into Home (All Projects view)
-import { profilePage } from "./pages/profile.js";
-import { projectsPage } from "./pages/projects.js";
-// repo-detail.ts removed in Phase 15 — merged into Home (project-selected view)
-import { settingsPage } from "./pages/settings.js";
-import { setupPage } from "./pages/setup.js";
 import { actionsRoutes } from "./routes/actions.js";
 import { amplifyRoutes } from "./routes/amplify.js";
 import { cardsRoutes } from "./routes/cards.js";
@@ -41,7 +32,7 @@ import { insightsRoutes } from "./routes/insights.js";
 import { integrationsRoutes } from "./routes/integrations.js";
 import { intelligenceRoutes } from "./routes/intelligence.js";
 import { onboardingRoutes } from "./routes/intelligence-onboarding.js";
-import { intelligenceTabRoutes } from "./routes/intelligence-tabs.js";
+// intelligence-tabs.ts removed in Phase 17 — React SPA handles all tab rendering
 import { lineageRoutes } from "./routes/lineage.js";
 import { logsRoutes } from "./routes/logs.js";
 import { profileRoutes } from "./routes/profile.js";
@@ -71,6 +62,12 @@ export interface ServerInfo {
  * Create the Hono application with all middleware and routes.
  */
 export function createApp(): Hono {
+  // Resolve package root from the bundled file location (dist/*.mjs → project root)
+  // so static file serving works regardless of CWD
+  const __ownFile = fileURLToPath(import.meta.url);
+  const distDir = dirname(__ownFile);
+  const pkgRoot = resolve(distDir, "..");
+
   const app = new Hono();
 
   // CORS: allow localhost only
@@ -104,7 +101,7 @@ export function createApp(): Hono {
       c.header("Cache-Control", "public, max-age=86400");
     }
   });
-  app.use("/public/*", serveStatic({ root: "./" }));
+  app.use("/public/*", serveStatic({ root: pkgRoot }));
 
   // Request logging middleware — correlation ID + timing for every request
   app.use("*", async (c, next) => {
@@ -197,42 +194,31 @@ export function createApp(): Hono {
   app.route("", logsRoutes);
   app.route("", substrateRoutes);
 
-  // /decisions is now a real page (Sprint 15C) — registered via decisionsPage route above
-  // /portfolio and /repos/:id redirects (Phase 15 — merged into Home)
-  app.get("/portfolio", (c) => c.redirect("/"));
-  app.get("/repos/:id", (c) => {
-    const id = c.req.param("id");
-    return c.redirect(`/?project=${encodeURIComponent(id)}`);
-  });
-
-  // Phase 7: Intelligence pages
-  // Phase 15: standalone intelligence pages merged into Intelligence Hub tabs
-  app.get("/efficiency", (c) => c.redirect("/intelligence?tab=overview"));
-  app.get("/cost", (c) => c.redirect("/intelligence?tab=cost"));
-  app.get("/coach", (c) => c.redirect("/intelligence?tab=patterns"));
-  app.get("/velocity", (c) => c.redirect("/intelligence?tab=velocity"));
-  app.get("/alerts", (c) => c.redirect("/intelligence?tab=patterns"));
-  app.get("/comprehension", (c) => c.redirect("/intelligence?tab=comprehension"));
-  app.route("", intelligenceTabRoutes);
-  app.route("", intelligencePage);
-  // cost.ts and comprehension.ts removed — redirected to Intelligence Hub above
-
-  // Mount Web UI pages (server-rendered HTML + htmx)
-  app.route("", setupPage);
-  app.route("", homePage);
-  app.route("", livePage);
-  app.route("", distillPage);
-  app.route("", profilePage);
-  app.route("", settingsPage);
-  app.route("", cardsPage);
-  app.route("", decisionsPage);
-  app.route("", projectsPage);
-  app.get("/search", (c) => c.redirect("/decisions"));
-  app.route("", integrationsPage);
-  app.route("", logsPage);
-
   // Mount MCP Streamable HTTP transport at /mcp
   mountMcpHttp(app);
+
+  // React SPA: serve Vite-built assets + SPA fallback for all non-API routes
+  const spaDir = join(distDir, "ui");
+  const spaIndex = join(spaDir, "index.html");
+
+  if (existsSync(spaIndex)) {
+    const spaHtml = readFileSync(spaIndex, "utf-8");
+
+    app.use("/assets/*", serveStatic({ root: spaDir }));
+
+    app.get("*", (c) => {
+      const path = c.req.path;
+      if (
+        path.startsWith("/api/") ||
+        path.startsWith("/unfade/") ||
+        path.startsWith("/public/") ||
+        path.startsWith("/mcp")
+      ) {
+        return c.notFound();
+      }
+      return c.html(spaHtml);
+    });
+  }
 
   return app;
 }

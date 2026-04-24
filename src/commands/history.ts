@@ -52,7 +52,14 @@ export async function historyCommand(options: HistoryOptions): Promise<void> {
 }
 
 async function queryHistory(
-  db: { exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>> },
+  db: {
+    exec(
+      sql: string,
+      params?: unknown[],
+    ):
+      | Array<{ columns: string[]; values: unknown[][] }>
+      | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
+  },
   options: HistoryOptions,
 ): Promise<HistoryEntry[]> {
   const conditions: string[] = [];

@@ -9,6 +9,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { applyFeatureTag } from "../../commands/tag.js";
 import { loadConfig } from "../../config/manager.js";
+import { getServerCache } from "../../server/shared-cache.js";
 import { getAmplification } from "../../tools/unfade-amplify.js";
 import { getCoachInsights } from "../../tools/unfade-coach.js";
 import { getComprehension } from "../../tools/unfade-comprehension.js";
@@ -23,7 +24,6 @@ import { getSimilar } from "../../tools/unfade-similar.js";
 import { localToday } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getProjectDataDir } from "../../utils/paths.js";
-import { CacheManager } from "../cache/manager.js";
 import { distill } from "../distill/distiller.js";
 import { enrichMcpMeta } from "../intelligence/mcp-enrichment.js";
 
@@ -673,7 +673,7 @@ export function registerTools(server: McpServer): void {
       if (!isInitialized()) return notInitializedResponse();
 
       try {
-        const cache = new CacheManager();
+        const cache = getServerCache();
         const db = await cache.getDb();
         if (!db) {
           return {

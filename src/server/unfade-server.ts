@@ -32,6 +32,8 @@ import { sendIPCCommand, waitForDaemonIPCReady } from "../utils/ipc.js";
 import { logger } from "../utils/logger.js";
 import { getDaemonProjectRoot, getDistillsDir, getEventsDir, getStateDir } from "../utils/paths.js";
 import { type RunningServer, startServer } from "./http.js";
+import { isSetupComplete, updateSynthesisProgress } from "./setup-state.js";
+import { closeServerCache } from "./shared-cache.js";
 
 const REGISTRY_POLL_INTERVAL_MS = 60_000;
 
@@ -60,47 +62,22 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
   // Start HTTP server first (so dashboard is available during daemon startup)
   const server = await startServer({ config, cwd: effectiveCwd });
 
-  // Start RepoManager with all registered repos
+  // Start RepoManager — daemons only start if setup is already complete
   const repoManager = new RepoManager();
 
-  // Start single global AI capture daemon (watches ~/.claude/, Cursor, Codex, Aider)
-  repoManager.startGlobalAICapture();
-
-  for (const entry of registry.repos) {
-    const managed = await repoManager.addRepo(entry);
-    if (managed) {
-      const isResume = existsSync(join(entry.root, ".unfade", "state", "materializer.json"));
-      if (isResume) {
-        printRepoResuming(entry.label, estimateProcessedEvents(entry.root));
-      } else {
-        printRepoStarted(entry.label, managed.daemon.getPid() ?? 0);
-      }
-
-      // Trigger ingest in background (non-blocking)
-      triggerIngestWhenReady(entry.root);
-
-      // First-run analysis if needed
-      tryGenerateFirstRunReport(entry.root);
-
-      // Per-repo distill replaced by global backfill below
-    } else {
-      printInitStep(`${entry.label}: skipped (binary not available)`);
-    }
-  }
-
-  // Expose repo manager on global for health endpoint
+  // Expose repo manager on global so setup route can trigger pipeline later
   (globalThis as Record<string, unknown>).__unfade_repo_manager = repoManager;
 
-  // Expose primary repo's materializer for SSE health ticks (Fix 2)
-  const primaryManaged = repoManager.get(registry.repos[0]?.id ?? "");
-  if (primaryManaged) {
-    (globalThis as Record<string, unknown>).__unfade_materializer = primaryManaged.materializer;
+  if (isSetupComplete()) {
+    // Setup already done — start capture pipeline immediately
+    updateSynthesisProgress({ phase: "materializing", percent: 0 });
+    await startCapturePipeline(repoManager, registry.repos);
+    printServerReady(server.info.port, repoManager.size);
+  } else {
+    // Setup not done — daemons will start when POST /api/setup/complete fires
+    printServerReady(server.info.port, 0);
+    logger.info("Setup incomplete — daemons deferred until onboarding completes");
   }
-
-  // Backfill distills for all event dates that don't have one yet (global paths)
-  triggerBackfillDistill();
-
-  printServerReady(server.info.port, repoManager.size);
 
   // Poll registry for hot-added repos
   const registryTimer = setInterval(() => {
@@ -164,7 +141,8 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
     );
     await Promise.all(stopPromises);
 
-    // 5. Close server
+    // 5. Close shared cache + server
+    await closeServerCache();
     printShutdownStep("Closing server...");
     server.close();
     try {
@@ -177,6 +155,47 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
   };
 
   return { server, repoManager, shutdown };
+}
+
+/**
+ * Start all capture daemons, materializers, ingest, and distill backfill.
+ * Called immediately if setup is complete, or deferred until POST /api/setup/complete.
+ */
+export async function startCapturePipeline(
+  repoManager: RepoManager,
+  repos?: RepoEntry[],
+): Promise<void> {
+  const registry = repos ?? loadRegistry().repos;
+
+  // Start single global AI capture daemon
+  repoManager.startGlobalAICapture();
+
+  for (const entry of registry) {
+    const managed = await repoManager.addRepo(entry);
+    if (managed) {
+      const isResume = existsSync(join(entry.root, ".unfade", "state", "materializer.json"));
+      if (isResume) {
+        printRepoResuming(entry.label, estimateProcessedEvents(entry.root));
+      } else {
+        printRepoStarted(entry.label, managed.daemon.getPid() ?? 0);
+      }
+
+      triggerIngestWhenReady(entry.root);
+      tryGenerateFirstRunReport(entry.root);
+    } else {
+      printInitStep(`${entry.label}: skipped (binary not available)`);
+    }
+  }
+
+  // Expose primary repo's materializer for SSE health ticks
+  const primaryManaged = repoManager.get(registry[0]?.id ?? "");
+  if (primaryManaged) {
+    (globalThis as Record<string, unknown>).__unfade_materializer = primaryManaged.materializer;
+  }
+
+  triggerBackfillDistill();
+
+  logger.info("Capture pipeline started", { repos: registry.length });
 }
 
 async function triggerIngestWhenReady(repoRoot: string): Promise<void> {

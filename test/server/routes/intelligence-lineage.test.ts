@@ -52,11 +52,11 @@ function createMockDb() {
     run(sql: string, params?: unknown[]): void {
       if (sql.includes("INSERT OR REPLACE INTO event_insight_map")) {
         mappings.push({
-          event_id: params![0] as string,
-          insight_id: params![1] as string,
-          analyzer: params![2] as string,
-          contribution_weight: params![3] as number,
-          computed_at: params![4] as string,
+          event_id: params?.[0] as string,
+          insight_id: params?.[1] as string,
+          analyzer: params?.[2] as string,
+          contribution_weight: params?.[3] as number,
+          computed_at: params?.[4] as string,
         });
       }
     },

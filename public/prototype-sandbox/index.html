@@ -101,7 +101,7 @@
     });
 
     function render() {
-      if (!currentData || !currentData.screens || currentData.screens.length === 0) {
+      if (!currentData?.screens || currentData.screens.length === 0) {
         document.getElementById('root').innerHTML = '<div class="proto-empty">No prototype data received</div>';
         return;
       }
@@ -111,7 +111,7 @@
 
       // Determine which components are active based on walkthrough step
       let activeComponentIds = null;
-      if (currentStep !== null && currentStep !== undefined && currentData.flowSteps && currentData.flowSteps[currentStep]) {
+      if (currentStep !== null && currentStep !== undefined && currentData.flowSteps?.[currentStep]) {
         activeComponentIds = new Set(currentData.flowSteps[currentStep].activeComponents);
       }
 
@@ -120,11 +120,11 @@
       for (const comp of screen.components) {
         // If in walkthrough mode and component not in active list, dim it
         const isActive = !activeComponentIds || activeComponentIds.has(comp.id);
-        const isHighlighted = activeComponentIds && activeComponentIds.has(comp.id);
+        const isHighlighted = activeComponentIds?.has(comp.id);
         const wrapStyle = isActive ? '' : 'opacity:0.3;pointer-events:none;';
         const highlightClass = isHighlighted ? ' proto-highlight' : '';
 
-        html += '<div style="' + wrapStyle + '" class="' + highlightClass + '">';
+        html += `<div style="${wrapStyle}" class="${highlightClass}">`;
         html += renderComponent(comp);
         html += '</div>';
       }
@@ -136,7 +136,7 @@
     function renderComponent(comp) {
       switch (comp.type) {
         case 'Header':
-          return '<div class="proto-header"><h1>' + esc(comp.label) + '</h1></div>';
+          return `<div class="proto-header"><h1>${esc(comp.label)}</h1></div>`;
 
         case 'DataTable':
           return renderDataTable(comp);
@@ -148,10 +148,10 @@
           return renderDetailPanel(comp);
 
         case 'StatCard':
-          return '<div style="padding:8px"><div class="proto-stat"><div class="proto-stat-label">' + esc(comp.label) + '</div><div class="proto-stat-value">—</div></div></div>';
+          return `<div style="padding:8px"><div class="proto-stat"><div class="proto-stat-label">${esc(comp.label)}</div><div class="proto-stat-value">—</div></div></div>`;
 
         case 'SearchBar':
-          return '<div style="padding:16px 24px"><input type="text" placeholder="Search ' + esc(comp.label) + '..." style="width:100%;padding:10px 14px;border:1px solid var(--p-border);border-radius:8px;font-size:14px;font-family:inherit" /></div>';
+          return `<div style="padding:16px 24px"><input type="text" placeholder="Search ${esc(comp.label)}..." style="width:100%;padding:10px 14px;border:1px solid var(--p-border);border-radius:8px;font-size:14px;font-family:inherit" /></div>`;
 
         case 'CardGrid':
           return renderCardGrid(comp);
@@ -160,32 +160,32 @@
           return '<div class="proto-sidebar"><div class="proto-sidebar-item active">Dashboard</div><div class="proto-sidebar-item">Settings</div></div>';
 
         case 'EmptyState':
-          return '<div class="proto-empty">' + esc(comp.label) + '</div>';
+          return `<div class="proto-empty">${esc(comp.label)}</div>`;
 
         case 'StatusBadge':
           return '<div style="padding:8px 24px"><span class="proto-badge proto-badge-success">Active</span></div>';
 
         default:
-          return '<div style="padding:16px 24px;color:var(--p-secondary);font-size:13px">' + esc(comp.label) + ' (' + esc(comp.type) + ')</div>';
+          return `<div style="padding:16px 24px;color:var(--p-secondary);font-size:13px">${esc(comp.label)} (${esc(comp.type)})</div>`;
       }
     }
 
     function renderDataTable(comp) {
       const entity = currentData.sampleData ? currentData.sampleData.find((e) => e.entityName === comp.entity) : null;
-      if (!entity || !entity.rows || entity.rows.length === 0) {
-        return '<div class="proto-empty">No data for ' + esc(comp.label) + '</div>';
+      if (!entity?.rows || entity.rows.length === 0) {
+        return `<div class="proto-empty">No data for ${esc(comp.label)}</div>`;
       }
 
       const cols = Object.keys(entity.rows[0]);
-      let html = '<div style="padding:16px 24px"><h3 style="font-family:var(--p-font-heading);font-size:14px;font-weight:600;margin-bottom:12px">' + esc(comp.label) + '</h3>';
+      let html = `<div style="padding:16px 24px"><h3 style="font-family:var(--p-font-heading);font-size:14px;font-weight:600;margin-bottom:12px">${esc(comp.label)}</h3>`;
       html += '<table class="proto-table"><thead><tr>';
-      cols.forEach((col) => { html += '<th>' + esc(col) + '</th>'; });
+      cols.forEach((col) => { html += `<th>${esc(col)}</th>`; });
       html += '</tr></thead><tbody>';
       entity.rows.forEach((row) => {
         html += '<tr>';
         cols.forEach((col) => {
           const val = row[col];
-          html += '<td>' + formatCell(val) + '</td>';
+          html += `<td>${formatCell(val)}</td>`;
         });
         html += '</tr>';
       });
@@ -205,15 +205,15 @@
 
     function renderDetailPanel(comp) {
       const entity = currentData.sampleData ? currentData.sampleData.find((e) => e.entityName === comp.entity) : null;
-      const row = entity && entity.rows ? entity.rows[0] : null;
+      const row = entity?.rows ? entity.rows[0] : null;
 
       if (!row) {
-        return '<div style="padding:24px"><h3 style="font-family:var(--p-font-heading);font-size:14px;font-weight:600;margin-bottom:12px">' + esc(comp.label) + '</h3><div class="proto-empty">No data</div></div>';
+        return `<div style="padding:24px"><h3 style="font-family:var(--p-font-heading);font-size:14px;font-weight:600;margin-bottom:12px">${esc(comp.label)}</h3><div class="proto-empty">No data</div></div>`;
       }
 
-      let html = '<div style="padding:24px"><h3 style="font-family:var(--p-font-heading);font-size:14px;font-weight:600;margin-bottom:12px">' + esc(comp.label) + '</h3><div class="proto-detail">';
+      let html = `<div style="padding:24px"><h3 style="font-family:var(--p-font-heading);font-size:14px;font-weight:600;margin-bottom:12px">${esc(comp.label)}</h3><div class="proto-detail">`;
       Object.keys(row).forEach((key) => {
-        html += '<div class="proto-detail-row"><span class="proto-detail-label">' + esc(key) + '</span><span>' + formatCell(row[key]) + '</span></div>';
+        html += `<div class="proto-detail-row"><span class="proto-detail-label">${esc(key)}</span><span>${formatCell(row[key])}</span></div>`;
       });
       html += '</div></div>';
       return html;
@@ -221,16 +221,16 @@
 
     function renderCardGrid(comp) {
       const entity = currentData.sampleData ? currentData.sampleData.find((e) => e.entityName === comp.entity) : null;
-      if (!entity || !entity.rows || entity.rows.length === 0) {
-        return '<div class="proto-empty">No data for ' + esc(comp.label) + '</div>';
+      if (!entity?.rows || entity.rows.length === 0) {
+        return `<div class="proto-empty">No data for ${esc(comp.label)}</div>`;
       }
 
-      let html = '<div style="padding:24px"><h3 style="font-family:var(--p-font-heading);font-size:14px;font-weight:600;margin-bottom:12px">' + esc(comp.label) + '</h3><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">';
+      let html = `<div style="padding:24px"><h3 style="font-family:var(--p-font-heading);font-size:14px;font-weight:600;margin-bottom:12px">${esc(comp.label)}</h3><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">`;
       entity.rows.slice(0, 6).forEach((row) => {
         const keys = Object.keys(row);
         const title = row[keys[1]] || row[keys[0]] || 'Item';
-        html += '<div style="padding:16px;border:1px solid var(--p-border);border-radius:8px"><div style="font-weight:600;font-size:14px;margin-bottom:4px">' + esc(String(title)) + '</div>';
-        if (keys[2]) html += '<div style="font-size:12px;color:var(--p-secondary)">' + esc(String(row[keys[2]] || '')) + '</div>';
+        html += `<div style="padding:16px;border:1px solid var(--p-border);border-radius:8px"><div style="font-weight:600;font-size:14px;margin-bottom:4px">${esc(String(title))}</div>`;
+        if (keys[2]) html += `<div style="font-size:12px;color:var(--p-secondary)">${esc(String(row[keys[2]] || ''))}</div>`;
         html += '</div>';
       });
       html += '</div></div>';
@@ -241,9 +241,9 @@
       if (val === null || val === undefined) return '<span style="color:var(--p-secondary)">—</span>';
       if (typeof val === 'boolean') return val ? '<span class="proto-badge proto-badge-success">Yes</span>' : '<span class="proto-badge proto-badge-warning">No</span>';
       const s = String(val);
-      if (s === 'active' || s === 'completed' || s === 'approved') return '<span class="proto-badge proto-badge-success">' + esc(s) + '</span>';
-      if (s === 'pending' || s === 'scheduled' || s === 'processing') return '<span class="proto-badge proto-badge-warning">' + esc(s) + '</span>';
-      if (s === 'draft' || s === 'inactive') return '<span class="proto-badge proto-badge-info">' + esc(s) + '</span>';
+      if (s === 'active' || s === 'completed' || s === 'approved') return `<span class="proto-badge proto-badge-success">${esc(s)}</span>`;
+      if (s === 'pending' || s === 'scheduled' || s === 'processing') return `<span class="proto-badge proto-badge-warning">${esc(s)}</span>`;
+      if (s === 'draft' || s === 'inactive') return `<span class="proto-badge proto-badge-info">${esc(s)}</span>`;
       return esc(s);
     }
 

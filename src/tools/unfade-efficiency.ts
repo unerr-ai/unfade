@@ -11,7 +11,7 @@ export interface EfficiencyToolResult {
   _meta: McpMeta;
 }
 
-export function getEfficiency(opts?: { period?: string }, cwd?: string): EfficiencyToolResult {
+export function getEfficiency(_opts?: { period?: string }, cwd?: string): EfficiencyToolResult {
   const start = Date.now();
   const path = join(getProjectDataDir(cwd), "intelligence", "efficiency.json");
 

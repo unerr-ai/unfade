@@ -5,7 +5,6 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "../../utils/logger.js";
 import { getEventsDir, getIntelligenceDir } from "../../utils/paths.js";
 import type { DbLike } from "../cache/manager.js";
 
@@ -34,7 +33,7 @@ export interface VerificationCheck {
 
 export async function verifyPipeline(
   analyticsDb: DbLike,
-  operationalDb: DbLike,
+  _operationalDb: DbLike,
 ): Promise<VerificationResult> {
   const startMs = Date.now();
   const checks: VerificationCheck[] = [];

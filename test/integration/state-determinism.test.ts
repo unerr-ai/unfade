@@ -99,7 +99,7 @@ describe("State Determinism (11C.1)", () => {
       }),
     );
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
-    writeFileSync(jsonlPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(jsonlPath, `${events.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
     writeEpochFile(jsonlPath);
 
     // Mock paths
@@ -115,7 +115,7 @@ describe("State Determinism (11C.1)", () => {
 
     // Verify DB has exactly 10 events
     const db = await cache.getDb();
-    const result = db!.exec("SELECT COUNT(*) as cnt FROM events");
+    const result = db?.exec("SELECT COUNT(*) as cnt FROM events");
     expect(result[0].values[0][0]).toBe(10);
   });
 
@@ -136,7 +136,7 @@ describe("State Determinism (11C.1)", () => {
       }),
     );
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
-    writeFileSync(jsonlPath, events1.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(jsonlPath, `${events1.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
     writeEpochFile(jsonlPath);
 
     vi.doMock("../../src/utils/paths.js", () => pathMocks);
@@ -162,7 +162,7 @@ describe("State Determinism (11C.1)", () => {
     const existing = readFileSync(jsonlPath, "utf-8");
     writeFileSync(
       jsonlPath,
-      existing + events2.map((e) => JSON.stringify(e)).join("\n") + "\n",
+      `${existing + events2.map((e) => JSON.stringify(e)).join("\n")}\n`,
       "utf-8",
     );
 
@@ -173,7 +173,7 @@ describe("State Determinism (11C.1)", () => {
 
     // Final state: exactly 13 unique events in DB (10 original + 3 appended)
     const db = await cache.getDb();
-    const result = db!.exec("SELECT COUNT(*) as cnt FROM events");
+    const result = db?.exec("SELECT COUNT(*) as cnt FROM events");
     expect(result[0].values[0][0]).toBe(13);
   });
 
@@ -191,7 +191,7 @@ describe("State Determinism (11C.1)", () => {
       makeEvent({ id: `evt-${i}`, timestamp: `${TEST_DATE}T10:0${i}:00Z` }),
     );
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
-    writeFileSync(jsonlPath, events1.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(jsonlPath, `${events1.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
     writeEpochFile(jsonlPath);
 
     vi.doMock("../../src/utils/paths.js", () => pathMocks);
@@ -206,7 +206,7 @@ describe("State Determinism (11C.1)", () => {
     const events2 = Array.from({ length: 5 }, (_, i) =>
       makeEvent({ id: `new-evt-${i}`, timestamp: `${TEST_DATE}T11:0${i}:00Z` }),
     );
-    writeFileSync(jsonlPath, events2.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(jsonlPath, `${events2.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
     // Write new epoch (content changed, so hash changes)
     writeEpochFile(jsonlPath);
 
@@ -216,7 +216,7 @@ describe("State Determinism (11C.1)", () => {
 
     // Verify DB now has the new events (upsert by ID, old IDs remain since they differ)
     const db = await cache.getDb();
-    const result = db!.exec("SELECT id FROM events ORDER BY id");
+    const result = db?.exec("SELECT id FROM events ORDER BY id");
     const ids = result[0].values.map((r) => r[0] as string);
     expect(ids).toContain("new-evt-0");
     expect(ids).toContain("new-evt-4");
@@ -237,7 +237,7 @@ describe("State Determinism (11C.1)", () => {
     // Write events
     const events = Array.from({ length: 3 }, (_, i) => makeEvent({ id: `evt-${i}` }));
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
-    writeFileSync(jsonlPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(jsonlPath, `${events.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
     writeEpochFile(jsonlPath);
 
     // Create ingest lock
@@ -275,7 +275,7 @@ describe("State Determinism (11C.1)", () => {
     // Write 2 small events initially
     const smallEvents = Array.from({ length: 2 }, (_, i) => makeEvent({ id: `small-${i}` }));
     const jsonlPath = join(eventsDir, `${TEST_DATE}.jsonl`);
-    writeFileSync(jsonlPath, smallEvents.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(jsonlPath, `${smallEvents.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
     writeEpochFile(jsonlPath);
 
     vi.doMock("../../src/utils/paths.js", () => pathMocks);
@@ -296,7 +296,7 @@ describe("State Determinism (11C.1)", () => {
     const existing = readFileSync(jsonlPath, "utf-8");
     writeFileSync(
       jsonlPath,
-      existing + bigEvents.map((e) => JSON.stringify(e)).join("\n") + "\n",
+      `${existing + bigEvents.map((e) => JSON.stringify(e)).join("\n")}\n`,
       "utf-8",
     );
 
@@ -333,8 +333,8 @@ describe("State Determinism (11C.1)", () => {
 
     const fileA = join(eventsDir, "2026-04-14.jsonl");
     const fileB = join(eventsDir, `${TEST_DATE}.jsonl`);
-    writeFileSync(fileA, eventsA.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
-    writeFileSync(fileB, eventsB.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(fileA, `${eventsA.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
+    writeFileSync(fileB, `${eventsB.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
     writeEpochFile(fileA);
     writeEpochFile(fileB);
 
@@ -355,7 +355,7 @@ describe("State Determinism (11C.1)", () => {
         content: { summary: `Rewritten event ${i}` },
       }),
     );
-    writeFileSync(fileA, eventsC.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(fileA, `${eventsC.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
     writeEpochFile(fileA); // New epoch — different from original
 
     // Self-healing: only File A is rebuilt (epoch mismatch), File B cursor is still valid
@@ -365,7 +365,7 @@ describe("State Determinism (11C.1)", () => {
 
     // Final DB state: 3 old A (orphaned IDs) + 4 new A + 3 B = 10 total
     const db = await cache.getDb();
-    const total = db!.exec("SELECT COUNT(*) FROM events");
+    const total = db?.exec("SELECT COUNT(*) FROM events");
     expect(total[0].values[0][0]).toBe(10);
   });
 });

@@ -6,12 +6,7 @@
 // Low AI velocity + high git velocity = independent coding (low AI leverage).
 
 import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 // ---------------------------------------------------------------------------
 // Types

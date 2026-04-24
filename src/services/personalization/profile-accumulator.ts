@@ -8,7 +8,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getProfileDir } from "../../utils/paths.js";
-import type { AnalyzerContext } from "../intelligence/analyzers/index.js";
 import type {
   IncrementalAnalyzer,
   IncrementalState,
@@ -62,7 +61,7 @@ export const profileAccumulatorAnalyzer: IncrementalAnalyzer<
   dependsOn: ["efficiency", "window-aggregator"],
   minDataPoints: 5,
 
-  async initialize(ctx): Promise<IncrementalState<ProfileAccumulatorState>> {
+  async initialize(_ctx): Promise<IncrementalState<ProfileAccumulatorState>> {
     const existing = loadExistingProfile();
     return {
       value: {
@@ -84,7 +83,7 @@ export const profileAccumulatorAnalyzer: IncrementalAnalyzer<
     };
   },
 
-  async update(state, batch, ctx): Promise<UpdateResult<ProfileAccumulatorState>> {
+  async update(state, batch, _ctx): Promise<UpdateResult<ProfileAccumulatorState>> {
     if (batch.events.length === 0) return { state, changed: false };
 
     const style = { ...state.value.decisionStyle };
@@ -162,7 +161,7 @@ function runningAvg(current: number, newValue: number, count: number): number {
 function detectPatterns(
   style: ProfileAccumulatorState["decisionStyle"],
   domains: Record<string, number>,
-  batch: NewEventBatch,
+  _batch: NewEventBatch,
 ): ProfileAccumulatorState["patterns"] {
   const patterns: ProfileAccumulatorState["patterns"] = [];
   const now = new Date().toISOString();

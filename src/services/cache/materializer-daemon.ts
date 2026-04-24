@@ -15,7 +15,8 @@ import { materializeIncremental, rebuildAll } from "./materializer.js";
 export interface MaterializerDaemonConfig {
   intervalMs: number;
   cwd?: string;
-  onTick?: (newRows: number) => void | Promise<void>;
+  onTick?: (newRows: number, cache: CacheManager) => void | Promise<void>;
+  onClose?: () => void | Promise<void>;
 }
 
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s fallback heartbeat
@@ -128,6 +129,14 @@ export class MaterializerDaemon {
     }
 
     await this.cache.close();
+
+    if (this.config.onClose) {
+      try {
+        await this.config.onClose();
+      } catch {
+        // best effort cleanup
+      }
+    }
   }
 
   /**
@@ -198,6 +207,11 @@ export class MaterializerDaemon {
       if (count === 0) {
         const rows = await rebuildAll(this.cache, this.config.cwd);
         logger.debug("Initial full rebuild", { rows });
+
+        // Update synthesis progress after initial rebuild
+        if (rows > 0 && this.config.onTick) {
+          await this.config.onTick(rows, this.cache);
+        }
       }
 
       this.initialBuildDone = true;
@@ -218,9 +232,11 @@ export class MaterializerDaemon {
 
       if (newRows > 0) {
         logBuffer.append("materializer", "debug", `Materialized ${newRows} new rows`);
-        if (this.config.onTick) {
-          await this.config.onTick(newRows);
-        }
+      }
+
+      // Always call onTick so synthesis progress updates even when idle
+      if (this.config.onTick) {
+        await this.config.onTick(newRows, this.cache);
       }
 
       return newRows;

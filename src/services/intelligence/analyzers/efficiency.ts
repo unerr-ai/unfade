@@ -10,7 +10,7 @@ import type {
   NewEventBatch,
   UpdateResult,
 } from "../incremental-state.js";
-import type { AnalyzerContext, AnalyzerResult } from "./index.js";
+import type { AnalyzerContext } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -275,7 +275,7 @@ function generateInsight(
   return null;
 }
 
-async function collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
+async function _collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
   try {
     const result = await db.exec(`
       SELECT id FROM events

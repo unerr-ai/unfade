@@ -4,14 +4,7 @@
 // Each entry: { id, ts, claim, severity, sources, confidence, sourceEventIds }
 
 import { createHash } from "node:crypto";
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getIntelligenceDir } from "../../utils/paths.js";
@@ -172,7 +165,7 @@ function appendNarratives(intelligenceDir: string, insights: NarrativeInsight[])
 
   // Atomic rewrite
   const tmp = join(intelligenceDir, `${NARRATIVE_FILE}.tmp.${process.pid}`);
-  const content = all.map((n) => JSON.stringify(n)).join("\n") + "\n";
+  const content = `${all.map((n) => JSON.stringify(n)).join("\n")}\n`;
   writeFileSync(tmp, content, "utf-8");
   renameSync(tmp, filePath);
 }
@@ -206,7 +199,7 @@ function loadAnalyzerData(intelligenceDir: string): Record<string, unknown> {
 
   // Also expose nested data at top level for template convenience
   // e.g., data["alerts"] = data["blind-spot-detector"]
-  if (data["blind-spot-detector"]) data["alerts"] = data["blind-spot-detector"];
+  if (data["blind-spot-detector"]) data.alerts = data["blind-spot-detector"];
 
   return data;
 }

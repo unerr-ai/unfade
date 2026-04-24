@@ -4,7 +4,7 @@ export default defineConfig({
   entry: ["src/entrypoints/cli.ts"],
   format: "esm",
   target: "node20",
-  clean: true,
+  clean: false,
   banner: {
     js: "#!/usr/bin/env node",
   },

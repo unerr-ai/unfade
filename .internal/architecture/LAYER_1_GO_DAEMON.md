@@ -62,10 +62,17 @@ SUBSEQUENT RUN (ingest.json has "failed"):
 
 ### Who Reads Its Output
 
-**Materializer** (TypeScript, `src/services/materializer/`):
+**Materializer** (TypeScript, `src/services/cache/materializer.ts`):
 - Tails `~/.unfade/events/*.jsonl` using cursor offsets (`~/.unfade/state/materializer.json`)
-- Ingests into SQLite (`~/.unfade/cache/unfade.db`) with `project_id` indexes
+- Dual-writes into:
+  - **SQLite** (`~/.unfade/cache/unfade.db`) — operational: FTS, point lookups, lineage, feature boundaries
+  - **DuckDB** (`~/.unfade/cache/unfade.duckdb`) — analytical: 37 typed columns, time-series, intelligence queries
 - Respects `.ingest.lock` — defers processing during bulk historical ingest
+
+**Intelligence → CozoDB** (downstream of materializer):
+- Intelligence analyzers read from DuckDB, produce `EntityContribution[]`
+- `SubstrateEngine` ingests contributions into **CozoDB** (`~/.unfade/intelligence/graph.db`) — graph DB for entities, edges, causal chains, semantic similarity (HNSW vector index)
+- CozoDB does NOT read JSONL directly — it's fed by intelligence, not the daemon
 
 ---
 

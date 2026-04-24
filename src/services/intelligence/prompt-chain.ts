@@ -6,7 +6,7 @@
 import type { DbLike } from "../cache/manager.js";
 import type { FeatureRegistry } from "./feature-registry.js";
 import { extractPathsFromPrompt, resolveFeatures } from "./feature-registry.js";
-import { type ClassifyContext, classifyPrompt, type PromptType } from "./prompt-classifier.js";
+import { classifyPrompt, type PromptType } from "./prompt-classifier.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -278,7 +278,7 @@ function computeScopeEvolution(turns: PromptTurn[], featureGroupCount: number): 
 // Effectiveness
 // ---------------------------------------------------------------------------
 
-function computeEffectiveness(events: SessionEvent[], turns: PromptTurn[]): ChainEffectiveness {
+function computeEffectiveness(events: SessionEvent[], _turns: PromptTurn[]): ChainEffectiveness {
   const successIdx = events.findIndex((e) => e.outcome === "success");
   const turnsToFirstAccept = successIdx >= 0 ? successIdx + 1 : null;
 

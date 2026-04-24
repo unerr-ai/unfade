@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { McpMeta } from "../../schemas/mcp.js";
 import type { ReasoningModelV2 } from "../../schemas/profile.js";
 import { getIntelligenceDir, getProfileDir } from "../../utils/paths.js";
-import { type Diagnostic, diagnosticStream } from "./diagnostic-stream.js";
+import { diagnosticStream } from "./diagnostic-stream.js";
 
 let cachedProfile: ReasoningModelV2 | null = null;
 let cacheTimestamp = 0;

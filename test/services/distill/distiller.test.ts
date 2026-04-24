@@ -138,7 +138,7 @@ describe("distillIncremental", () => {
     const result = await distillIncremental("2026-04-15", { cwd: tmpDir });
     expect(result).not.toBeNull();
     expect(result?.distill.synthesizedBy).toBe("fallback");
-    expect(existsSync(result!.path)).toBe(true);
+    expect(existsSync(result?.path)).toBe(true);
   });
 
   it("populates profile and graph directories", async () => {

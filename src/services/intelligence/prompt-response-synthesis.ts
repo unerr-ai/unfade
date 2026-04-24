@@ -95,8 +95,8 @@ export async function computeAndStoreCorrelations(db: DbLike, limit = 200): Prom
       const filesMod = Array.isArray(row[8]) ? (row[8] as string[]).length : 0;
       const tokensOut = (row[9] as number) ?? 0;
       const turnCount = (row[10] as number) ?? 1;
-      const modAfterAccept = (row[11] as boolean) ?? false;
-      const courseCorrection = (row[12] as boolean) ?? false;
+      const _modAfterAccept = (row[11] as boolean) ?? false;
+      const _courseCorrection = (row[12] as boolean) ?? false;
       const hds = (row[13] as number) ?? 0;
       const rejectionCount = (row[14] as number) ?? 0;
 

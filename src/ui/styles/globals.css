@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-canvas: #0a0a0f;
+  --color-surface: #12121a;
+  --color-raised: #1a1a24;
+  --color-overlay: rgba(255, 255, 255, 0.06);
+  --color-substrate: #0e0e16;
+
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-foreground: #fafafa;
+  --color-muted: rgba(250, 250, 250, 0.45);
+
+  --color-accent: #8B5CF6;
+  --color-accent-dim: #7C3AED;
+  --color-cyan: #22d3ee;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-proxy: rgba(245, 158, 11, 0.08);
+
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-heading: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+@layer base {
+  .light {
+    --color-canvas: #fafafa;
+    --color-surface: #ffffff;
+    --color-raised: #f4f4f5;
+    --color-overlay: rgba(0, 0, 0, 0.04);
+    --color-substrate: #f0f0f3;
+    --color-border: rgba(0, 0, 0, 0.08);
+    --color-foreground: #09090b;
+    --color-muted: rgba(9, 9, 11, 0.5);
+  }
+
+  html {
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background: var(--color-canvas);
+    color: var(--color-foreground);
+  }
+
+  * {
+    border-color: var(--color-border);
+  }
+}
+
+@layer utilities {
+  .card-hover {
+    transition:
+      transform 0.15s ease-out,
+      box-shadow 0.15s ease-out;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .btn-press:active {
+    transform: scale(0.98);
+  }
+
+  .link-underline {
+    text-decoration: none;
+    background-image: linear-gradient(var(--color-accent), var(--color-accent));
+    background-size: 0% 1px;
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    transition: background-size 0.2s ease-out;
+  }
+  .link-underline:hover {
+    background-size: 100% 1px;
+  }
+
+  .badge-hover {
+    transition: opacity 0.15s ease-out;
+  }
+  .badge-hover:hover {
+    opacity: 0.8;
+  }
+}
+
+@layer base {
+  @media (max-width: 768px) {
+    .sidebar-mobile-hidden {
+      transform: translateX(-100%);
+    }
+    .sidebar-mobile-open {
+      transform: translateX(0);
+    }
+  }
+}

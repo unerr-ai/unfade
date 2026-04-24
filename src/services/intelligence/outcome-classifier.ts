@@ -80,7 +80,11 @@ export async function classifyAllUnclassified(db: DbLike): Promise<number> {
  * 4. Context switch (next event touches different files) → partial
  * 5. conversation_complete with output → success
  */
-async function deriveOutcome(metadata: Record<string, unknown>, db: DbLike, eventId: string): Promise<Outcome> {
+async function deriveOutcome(
+  metadata: Record<string, unknown>,
+  db: DbLike,
+  eventId: string,
+): Promise<Outcome> {
   const filesModified = metadata.files_modified as string[] | undefined;
   const iterationCount = (metadata.iteration_count as number) ?? 0;
   const promptsAll = metadata.prompts_all as string[] | undefined;
@@ -130,7 +134,7 @@ async function deriveOutcome(metadata: Record<string, unknown>, db: DbLike, even
  */
 async function detectContextSwitch(
   db: DbLike,
-  eventId: string,
+  _eventId: string,
   metadata: Record<string, unknown>,
 ): Promise<boolean> {
   const sessionId = metadata.session_id as string | undefined;

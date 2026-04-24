@@ -6,6 +6,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 vi.mock("../../../src/server/setup-state.js", () => ({
   isSetupComplete: () => true,
   invalidateSetupCache: () => {},
+  shouldShowSynthesisBanner: () => false,
+  getSynthesisProgress: () => ({
+    percent: 0,
+    totalEvents: 0,
+    processedEvents: 0,
+    phase: "pending",
+    synthesisCompletedAt: null,
+  }),
 }));
 
 import type { ReasoningModelV2 } from "../../../src/schemas/profile.js";
@@ -221,26 +229,21 @@ describe("Personalization-weighted search (UF-076)", () => {
     }
   });
 
-  it("decisions page renders when profile exists", async () => {
+  it("decisions API returns data when profile exists", async () => {
     const profileDir = join(tmpDir, ".unfade", "profile");
     mkdirSync(profileDir, { recursive: true });
     writeFileSync(join(profileDir, "reasoning_model.json"), JSON.stringify(makeV2Profile()));
 
     const { createApp } = await import("../../../src/server/http.js");
     const app = createApp();
-    const res = await app.request("/decisions");
-    const html = await res.text();
-
-    expect(html).toContain("Decisions");
-    expect(html).toContain("Search decisions");
+    const res = await app.request("/unfade/decisions");
+    expect(res.status).toBe(200);
   });
 
-  it("decisions page renders when no profile exists", async () => {
+  it("decisions API returns data when no profile exists", async () => {
     const { createApp } = await import("../../../src/server/http.js");
     const app = createApp();
-    const res = await app.request("/decisions");
-    const html = await res.text();
-
-    expect(html).toContain("Decisions");
+    const res = await app.request("/unfade/decisions");
+    expect(res.status).toBe(200);
   });
 });

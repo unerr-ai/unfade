@@ -8,7 +8,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { logger } from "../../utils/logger.js";
-import { getBinDir, getDaemonStateDir } from "../../utils/paths.js";
+import { getBinDir } from "../../utils/paths.js";
 import { logBuffer } from "../logs/ring-buffer.js";
 
 const DAEMON_BINARY = process.platform === "win32" ? "unfaded.exe" : "unfaded";

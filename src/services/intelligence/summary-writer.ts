@@ -8,15 +8,9 @@ import { join } from "node:path";
 import { getStateDir } from "../../utils/paths.js";
 import type { DbLike } from "../cache/manager.js";
 import { eventBus } from "../event-bus.js";
-import type { AnalyzerContext } from "./analyzers/index.js";
 import { topDomain } from "./domain-classifier.js";
 import { loadFirstRunReport } from "./first-run-trigger.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 import type { WindowResult } from "./window-aggregator.js";
 
 export interface SummaryJson {

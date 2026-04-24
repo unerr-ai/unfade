@@ -1,7 +1,7 @@
 // 12A.7 / 12A.8: Integration tests — IntelligenceScheduler wiring into materializer.
 // Validates: scheduler runs after processEvents, files generated, routes return data or 202.
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -59,9 +59,15 @@ describe("12A.7: Intelligence files generated", () => {
       run: vi.fn(),
       exec: vi.fn().mockReturnValue([{ columns: ["count"], values: [[0]] }]),
     };
-    const ctx: AnalyzerContext = { repoRoot: testDir, analytics: db, operational: db, db, config: {} };
+    const ctx: AnalyzerContext = {
+      repoRoot: testDir,
+      analytics: db,
+      operational: db,
+      db,
+      config: {},
+    };
 
-    const first = await scheduler.processEvents(ctx);
+    const _first = await scheduler.processEvents(ctx);
     const second = await scheduler.processEvents(ctx);
 
     // Second call should be throttled (nodesProcessed=0)
@@ -78,7 +84,13 @@ describe("12A.7: Intelligence files generated", () => {
       run: vi.fn(),
       exec: vi.fn().mockReturnValue([{ columns: ["count"], values: [[0]] }]),
     };
-    const ctx: AnalyzerContext = { repoRoot: testDir, analytics: db, operational: db, db, config: {} };
+    const ctx: AnalyzerContext = {
+      repoRoot: testDir,
+      analytics: db,
+      operational: db,
+      db,
+      config: {},
+    };
 
     const result = await scheduler.processEvents(ctx);
     expect(result.results).toHaveLength(0);

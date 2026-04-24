@@ -17,7 +17,7 @@ import type {
   UpdateResult,
 } from "../incremental-state.js";
 import { contentHash, cosineSimilarity } from "../utils/text-similarity.js";
-import type { AnalyzerContext, AnalyzerResult } from "./index.js";
+import type { AnalyzerContext } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // State

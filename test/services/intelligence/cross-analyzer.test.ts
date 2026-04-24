@@ -22,9 +22,7 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-function createMockDb(
-  dailyData: Array<{ day: string; value: number }>,
-) {
+function createMockDb(dailyData: Array<{ day: string; value: number }>) {
   return {
     run(): void {},
     exec(_sql: string): Array<{ columns: string[]; values: unknown[][] }> {

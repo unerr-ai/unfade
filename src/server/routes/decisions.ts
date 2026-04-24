@@ -9,6 +9,7 @@ export const decisionsRoutes = new Hono();
 
 decisionsRoutes.get("/decisions", (c) => {
   const limitStr = c.req.query("limit");
+  const offsetStr = c.req.query("offset");
   const domain = c.req.query("domain");
   const q = c.req.query("q");
   const period = c.req.query("period");
@@ -18,6 +19,10 @@ decisionsRoutes.get("/decisions", (c) => {
   if (limitStr) {
     const num = Number.parseInt(limitStr, 10);
     if (!Number.isNaN(num)) input.limit = num;
+  }
+  if (offsetStr) {
+    const num = Number.parseInt(offsetStr, 10);
+    if (!Number.isNaN(num)) input.offset = num;
   }
   if (domain) input.domain = domain;
   if (q) input.q = q;

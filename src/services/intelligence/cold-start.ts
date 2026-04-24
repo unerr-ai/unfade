@@ -7,7 +7,7 @@
 // 4. Persists the resulting states
 // 5. Runs one full processing cycle
 
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getIntelligenceDir } from "../../utils/paths.js";

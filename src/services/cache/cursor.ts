@@ -3,7 +3,14 @@
 // Atomic persistence via tmp+rename. SHA-256 hash of last line for corruption detection.
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getStateDir } from "../../utils/paths.js";
@@ -40,6 +47,16 @@ export function loadCursor(cwd?: string): MaterializerCursor {
     return data;
   } catch {
     return { schemaVersion: 1, streams: {} };
+  }
+}
+
+export function resetCursor(cwd?: string): void {
+  const path = cursorPath(cwd);
+  try {
+    if (existsSync(path)) unlinkSync(path);
+  } catch {
+    // If delete fails, overwrite with empty cursor
+    saveCursor({ schemaVersion: 1, streams: {} }, cwd);
   }
 }
 

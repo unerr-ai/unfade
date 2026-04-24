@@ -47,10 +47,7 @@ export async function publishCommand(opts: { output?: string } = {}): Promise<vo
   try {
     const { generateCard } = await import("../services/card/generator.js");
     // Use the most recent distill date, or today
-    const cardDate =
-      siteData.distills.length > 0
-        ? siteData.distills[0].date
-        : localToday();
+    const cardDate = siteData.distills.length > 0 ? siteData.distills[0].date : localToday();
     const pngBuffer = await generateCard(cardDate);
     writeFileSync(resolve(assetsDir, "og-card.png"), pngBuffer);
     ogCardGenerated = true;

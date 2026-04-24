@@ -342,8 +342,26 @@ program.action(async () => {
   }
 
   // Keep process alive until SIGINT/SIGTERM
+  let shuttingDown = false;
   const shutdown = async () => {
-    await handle.shutdown();
+    if (shuttingDown) {
+      // Second Ctrl+C — force exit immediately
+      process.exit(1);
+    }
+    shuttingDown = true;
+
+    // Hard deadline: if graceful shutdown takes >10s, force exit
+    const forceTimer = setTimeout(() => {
+      process.stderr.write("\n  Shutdown timed out — forcing exit.\n");
+      process.exit(1);
+    }, 10_000);
+    forceTimer.unref();
+
+    try {
+      await handle.shutdown();
+    } catch {
+      // Shutdown failed — still exit
+    }
     process.exit(0);
   };
 

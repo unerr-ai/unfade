@@ -20,10 +20,7 @@ async function readSubstrateFile(filename: string): Promise<unknown | null> {
   }
 }
 
-function jsonOr202(
-  c: { json: (data: unknown, status?: number) => Response },
-  data: unknown,
-) {
+function jsonOr202(c: { json: (data: unknown, status?: number) => Response }, data: unknown) {
   if (!data)
     return c.json(
       { status: "warming_up", message: "Substrate engine is building the knowledge graph." },
@@ -45,7 +42,11 @@ substrateRoutes.get("/api/substrate/entity/:id/neighborhood", async (c) => {
   const entity = entities.find((e) => e.id === id);
   if (!entity) return c.json({ error: "Entity not found" }, 404);
 
-  return c.json({ entityId: id, neighbors: entity.neighbors ?? [], _source: "substrate-topology.json" });
+  return c.json({
+    entityId: id,
+    neighbors: entity.neighbors ?? [],
+    _source: "substrate-topology.json",
+  });
 });
 
 substrateRoutes.get("/api/substrate/trajectories", async (c) =>

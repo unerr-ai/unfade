@@ -4,7 +4,7 @@
 // Protocol: one JSON line request → one JSON line response → close.
 
 import { createConnection } from "node:net";
-import { getDaemonStateDir, getStateDir } from "./paths.js";
+import { getStateDir } from "./paths.js";
 
 export interface IPCRequest {
   cmd: string;

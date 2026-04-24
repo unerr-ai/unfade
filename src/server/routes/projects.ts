@@ -9,7 +9,6 @@ import {
   findRepoById,
   loadRegistry,
   registerRepo,
-  saveRegistry,
   setMonitoringState,
   unregisterRepo,
 } from "../../services/registry/registry.js";

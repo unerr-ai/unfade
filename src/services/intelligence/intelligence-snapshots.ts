@@ -4,7 +4,6 @@
 // lifecycle with automatic rotation (keep last 168 = 7 days of hourly).
 
 import {
-  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -16,12 +15,7 @@ import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getIntelligenceDir } from "../../utils/paths.js";
 import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,7 +63,7 @@ export const intelligenceSnapshotAnalyzer: IncrementalAnalyzer<SnapshotState, Sn
   dependsOn: ["window-aggregator", "efficiency", "session-intelligence"],
   minDataPoints: 1,
 
-  async initialize(ctx): Promise<IncrementalState<SnapshotState>> {
+  async initialize(_ctx): Promise<IncrementalState<SnapshotState>> {
     const existing = loadExistingSnapshots();
     return {
       value: {

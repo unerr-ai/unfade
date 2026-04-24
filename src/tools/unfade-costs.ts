@@ -12,7 +12,7 @@ export interface CostsToolResult {
 }
 
 export function getCosts(
-  opts?: { period?: string; groupBy?: string },
+  _opts?: { period?: string; groupBy?: string },
   cwd?: string,
 ): CostsToolResult {
   const start = Date.now();

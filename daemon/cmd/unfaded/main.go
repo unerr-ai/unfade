@@ -127,7 +127,7 @@ func main() {
 		Mode:           mode,
 		ProjectMatcher: matcher,
 	})
-	if projectDir != "" {
+	if projectDir != "" || mode == capture.CaptureModeAIGlobal {
 		if err := orchestrator.Start(); err != nil {
 			log.Error("failed to start capture orchestrator", map[string]any{"error": err.Error()})
 			fmt.Fprintf(os.Stderr, "unfaded: capture orchestrator error: %v\n", err)

@@ -122,7 +122,11 @@ export interface ModuleComprehension {
  */
 export async function aggregateComprehensionByModule(db: {
   run(sql: string, params?: unknown[]): void;
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
+  exec(
+    sql: string,
+  ):
+    | Array<{ columns: string[]; values: unknown[][] }>
+    | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
 }): Promise<ModuleComprehension[]> {
   const now = new Date().toISOString();
 
@@ -195,7 +199,11 @@ export async function aggregateComprehensionByModule(db: {
  * Read per-module comprehension from DB (fast path for API/MCP).
  */
 export async function readModuleComprehension(db: {
-  exec(sql: string): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
+  exec(
+    sql: string,
+  ):
+    | Array<{ columns: string[]; values: unknown[][] }>
+    | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
 }): Promise<ModuleComprehension[]> {
   try {
     const result = await db.exec(

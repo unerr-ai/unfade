@@ -5,7 +5,7 @@
 // Queries are pushed down entirely to the graph engine.
 
 import { logger } from "../../utils/logger.js";
-import type { GraphQueryResult, SubstrateEngine } from "./substrate-engine.js";
+import type { SubstrateEngine } from "./substrate-engine.js";
 
 // ---------------------------------------------------------------------------
 // Query templates

@@ -80,7 +80,7 @@ describe("Feature Boundary Detection (11C.3)", () => {
 
     // Write events to JSONL
     const jsonlPath = join(eventsDir, "2026-04-15.jsonl");
-    writeFileSync(jsonlPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(jsonlPath, `${events.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
 
     vi.doMock("../../src/utils/paths.js", () => pathMocks);
 
@@ -130,7 +130,9 @@ describe("Feature Boundary Detection (11C.3)", () => {
 
     // Feature should have branch = "feat/auth"
     const featureId = result[0].values[0][0] as string;
-    const featureResult = await db.exec("SELECT branch, name FROM features WHERE id = ?", [featureId]);
+    const featureResult = await db.exec("SELECT branch, name FROM features WHERE id = ?", [
+      featureId,
+    ]);
     expect(featureResult[0].values[0][0]).toBe("feat/auth");
   });
 
@@ -230,7 +232,7 @@ describe("Cross-Event Linking (11C.3)", () => {
     mkdirSync(stateDir, { recursive: true });
 
     const jsonlPath = join(eventsDir, "2026-04-15.jsonl");
-    writeFileSync(jsonlPath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf-8");
+    writeFileSync(jsonlPath, `${events.map((e) => JSON.stringify(e)).join("\n")}\n`, "utf-8");
 
     vi.doMock("../../src/utils/paths.js", () => pathMocks);
 

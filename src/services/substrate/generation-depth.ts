@@ -4,7 +4,7 @@
 // grounded. Runs as a post-propagation enrichment step.
 
 import { logger } from "../../utils/logger.js";
-import type { EntityContribution, GraphQueryResult, SubstrateEngine } from "./substrate-engine.js";
+import type { EntityContribution, SubstrateEngine } from "./substrate-engine.js";
 
 // ---------------------------------------------------------------------------
 // §10.1 Bayesian Confidence Fusion

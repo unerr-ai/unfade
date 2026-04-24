@@ -53,7 +53,10 @@ function computePeriod(injections: number, costPer1K: number): ValuePeriod {
 /**
  * Compute the value receipt from MCP invocation data.
  */
-export async function computeValueReceipt(db: DbLike, pricing?: Record<string, number>): Promise<ValueReceipt> {
+export async function computeValueReceipt(
+  db: DbLike,
+  pricing?: Record<string, number>,
+): Promise<ValueReceipt> {
   const costPer1K = pricing?.default ?? DEFAULT_COST_PER_1K_INPUT;
   const now = new Date();
 

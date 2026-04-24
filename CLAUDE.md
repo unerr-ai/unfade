@@ -149,15 +149,42 @@ All CLI commands use `handleCliError(err, commandName)` from `src/utils/cli-erro
 
 9 tools (see `src/services/mcp/tools.ts`), 5 resources, 3 prompts. All tools return the response envelope pattern. Degraded mode returns `degraded: true` with reason when `.unfade/` is missing.
 
+## Frontend Architecture (React 19 + Vite 8 + shadcn/ui)
+
+- **SPA** served as static files from `dist/` (built by Vite). Backend serves `dist/index.html` as SPA fallback for all non-API routes (`src/server/http.ts`).
+- **API** at `/api/*` and `/unfade/*` — Hono routes, same process as the SPA server.
+- **TanStack Query v5** for all data fetching (`useQuery`, `useMutation`, `queryClient`). SSE via `EventSource` in custom hooks.
+- **Zustand** for client state (active project, persona, theme).
+- **shadcn/ui** components with custom theme tokens defined in `src/ui/index.css`.
+- **All UI code lives in `src/ui/`**:
+  - `src/ui/pages/` — 12 lazy-loaded page components (Home, Live, Distill, Intelligence, Decisions, Profile, Cards, Projects, Settings, Integrations, Logs, Setup)
+  - `src/ui/components/` — shared components (`shared/`) and shadcn primitives (`ui/`)
+  - `src/ui/hooks/` — custom React hooks (useHealth, useEvents, useSummary, etc.)
+  - `src/ui/lib/` — API client (`api.ts`), query client, utilities
+  - `src/ui/stores/` — Zustand stores
+  - `src/ui/types/` — TypeScript interfaces for API responses
+  - `src/ui/router.tsx` — React Router with lazy imports and code splitting
+
+### Phase 15 Design System
+
+- **MetricDisplay** (`src/ui/components/shared/MetricDisplay.tsx`) enforces R-1→R-4 on every numeric display: interpretation (R-1), comparison with delta/direction (R-2), freshness badge (R-3), confidence indicator (R-4).
+- **18 patterns** (P-1 through P-18) from Phase 15 spec, referenced in component implementation. Key patterns: P-6 System Reveal (ActiveSessionPanel, daemon status), P-7 Progressive Disclosure (LiveStrip → Hero → Detail → Evidence → Raw).
+- **Transmission Thesis diagnostic language** — vehicle analogies for system status (e.g., "engines running", "transmission lag"). Implemented in diagnostic message generators across LivePage, LogsPage.
+- **FreshnessBadge** (`src/ui/components/shared/FreshnessBadge.tsx`) — R-3 compliance: shows data age on every data-bearing component.
+- **EvidenceDrawer** (`src/ui/components/shared/EvidenceDrawer.tsx`) — slide-over panel for raw data inspection (progressive disclosure layer 4).
+- **Information Architecture** — 4 layers: Pulse (sidebar status), Observe (Home + Live), Understand (Intelligence + Decisions + Distill), Identity (Profile + Cards).
+
 ## Build Commands
 
 ```bash
-pnpm build        # Bundle → dist/cli.mjs (single ESM file with shebang)
+pnpm build        # pnpm build:ui && tsdown — builds Vite SPA + CLI bundle
+pnpm build:ui     # Vite production build → dist/ (43 chunks, code-split)
 pnpm lint         # Biome check (lint + format)
 pnpm lint:fix     # Biome auto-fix
 pnpm test         # Vitest run
 pnpm typecheck    # tsc --noEmit
-pnpm dev          # tsx watch mode
+pnpm dev          # tsx watch mode (backend)
+pnpm dev:ui       # Vite dev server with HMR (frontend)
 ```
 
 ## Go Daemon Commands

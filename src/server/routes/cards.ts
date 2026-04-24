@@ -3,7 +3,7 @@
 // POST /unfade/cards/generate — generate card PNG for a date.
 // GET /unfade/cards/image/:date — serve generated card PNG.
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -72,6 +72,24 @@ cardsRoutes.post("/cards/generate", async (c) => {
       500,
     );
   }
+});
+
+cardsRoutes.get("/cards/list", async (c) => {
+  const cardsDir = getCardsDir();
+  if (!existsSync(cardsDir)) return c.json({ cards: [] });
+
+  const files = readdirSync(cardsDir)
+    .filter((f) => f.endsWith(".png") && /^\d{4}-\d{2}-\d{2}\.png$/.test(f))
+    .sort()
+    .reverse();
+
+  const cards = files.map((f) => {
+    const date = f.replace(".png", "");
+    const stat = statSync(join(cardsDir, f));
+    return { date, size: stat.size, createdAt: stat.mtime.toISOString() };
+  });
+
+  return c.json({ cards });
 });
 
 cardsRoutes.get("/cards/image/:date", async (c) => {

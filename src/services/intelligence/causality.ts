@@ -4,16 +4,8 @@
 // (error → fix attempts → resolution), implementation (plan → build → test),
 // and decision-revision (decision → time → revision).
 
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { getIntelligenceDir } from "../../utils/paths.js";
 import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,7 +42,7 @@ type CausalityOutput = {
 // ---------------------------------------------------------------------------
 
 const MAX_CHAINS = 200;
-const CHAIN_PROXIMITY_MS = 4 * 3600 * 1000;
+const _CHAIN_PROXIMITY_MS = 4 * 3600 * 1000;
 const MIN_CHAIN_EVENTS = 2;
 
 // ---------------------------------------------------------------------------
@@ -294,7 +286,7 @@ async function findDecisionRevisionChains(ctx: AnalyzerContext): Promise<Causali
 
     for (const row of result[0].values) {
       const fromSession = (row[5] as string) ?? (row[0] as string);
-      const toSession = (row[6] as string) ?? (row[1] as string);
+      const _toSession = (row[6] as string) ?? (row[1] as string);
 
       const key = fromSession;
       const chain = sessionChains.get(key) ?? [row[0] as string];

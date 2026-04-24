@@ -97,7 +97,7 @@ integrationsRoutes.post("/api/integrations/install", async (c) => {
 
     // Atomic write
     const tmpPath = `${configPath}.tmp.${process.pid}`;
-    writeFileSync(tmpPath, JSON.stringify(existing, null, 2) + "\n", "utf-8");
+    writeFileSync(tmpPath, `${JSON.stringify(existing, null, 2)}\n`, "utf-8");
     renameSync(tmpPath, configPath);
 
     logger.info("integrations.install: done", { reqId, tool: toolKey, path: configPath });
@@ -119,23 +119,25 @@ integrationsRoutes.post("/api/integrations/install", async (c) => {
  * Returns which tools currently have unfade configured.
  */
 integrationsRoutes.get("/api/integrations/status", async (c) => {
-  const tools = await Promise.all(Object.values(TOOLS).map(async (tool) => {
-    let connected = false;
-    let path = "";
-    try {
-      path = tool.getPath();
-      if (existsSync(path)) {
-        const raw = (await readFile(path, "utf-8")).trim();
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          connected = tool.checkConnected(parsed);
+  const tools = await Promise.all(
+    Object.values(TOOLS).map(async (tool) => {
+      let connected = false;
+      let path = "";
+      try {
+        path = tool.getPath();
+        if (existsSync(path)) {
+          const raw = (await readFile(path, "utf-8")).trim();
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            connected = tool.checkConnected(parsed);
+          }
         }
+      } catch {
+        // Non-fatal — treat as not connected
       }
-    } catch {
-      // Non-fatal — treat as not connected
-    }
-    return { tool: tool.name, label: tool.label, connected, path };
-  }));
+      return { tool: tool.name, label: tool.label, connected, path };
+    }),
+  );
 
   return c.json({ tools });
 });

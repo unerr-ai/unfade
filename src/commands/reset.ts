@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { theme, writeBlank, writeLine } from "../cli/ui.js";
+import { loadRegistry } from "../services/registry/registry.js";
 import { removeShellHooks } from "../services/shell/installer.js";
 import { stopDaemon } from "../utils/ipc.js";
 import { getProjectDataDir, getStateDir, getUserConfigDir } from "../utils/paths.js";
@@ -179,6 +180,20 @@ export async function resetCommand(): Promise<void> {
 
   removeShellHooks();
   writeLine(`  ${theme.success("✓")} Shell hooks removed`);
+
+  // Remove .unfade marker files from all tracked repos (must read registry before deleting ~/.unfade/)
+  try {
+    const registry = loadRegistry();
+    for (const repo of registry.repos) {
+      const markerPath = join(repo.root, ".unfade");
+      if (existsSync(markerPath)) {
+        rmSync(markerPath, { recursive: true, force: true });
+        writeLine(`  ${theme.success("✓")} Removed marker ${theme.muted(markerPath)}`);
+      }
+    }
+  } catch {
+    // Registry not readable — skip repo cleanup
+  }
 
   if (existsSync(dataDir)) {
     rmSync(dataDir, { recursive: true, force: true });

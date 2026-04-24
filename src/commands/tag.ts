@@ -45,10 +45,10 @@ export async function tagCommand(featureName: string, options: TagCommandOptions
 
     if (options.json) {
       process.stdout.write(
-        JSON.stringify({
+        `${JSON.stringify({
           data: { featureName: featureName.trim(), eventsTagged: tagged },
           _meta: { tool: "unfade-tag", durationMs: 0, degraded: false },
-        }) + "\n",
+        })}\n`,
       );
     } else {
       logger.info(`Tagged ${tagged} events with feature "${featureName.trim()}"`);
@@ -59,7 +59,14 @@ export async function tagCommand(featureName: string, options: TagCommandOptions
 }
 
 async function resolveTargetEvents(
-  db: { exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>> },
+  db: {
+    exec(
+      sql: string,
+      params?: unknown[],
+    ):
+      | Array<{ columns: string[]; values: unknown[][] }>
+      | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
+  },
   options: TagCommandOptions,
 ): Promise<string[]> {
   if (options.session) {
@@ -87,7 +94,12 @@ async function resolveTargetEvents(
 export async function applyFeatureTag(
   db: {
     run(sql: string, params?: unknown[]): void;
-    exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
+    exec(
+      sql: string,
+      params?: unknown[],
+    ):
+      | Array<{ columns: string[]; values: unknown[][] }>
+      | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
   },
   featureName: string,
   eventIds: string[],

@@ -15,7 +15,6 @@ import {
   atomicWriteFile,
   replaceMarkerSection,
 } from "../../src/services/actions/runner.js";
-import { sessionContextAction } from "../../src/services/actions/session-context.js";
 import { weeklyDigestAction } from "../../src/services/actions/weekly-digest.js";
 
 let testDir: string;

@@ -104,6 +104,8 @@ export type ContextOutput = z.infer<typeof ContextOutputSchema>;
 
 export const DecisionsInputSchema = z.object({
   limit: z.number().int().min(1).max(50).default(10),
+  /** Skip first N decisions (for pagination). */
+  offset: z.number().int().min(0).optional(),
   domain: z.string().optional(),
   /** Substring match on decision + rationale (distill-backed list). */
   q: z.string().optional(),
@@ -120,6 +122,13 @@ export const DecisionItemSchema = z.object({
   rationale: z.string(),
   domain: z.string().optional(),
   alternativesConsidered: z.number().int().min(0).optional(),
+  projectId: z.string().optional(),
+  /** Event IDs that contributed to this decision (evidence chain). */
+  evidenceEventIds: z.array(z.string()).optional(),
+  /** Human Direction Score — how much the developer steered this decision. */
+  humanDirectionScore: z.number().optional(),
+  /** Classification: human-directed, ai-suggested, collaborative. */
+  directionClassification: z.string().optional(),
 });
 
 export type DecisionItem = z.infer<typeof DecisionItemSchema>;

@@ -10,6 +10,7 @@
 // Diagnostics: `.unfade/logs/llm-synthesis.jsonl` (NDJSON, no secrets).
 
 import { APICallError, generateText, RetryError } from "ai";
+import { KNOWN_MODEL_DEFAULTS, MIN_CONTEXT_WINDOW } from "../../schemas/config.js";
 import {
   type DailyDistill,
   DailyDistillSchema,
@@ -23,9 +24,19 @@ import {
 } from "./llm-synthesis-log.js";
 import type { LLMProviderResult } from "./providers/ai.js";
 
+export interface ModelLimits {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  maxPromptChars?: number;
+  rpm?: number;
+  tpm?: number;
+}
+
 export interface SynthesizeOptions {
   /** Git / project cwd — used to resolve `.unfade/logs/llm-synthesis.jsonl`. */
   cwd?: string;
+  /** Model-specific limits. Auto-detected if not provided. */
+  modelLimits?: ModelLimits;
 }
 
 const SYNTHESIS_MODE = "portable_json" as const;
@@ -147,7 +158,7 @@ export async function synthesize(
   if (provider) {
     const promptChars = buildLLMPrompt(linked).length;
     try {
-      return await synthesizeWithLLM(linked, provider, options?.cwd);
+      return await synthesizeWithLLM(linked, provider, options?.cwd, options);
     } catch (err) {
       appendLlmSynthLog(
         {
@@ -178,8 +189,11 @@ async function synthesizeWithLLM(
   linked: LinkedSignals,
   provider: LLMProviderResult,
   cwd?: string,
+  options?: SynthesizeOptions,
 ): Promise<DailyDistill> {
-  const prompt = buildLLMPrompt(linked);
+  const limits = resolveModelLimits(provider.modelName, options?.modelLimits);
+  const maxOutput = limits.maxOutputTokens ?? 16_384;
+  const prompt = buildLLMPrompt(linked, limits);
 
   appendLlmSynthLog(
     {
@@ -194,12 +208,19 @@ async function synthesizeWithLLM(
     cwd,
   );
 
+  logger.debug("LLM synthesis prompt built", {
+    promptChars: prompt.length,
+    maxPromptChars: resolveMaxPromptChars(limits),
+    modelName: provider.modelName,
+    maxOutputTokens: maxOutput,
+  });
+
   const result = await generateText({
     model: provider.model,
     system: distillSystemPromptPortable(),
     prompt,
     temperature: 0,
-    maxOutputTokens: 16_384,
+    maxOutputTokens: maxOutput,
     maxRetries: 2,
   });
 
@@ -254,63 +275,57 @@ async function synthesizeWithLLM(
 }
 
 /**
- * Build the LLM prompt from linked signals.
+ * Default maximum prompt size in characters, derived from MIN_CONTEXT_WINDOW.
+ * All LLM operations assume at least 128K context — this lets us batch aggressively
+ * and avoid per-model prompt splitting logic.
  */
-function buildLLMPrompt(linked: LinkedSignals): string {
-  const sections: string[] = [
+const DEFAULT_MAX_PROMPT_CHARS = MIN_CONTEXT_WINDOW * 4 - 16_384 * 4 - 2000; // ~446K chars
+
+/**
+ * Resolve effective prompt char limit from model limits config.
+ * Priority: explicit maxPromptChars > derived from contextWindow > default (128K-floor).
+ * Context window is floored at MIN_CONTEXT_WINDOW — models below 128K are not supported.
+ */
+function resolveMaxPromptChars(limits?: ModelLimits): number {
+  if (limits?.maxPromptChars) return limits.maxPromptChars;
+  const contextWindow = Math.max(limits?.contextWindow ?? MIN_CONTEXT_WINDOW, MIN_CONTEXT_WINDOW);
+  const outputReserve = (limits?.maxOutputTokens ?? 4096) * 4;
+  const systemOverhead = 2000; // system prompt chars
+  return Math.max(5000, contextWindow * 4 - outputReserve - systemOverhead);
+}
+
+/**
+ * Resolve model limits: explicit config > known model defaults > empty.
+ */
+function resolveModelLimits(modelName: string, explicit?: ModelLimits): ModelLimits {
+  const known = KNOWN_MODEL_DEFAULTS[modelName] ?? {};
+  return { ...known, ...explicit };
+}
+
+/**
+ * Truncate a file list to fit within a character budget.
+ */
+function truncateFiles(files: string[] | undefined, maxFiles: number): string {
+  if (!files || files.length === 0) return "no files";
+  if (files.length <= maxFiles) return files.join(", ");
+  return `${files.slice(0, maxFiles).join(", ")} (+${files.length - maxFiles} more)`;
+}
+
+/**
+ * Build the LLM prompt from linked signals, with truncation to stay within model limits.
+ * Prioritizes: recent commits > trade-offs > dead ends > temporal chains.
+ * Signals are trimmed proportionally when total exceeds the model's prompt char limit.
+ */
+function buildLLMPrompt(linked: LinkedSignals, limits?: ModelLimits): string {
+  const MAX_PROMPT_CHARS = resolveMaxPromptChars(limits);
+  const header = [
     `You are analyzing a developer's engineering activity for ${linked.date}.`,
     `Generate a Daily Distill — a concise reasoning summary that captures decisions, trade-offs, dead ends, breakthroughs, and patterns.`,
     "",
     `## Raw Signals`,
-    "",
-    `### Commits (${linked.decisions.length})`,
-  ];
+  ].join("\n");
 
-  for (const d of linked.decisions) {
-    const files = d.files?.join(", ") ?? "no files";
-    const alts = d.alternativesCount > 0 ? ` (${d.alternativesCount} alternative branches)` : "";
-    sections.push(`- ${d.summary} [${d.branch ?? "unknown branch"}] files: ${files}${alts}`);
-  }
-
-  if (linked.tradeOffs.length > 0) {
-    sections.push("", `### AI Rejections / Trade-offs (${linked.tradeOffs.length})`);
-    for (const t of linked.tradeOffs) {
-      sections.push(`- ${t.summary} files: ${t.relatedFiles?.join(", ") ?? "none"}`);
-    }
-  }
-
-  if (linked.deadEnds.length > 0) {
-    sections.push("", `### Reverts / Dead Ends (${linked.deadEnds.length})`);
-    for (const d of linked.deadEnds) {
-      const time = d.timeSpentMinutes ? ` (~${d.timeSpentMinutes} min spent)` : "";
-      sections.push(`- ${d.summary}${time}`);
-    }
-  }
-
-  if (linked.temporalChains.length > 0) {
-    sections.push("", `### Temporal Chains`);
-    for (const c of linked.temporalChains) {
-      sections.push(`- ${c.module}: ${c.summary}`);
-    }
-  }
-
-  sections.push(
-    "",
-    `### Stats`,
-    `- Total events: ${linked.stats.totalEvents}`,
-    `- Commits: ${linked.stats.commitCount}`,
-    `- AI completions: ${linked.stats.aiCompletions}`,
-    `- AI rejections: ${linked.stats.aiRejections}`,
-    `- Branch switches: ${linked.stats.branchSwitches}`,
-    `- Files changed: ${linked.stats.filesChanged.length}`,
-    `- Domains: ${linked.stats.domains.join(", ") || "none"}`,
-  );
-
-  if (linked.stats.aiAcceptanceRate !== undefined) {
-    sections.push(`- AI acceptance rate: ${(linked.stats.aiAcceptanceRate * 100).toFixed(0)}%`);
-  }
-
-  sections.push(
+  const instructions = [
     "",
     `## Instructions`,
     `- Write a concise summary (2-3 sentences) of the day's engineering work`,
@@ -321,9 +336,140 @@ function buildLLMPrompt(linked: LinkedSignals): string {
     `- Identify recurring patterns across the day's work`,
     `- Use the developer's own words from commit messages where possible`,
     `- Be specific — reference actual files and branches, not generic summaries`,
-  );
+  ].join("\n");
 
-  return sections.join("\n");
+  const stats = [
+    "",
+    `### Stats`,
+    `- Total events: ${linked.stats.totalEvents}`,
+    `- Commits: ${linked.stats.commitCount}`,
+    `- AI completions: ${linked.stats.aiCompletions}`,
+    `- AI rejections: ${linked.stats.aiRejections}`,
+    `- Branch switches: ${linked.stats.branchSwitches}`,
+    `- Files changed: ${linked.stats.filesChanged.length}`,
+    `- Domains: ${linked.stats.domains.join(", ") || "none"}`,
+    ...(linked.stats.aiAcceptanceRate !== undefined
+      ? [`- AI acceptance rate: ${(linked.stats.aiAcceptanceRate * 100).toFixed(0)}%`]
+      : []),
+  ].join("\n");
+
+  // Fixed overhead: header + stats + instructions
+  const fixedLen = header.length + stats.length + instructions.length + 20; // padding
+  const budget = MAX_PROMPT_CHARS - fixedLen;
+
+  // Build signal sections with budget allocation:
+  // commits 50%, trade-offs 25%, dead ends 15%, temporal chains 10%
+  const commitBudget = Math.floor(budget * 0.5);
+  const tradeOffBudget = Math.floor(budget * 0.25);
+  const deadEndBudget = Math.floor(budget * 0.15);
+  const chainBudget = Math.floor(budget * 0.1);
+
+  const commitLines = buildCommitSection(linked.decisions, commitBudget);
+  const tradeOffLines = buildTradeOffSection(linked.tradeOffs, tradeOffBudget);
+  const deadEndLines = buildDeadEndSection(linked.deadEnds, deadEndBudget);
+  const chainLines = buildChainSection(linked.temporalChains, chainBudget);
+
+  const sections = [
+    header,
+    commitLines,
+    tradeOffLines,
+    deadEndLines,
+    chainLines,
+    stats,
+    instructions,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  if (sections.length > MAX_PROMPT_CHARS) {
+    logger.debug("Prompt still over budget after truncation, hard-trimming", {
+      length: sections.length,
+      max: MAX_PROMPT_CHARS,
+    });
+    return sections.slice(0, MAX_PROMPT_CHARS);
+  }
+
+  return sections;
+}
+
+function buildCommitSection(decisions: LinkedSignals["decisions"], budget: number): string {
+  if (decisions.length === 0) return `\n### Commits (0)\n(none)`;
+
+  const lines: string[] = [``, `### Commits (${decisions.length})`];
+  let used = lines.join("\n").length;
+
+  for (const d of decisions) {
+    const files = truncateFiles(d.files, 5);
+    const alts = d.alternativesCount > 0 ? ` (${d.alternativesCount} alternatives)` : "";
+    const line = `- ${d.summary} [${d.branch ?? "unknown"}] files: ${files}${alts}`;
+    if (used + line.length + 1 > budget) {
+      const remaining = decisions.length - lines.length + 2;
+      if (remaining > 0) lines.push(`  ... and ${remaining} more commits (truncated for size)`);
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+
+  return lines.join("\n");
+}
+
+function buildTradeOffSection(tradeOffs: LinkedSignals["tradeOffs"], budget: number): string {
+  if (tradeOffs.length === 0) return "";
+
+  const lines: string[] = [``, `### AI Rejections / Trade-offs (${tradeOffs.length})`];
+  let used = lines.join("\n").length;
+
+  for (const t of tradeOffs) {
+    const line = `- ${t.summary} files: ${truncateFiles(t.relatedFiles, 3)}`;
+    if (used + line.length + 1 > budget) {
+      lines.push(`  ... and ${tradeOffs.length - lines.length + 2} more (truncated)`);
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+
+  return lines.join("\n");
+}
+
+function buildDeadEndSection(deadEnds: LinkedSignals["deadEnds"], budget: number): string {
+  if (deadEnds.length === 0) return "";
+
+  const lines: string[] = [``, `### Reverts / Dead Ends (${deadEnds.length})`];
+  let used = lines.join("\n").length;
+
+  for (const d of deadEnds) {
+    const time = d.timeSpentMinutes ? ` (~${d.timeSpentMinutes} min)` : "";
+    const line = `- ${d.summary}${time}`;
+    if (used + line.length + 1 > budget) {
+      lines.push(`  ... and ${deadEnds.length - lines.length + 2} more (truncated)`);
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+
+  return lines.join("\n");
+}
+
+function buildChainSection(chains: LinkedSignals["temporalChains"], budget: number): string {
+  if (chains.length === 0) return "";
+
+  const lines: string[] = [``, `### Temporal Chains`];
+  let used = lines.join("\n").length;
+
+  for (const c of chains) {
+    const line = `- ${c.module}: ${c.summary}`;
+    if (used + line.length + 1 > budget) {
+      lines.push(`  ... and ${chains.length - lines.length + 2} more (truncated)`);
+      break;
+    }
+    lines.push(line);
+    used += line.length + 1;
+  }
+
+  return lines.join("\n");
 }
 
 /**

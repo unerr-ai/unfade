@@ -17,7 +17,7 @@ const DEFAULT_PHASE_RANGES: Record<string, { low: number; high: number }> = {
 };
 
 const MIN_EVENTS_FOR_BASELINE = 50;
-const ROLLING_WINDOW_DAYS = 30;
+const _ROLLING_WINDOW_DAYS = 30;
 
 export interface PhaseBaseline {
   phase: string;

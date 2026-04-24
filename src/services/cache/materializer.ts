@@ -18,6 +18,23 @@ import {
 import { KNOWN_METADATA_FIELDS } from "./duckdb-schema.js";
 import type { CacheManager, DbLike } from "./manager.js";
 
+// DuckDB node-api requires DuckDBListValue for VARCHAR[] columns —
+// plain JS arrays hit the ANY type fallback and silently fail.
+let _listValue: ((items: readonly unknown[]) => unknown) | null = null;
+async function getDuckListValue(): Promise<(items: readonly unknown[]) => unknown> {
+  if (!_listValue) {
+    const { listValue } = await import("@duckdb/node-api");
+    _listValue = listValue as (items: readonly unknown[]) => unknown;
+  }
+  return _listValue;
+}
+
+/** Wrap a JS string[] into a DuckDBListValue. Returns null for empty arrays. */
+function toDuckList(arr: string[]): unknown {
+  if (!_listValue) return arr; // fallback — will be set before first use
+  return arr.length > 0 ? _listValue(arr) : _listValue([]);
+}
+
 // ---------------------------------------------------------------------------
 // JSONL byte-counting helper
 // ---------------------------------------------------------------------------
@@ -65,11 +82,12 @@ export async function materializeIncremental(cache: CacheManager, cwd?: string):
   if (!db) return 0;
 
   const duckDb = cache.analytics;
+  if (duckDb) await getDuckListValue(); // ensure DuckDBListValue wrapper is ready
 
   const cursor = loadCursor(cwd);
   let totalNew = 0;
 
-  totalNew += materializeEventsIncremental(db, duckDb, cursor, cwd);
+  totalNew += await materializeEventsIncremental(db, duckDb, cursor, cwd);
   totalNew += await materializeDecisionsIncremental(db, duckDb, cursor, cwd);
   totalNew += materializeMetricsIncremental(db, duckDb, cursor, cwd);
 
@@ -94,6 +112,7 @@ export async function rebuildAll(cache: CacheManager, cwd?: string): Promise<num
   if (!db) return 0;
 
   const duckDb = cache.analytics;
+  if (duckDb) await getDuckListValue(); // ensure DuckDBListValue wrapper is ready
 
   await cache.resetDuckDbSchema();
 
@@ -118,12 +137,12 @@ export async function rebuildAll(cache: CacheManager, cwd?: string): Promise<num
 // Incremental event materialization
 // ---------------------------------------------------------------------------
 
-function materializeEventsIncremental(
+async function materializeEventsIncremental(
   db: DbLike,
   duckDb: DbLike | null,
   cursor: MaterializerCursor,
   cwd?: string,
-): number {
+): Promise<number> {
   const eventsDir = getEventsDir(cwd);
   if (!existsSync(eventsDir)) return 0;
 
@@ -149,7 +168,7 @@ function materializeEventsIncremental(
 
     // Per-file rebuild: if cursor is invalid, reset this file only
     if (streamCursor && !isCursorValid(streamCursor, filePath)) {
-      logger.info("Cursor invalid for file, rebuilding file-only", { file });
+      logger.debug("Cursor invalid for file, rebuilding file-only", { file });
       delete cursor.streams[streamKey];
       startOffset = 0;
     }
@@ -162,7 +181,7 @@ function materializeEventsIncremental(
         streamCursor.fileSize > 0 &&
         currentSize > streamCursor.fileSize * 2
       ) {
-        logger.info("Cursor stale — file grew significantly since last tick, reprocessing", {
+        logger.debug("Cursor stale — file grew significantly since last tick, reprocessing", {
           file,
           cursorSize: streamCursor.fileSize,
           currentSize,
@@ -214,6 +233,11 @@ function materializeEventsIncremental(
       }
 
       bytesProcessed += rawLineLength;
+
+      // Yield to the event loop every 100 inserts to prevent blocking HTTP serving
+      if (totalNew > 0 && totalNew % 100 === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
     }
 
     // Defensive clamp: ensure byteOffset never exceeds actual file bytes.
@@ -551,7 +575,9 @@ function extractTypedColumns(meta: Record<string, unknown>): TypedEventColumns {
     tokens_in: (meta.tokens_in as number) ?? null,
     tokens_out: (meta.tokens_out as number) ?? null,
     estimated_cost: (meta.estimated_cost as number) ?? null,
-    files_referenced: Array.isArray(meta.files_referenced) ? (meta.files_referenced as string[]) : [],
+    files_referenced: Array.isArray(meta.files_referenced)
+      ? (meta.files_referenced as string[])
+      : [],
     files_modified: Array.isArray(meta.files_modified) ? (meta.files_modified as string[]) : [],
     metadata_extra: JSON.stringify(Object.keys(extra).length > 0 ? extra : null),
   };
@@ -592,7 +618,7 @@ function upsertEventDuck(duckDb: DbLike, event: Record<string, unknown>): void {
   const typed = extractTypedColumns(meta);
   const projectId = (event.projectId as string) || (content.project as string) || "";
 
-  const contentFiles = Array.isArray(content.files) ? content.files : [];
+  const contentFiles = Array.isArray(content.files) ? (content.files as string[]) : [];
 
   duckDb.run(DUCK_EVENT_INSERT, [
     event.id,
@@ -604,7 +630,7 @@ function upsertEventDuck(duckDb: DbLike, event: Record<string, unknown>): void {
     content.detail ?? null,
     content.branch ?? null,
     content.project ?? null,
-    contentFiles,
+    toDuckList(contentFiles),
     git.repo ?? null,
     git.branch ?? null,
     git.commitHash ?? null,
@@ -629,8 +655,8 @@ function upsertEventDuck(duckDb: DbLike, event: Record<string, unknown>): void {
     typed.tokens_in,
     typed.tokens_out,
     typed.estimated_cost,
-    typed.files_referenced,
-    typed.files_modified,
+    toDuckList(typed.files_referenced),
+    toDuckList(typed.files_modified),
     typed.metadata_extra,
   ]);
 }

@@ -4,13 +4,7 @@
 
 import { logger } from "../../utils/logger.js";
 import type { DbLike } from "../cache/manager.js";
-import type { AnalyzerContext } from "./analyzers/index.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 const WINDOW_SIZES = [
   { label: "1h", hours: 1 },

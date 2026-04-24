@@ -9,10 +9,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UnfadeConfig } from "../../schemas/config.js";
-import { localDateStr } from "../../utils/date.js";
 import type { DailyDistill } from "../../schemas/distill.js";
 import type { CaptureEvent } from "../../schemas/event.js";
 import type { ReasoningModelV2 } from "../../schemas/profile.js";
+import { localDateStr } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getDistillsDir, getGraphDir, getProfileDir } from "../../utils/paths.js";
 import { countEvents, readEvents } from "../capture/event-store.js";
@@ -207,7 +207,10 @@ export async function distill(
   // Stage 3: Synthesize (LLM or fallback)
   const provider =
     options.provider !== undefined ? options.provider : await createLLMProvider(config);
-  const result = await synthesize(linked, provider, { cwd });
+  const result = await synthesize(linked, provider, {
+    cwd,
+    modelLimits: config.distill.modelLimits,
+  });
 
   // Stage 3.5: Aggregate direction signals from AI session events
   const { averageHDS, classifications, toolBreakdown } = aggregateDirectionSignals(events);

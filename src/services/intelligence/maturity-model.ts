@@ -6,12 +6,7 @@
 
 import type { AnalyzerContext } from "./analyzers/index.js";
 import { diagnosticStream } from "./diagnostic-stream.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 import { bayesianSmooth, mannKendall } from "./utils/stats.js";
 
 // ---------------------------------------------------------------------------
@@ -380,7 +375,7 @@ function computeDimensions(
   });
 }
 
-function computeGlobalPrior(ctx: AnalyzerContext, previousScores: Record<string, number>): number {
+function computeGlobalPrior(_ctx: AnalyzerContext, previousScores: Record<string, number>): number {
   const values = Object.values(previousScores);
   if (values.length === 0) return 0.35;
   return values.reduce((s, v) => s + v, 0) / values.length;

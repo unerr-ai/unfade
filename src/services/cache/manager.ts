@@ -15,7 +15,12 @@ const DUCKDB_FILENAME = "unfade.duckdb";
 
 export interface DbLike {
   run(sql: string, params?: unknown[]): void;
-  exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
+  exec(
+    sql: string,
+    params?: unknown[],
+  ):
+    | Array<{ columns: string[]; values: unknown[][] }>
+    | Promise<Array<{ columns: string[]; values: unknown[][] }>>;
 }
 
 type DuckDBInstance = {
@@ -163,6 +168,58 @@ export class CacheManager {
     for (const ddl of ALL_DUCKDB_DDL) {
       await conn.run(ddl);
     }
+    // Migrate existing tables: add any columns that are in the DDL but missing from the table
+    await this.migrateDuckDbColumns(conn);
+  }
+
+  /**
+   * Detect and add missing columns to existing DuckDB tables.
+   * CREATE TABLE IF NOT EXISTS doesn't add columns added after initial creation.
+   */
+  private async migrateDuckDbColumns(conn: DuckDBConnection): Promise<void> {
+    for (const ddl of ALL_DUCKDB_DDL) {
+      const tableMatch = ddl.match(/CREATE TABLE IF NOT EXISTS (\w+)/);
+      if (!tableMatch) continue;
+      const tableName = tableMatch[1];
+
+      // Get existing columns from DuckDB
+      let existingCols: Set<string>;
+      try {
+        const result = await conn.runAndReadAll(
+          `SELECT column_name FROM information_schema.columns WHERE table_name = '${tableName}'`,
+        );
+        existingCols = new Set<string>();
+        for (let r = 0; r < result.currentRowCount; r++) {
+          existingCols.add(String(result.value(0, r)).toLowerCase());
+        }
+      } catch {
+        continue; // table doesn't exist yet — CREATE TABLE will handle it
+      }
+
+      if (existingCols.size === 0) continue;
+
+      // Parse expected columns from DDL (lines like "    column_name TYPE,")
+      const columnDefs = ddl.matchAll(
+        /^\s{2,}(\w+)\s+(VARCHAR(?:\[\])?|TIMESTAMP|INTEGER|FLOAT|BOOLEAN|JSON|DATE)(?:\s+.*?)?,?\s*$/gm,
+      );
+
+      for (const match of columnDefs) {
+        const colName = match[1].toLowerCase();
+        const colType = match[2];
+        if (colName === "primary" || existingCols.has(colName)) continue;
+
+        try {
+          await conn.run(`ALTER TABLE ${tableName} ADD COLUMN ${colName} ${colType}`);
+          logger.debug("DuckDB migration: added column", {
+            table: tableName,
+            column: colName,
+            type: colType,
+          });
+        } catch {
+          // Column might already exist or ALTER failed — non-fatal
+        }
+      }
+    }
   }
 
   /** Drop and recreate all DuckDB analytical tables (for rebuild). */
@@ -197,7 +254,10 @@ export class CacheManager {
         })();
         pending.push(p);
       },
-      async exec(sql: string, params?: unknown[]): Promise<Array<{ columns: string[]; values: unknown[][] }>> {
+      async exec(
+        sql: string,
+        params?: unknown[],
+      ): Promise<Array<{ columns: string[]; values: unknown[][] }>> {
         try {
           const reader = await conn.runAndReadAll(sql, params ?? undefined);
           const colNames = reader.columnNames();

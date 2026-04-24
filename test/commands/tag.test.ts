@@ -10,29 +10,29 @@ function createMockTagDb() {
     run(sql: string, params?: unknown[]): void {
       if (sql.includes("INSERT INTO features")) {
         features.push({
-          id: params![0] as string,
-          name: params![2] as string,
+          id: params?.[0] as string,
+          name: params?.[2] as string,
           event_count: 0,
         });
       } else if (sql.includes("INSERT OR IGNORE INTO event_features")) {
         const existing = eventFeatures.find(
-          (ef) => ef.event_id === params![0] && ef.feature_id === params![1],
+          (ef) => ef.event_id === params?.[0] && ef.feature_id === params?.[1],
         );
         if (!existing) {
           eventFeatures.push({
-            event_id: params![0] as string,
-            feature_id: params![1] as string,
+            event_id: params?.[0] as string,
+            feature_id: params?.[1] as string,
             source: "user",
           });
         }
       } else if (sql.includes("UPDATE features SET event_count")) {
-        const f = features.find((f) => f.id === params![1]);
-        if (f) f.event_count += params![0] as number;
+        const f = features.find((f) => f.id === params?.[1]);
+        if (f) f.event_count += params?.[0] as number;
       }
     },
     exec(sql: string, params?: unknown[]): Array<{ columns: string[]; values: unknown[][] }> {
       if (sql.includes("SELECT id FROM features WHERE id = ?")) {
-        const found = features.find((f) => f.id === params![0]);
+        const found = features.find((f) => f.id === params?.[0]);
         if (found) return [{ columns: ["id"], values: [[found.id]] }];
         return [];
       }

@@ -4,7 +4,6 @@
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { logger } from "../../utils/logger.js";
 import { getStateDir } from "../../utils/paths.js";
 
 export interface StopHttpServerResult {

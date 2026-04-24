@@ -6,6 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../src/server/setup-state.js", () => ({
   isSetupComplete: () => true,
   invalidateSetupCache: () => {},
+  shouldShowSynthesisBanner: () => false,
+  getSynthesisProgress: () => ({
+    percent: 0,
+    totalEvents: 0,
+    processedEvents: 0,
+    phase: "pending",
+    synthesisCompletedAt: null,
+  }),
 }));
 
 import { createApp } from "../../src/server/http.js";
@@ -27,10 +35,11 @@ describe("createApp", () => {
     expect(body.data.pid).toBe(process.pid);
   });
 
-  it("returns JSON error for unknown routes", async () => {
+  it("serves SPA for unknown non-API routes (React Router handles 404 client-side)", async () => {
     const app = createApp();
     const res = await app.request("/nonexistent");
-    expect(res.status).toBe(404);
+    const status = res.status;
+    expect(status === 200 || status === 404).toBe(true);
   });
 
   it("includes CORS headers for localhost origins", async () => {

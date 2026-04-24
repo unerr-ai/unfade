@@ -2,14 +2,7 @@
 // UF-473: Push-based SSE endpoint — subscribes to eventBus for real-time updates.
 // Falls back to file polling only for health ticks and initial backfill.
 
-import {
-  closeSync,
-  existsSync,
-  openSync,
-  readdirSync,
-  readSync,
-  statSync,
-} from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";

@@ -4,9 +4,8 @@
 // Trend: compare current vs 7d trailing average.
 
 import { localToday } from "../../utils/date.js";
-import { readTodaySpend, readTrailingSpend } from "./token-proxy.js";
-
 import type { DbLike } from "../cache/manager.js";
+import { readTodaySpend, readTrailingSpend } from "./token-proxy.js";
 
 export interface CostQualityResult {
   costPerDirectedDecision: number | null;

@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import { CacheManager } from "../../services/cache/manager.js";
 import { readModuleComprehension } from "../../services/intelligence/comprehension.js";
 import { readDirectionByFile } from "../../services/intelligence/file-direction.js";
 import { findRepoById } from "../../services/registry/registry.js";
+import { getServerCache } from "../shared-cache.js";
 
 export const heatmapRoutes = new Hono();
 
@@ -28,7 +28,7 @@ heatmapRoutes.get("/api/repos/:id/heatmap", async (c) => {
     return c.json({ error: "Repo not found" }, 404);
   }
 
-  const cache = new CacheManager(repo.root);
+  const cache = getServerCache();
   await cache.getDb();
   const analyticsDb = cache.analytics;
   if (!analyticsDb) {
@@ -59,7 +59,7 @@ heatmapRoutes.get("/api/repos/:id/heatmap", async (c) => {
 
 // GET /heatmap — heatmap for the current project (single-repo mode)
 heatmapRoutes.get("/api/heatmap", async (c) => {
-  const cache = new CacheManager();
+  const cache = getServerCache();
   const db = await cache.getDb();
   if (!db) {
     return c.json({ modules: [] });
@@ -77,8 +77,6 @@ heatmapRoutes.get("/api/heatmap", async (c) => {
     eventCount: entry.eventCount,
     riskLevel: classifyRisk(entry.directionDensity),
   }));
-
-  await cache.close();
 
   return c.json({ modules });
 });

@@ -11,7 +11,7 @@ import type {
   NewEventBatch,
   UpdateResult,
 } from "../incremental-state.js";
-import type { AnalyzerContext, AnalyzerResult } from "./index.js";
+import type { AnalyzerContext } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -48,7 +48,7 @@ const QUESTION_PATTERN = /\?/g;
 // Compute helpers — all take db (analytics) only
 // ---------------------------------------------------------------------------
 
-async function collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
+async function _collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
   try {
     const result = await db.exec(`
       SELECT id FROM events

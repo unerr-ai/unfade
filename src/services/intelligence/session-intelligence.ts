@@ -3,14 +3,8 @@
 // history, loop risk, direction trend, and suggested actions. Emits
 // diagnostics when loopRisk > 0.7 or direction falls for > 5 events.
 
-import type { AnalyzerContext } from "./analyzers/index.js";
 import { diagnosticStream } from "./diagnostic-stream.js";
-import type {
-  IncrementalAnalyzer,
-  IncrementalState,
-  NewEventBatch,
-  UpdateResult,
-} from "./incremental-state.js";
+import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,7 +55,7 @@ export const sessionIntelligenceAnalyzer: IncrementalAnalyzer<
   eventFilter: { sources: ["ai-session", "mcp-active"] },
   minDataPoints: 1,
 
-  async initialize(ctx): Promise<IncrementalState<SessionIntelligenceState>> {
+  async initialize(_ctx): Promise<IncrementalState<SessionIntelligenceState>> {
     return {
       value: { sessions: {}, updatedAt: new Date().toISOString() },
       watermark: "",
@@ -70,7 +64,7 @@ export const sessionIntelligenceAnalyzer: IncrementalAnalyzer<
     };
   },
 
-  async update(state, batch, ctx): Promise<UpdateResult<SessionIntelligenceState>> {
+  async update(state, batch, _ctx): Promise<UpdateResult<SessionIntelligenceState>> {
     if (batch.events.length === 0) return { state, changed: false };
 
     const sessions = { ...state.value.sessions };

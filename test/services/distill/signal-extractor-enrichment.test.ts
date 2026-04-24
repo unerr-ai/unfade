@@ -34,9 +34,9 @@ describe("extractSignals — enrichment", () => {
     const result = extractSignals(events, DATE);
     expect(ExtractedSignalsSchema.safeParse(result).success).toBe(true);
     expect(result.stats.executionPhaseBreakdown).toBeDefined();
-    expect(result.stats.executionPhaseBreakdown!.debugging).toBe(2);
-    expect(result.stats.executionPhaseBreakdown!.implementing).toBe(1);
-    expect(result.stats.executionPhaseBreakdown!.testing).toBe(1);
+    expect(result.stats.executionPhaseBreakdown?.debugging).toBe(2);
+    expect(result.stats.executionPhaseBreakdown?.implementing).toBe(1);
+    expect(result.stats.executionPhaseBreakdown?.testing).toBe(1);
   });
 
   it("T-333: outcomeBreakdown aggregates outcomes from AI event metadata", () => {
@@ -51,10 +51,10 @@ describe("extractSignals — enrichment", () => {
     const result = extractSignals(events, DATE);
     expect(ExtractedSignalsSchema.safeParse(result).success).toBe(true);
     expect(result.stats.outcomeBreakdown).toBeDefined();
-    expect(result.stats.outcomeBreakdown!.success).toBe(2);
-    expect(result.stats.outcomeBreakdown!.partial).toBe(1);
-    expect(result.stats.outcomeBreakdown!.failed).toBe(1);
-    expect(result.stats.outcomeBreakdown!.unclassified).toBe(1);
+    expect(result.stats.outcomeBreakdown?.success).toBe(2);
+    expect(result.stats.outcomeBreakdown?.partial).toBe(1);
+    expect(result.stats.outcomeBreakdown?.failed).toBe(1);
+    expect(result.stats.outcomeBreakdown?.unclassified).toBe(1);
   });
 
   it("T-332b: executionPhaseBreakdown is undefined when no AI events", () => {

@@ -279,15 +279,58 @@ function createMaterializerForRepo(
 
   return new MaterializerDaemon({
     intervalMs: 2000,
-    onTick: async function onTick(newRows) {
+    onTick: async function onTick(newRows, materializerCache) {
+      // Always update synthesis progress, even when newRows is 0.
+      // This ensures the banner transitions from "materializing" to "complete"
+      // once all available data has been processed.
+      try {
+        const { loadCursor } = await import("../cache/cursor.js");
+        const { updateSynthesisProgress, getSynthesisProgress } = await import(
+          "../../server/setup-state.js"
+        );
+        const current = getSynthesisProgress();
+        // Only update if we're in the materializing phase
+        if (current.phase === "materializing") {
+          const cursor = loadCursor();
+          const streamKeys = Object.keys(cursor.streams);
+          if (streamKeys.length === 0) {
+            // No event files processed yet — either no events exist or initial build
+            // hasn't run. Mark as complete since there's nothing to materialize.
+            updateSynthesisProgress({
+              percent: 100,
+              processedEvents: 0,
+              totalEvents: 0,
+              phase: "complete",
+            });
+          } else {
+            let processedBytes = 0;
+            let totalBytes = 0;
+            for (const stream of Object.values(cursor.streams)) {
+              processedBytes += stream.byteOffset;
+              totalBytes += stream.fileSize ?? stream.byteOffset;
+            }
+            const percent =
+              totalBytes > 0 ? Math.min(100, Math.round((processedBytes / totalBytes) * 100)) : 100;
+            updateSynthesisProgress({
+              percent,
+              processedEvents: processedBytes,
+              totalEvents: totalBytes,
+              phase: percent >= 100 ? "complete" : "materializing",
+            });
+          }
+        }
+      } catch {
+        // non-fatal — progress display only
+      }
+
       if (newRows <= 0) return;
 
-      const { CacheManager } = await import("../cache/manager.js");
-      const cache = new CacheManager();
-      const db = await cache.getDb();
+      // Use the materializer's own CacheManager — same DB handles that just
+      // wrote the materialized data. No extra connections, no resource leak.
+      const db = await materializerCache.getDb();
       if (!db) return;
 
-      const analyticsDb = cache.analytics ?? db;
+      const analyticsDb = materializerCache.analytics ?? db;
 
       // Comprehension scoring (reads SQLite metadata column, writes to both)
       try {

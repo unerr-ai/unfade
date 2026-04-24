@@ -61,10 +61,20 @@ DuckDB is an embedded columnar analytical database. Same deployment model as SQL
          ┌──────────┤      ┌────┤
          │          │      │    │
     Intelligence  Distill  MCP  FTS Search
-    (8 analyzers) pipeline tools  (query tool)
+    (28 analyzers) pipeline tools  (query tool)
     Window agg.            HTTP API
     Trend detect           Point lookups
     Cost analysis          Event by ID
+         │
+         ▼
+    ┌──────────┐
+    │  CozoDB  │  (intelligence graph)
+    │ (Datalog)│  ~/.unfade/intelligence/graph.db
+    └──────────┘
+    Entity graph (work-units, decisions, patterns, capabilities)
+    Edges (produced-by, demonstrates, revises, co-occurred-with)
+    HNSW vector index for semantic similarity
+    Analyzer provenance tracking (entity_source)
 ```
 
 ---
@@ -114,7 +124,34 @@ DuckDB is an embedded columnar analytical database. Same deployment model as SQL
 
 **Who writes**: Materializer (single-row upserts), intelligence engine (`event_insight_map` only).
 
-### 2.3 Responsibility Split Rationale
+### 2.3 CozoDB — Intelligence Graph (`~/.unfade/intelligence/graph.db`)
+
+**Purpose**: Graph database for intelligence entities, relationships, and semantic similarity search. CozoDB uses Datalog queries with a SQLite storage backend. The intelligence engine's analyzers write entity contributions here; the substrate engine resolves multi-analyzer contributions into unified entities and propagates relationships.
+
+**Relations** (3 data + 1 meta):
+
+| Relation | Purpose | Key columns |
+|---|---|---|
+| `entity` | Graph nodes: work-units, decisions, patterns, capabilities, features, diagnostics, hotspots | `id, type, project_id, created_at, last_updated, confidence, lifecycle, state (Json), embedding ([Float; 64])` |
+| `edge` | Directed relationships between entities | `src, dst, type, weight, created_at, evidence, valid_from, valid_to` |
+| `entity_source` | Provenance: which analyzer contributed to each entity | `entity_id, analyzer, last_contributed, contribution_count` |
+| `meta` | Schema versioning and configuration | `key, value` |
+
+**HNSW vector index**: `entity:semantic_vec` — 64-dimension vectors on `embedding` column, filtered by `lifecycle != 'archived'`. Enables semantic similarity queries ("find entities similar to this one").
+
+**Entity types**: `work-unit`, `decision`, `feature`, `pattern`, `capability`, `diagnostic`, `maturity-assessment`, `commit`, `hotspot`.
+
+**Relationship types**: `produced-by`, `targets`, `demonstrates`, `evidences`, `revises`, `accumulates-to`, `depends-on`, `applies-to`, `learned-from`, `assessed-at`, `bottlenecked-by`, `narrated-by`, `part-of`, `co-occurred-with`.
+
+**Who reads**: MCP enrichment (`mcp-enrichment.ts`), intelligence analyzers (for cross-entity correlation), domain classifier.
+
+**Who writes**: SubstrateEngine (`substrate-engine.ts`) via `ingestContributions()` — receives `EntityContribution[]` from analyzers, resolves with existing entities, upserts to CozoDB, creates edges, runs propagation rules.
+
+**Lifecycle management**: Entities have a `lifecycle` field (`emerging` → `established` → `confirmed` → `decaying` → `archived`). The PropagationEngine runs rules that promote/demote entities based on evidence accumulation and decay.
+
+**Fallback**: If CozoDB SQLite file is corrupt or unavailable, falls back to in-memory CozoDB instance. Data is lost on restart but system continues functioning.
+
+### 2.4 Responsibility Split Rationale
 
 | Query pattern | Database | Why |
 |---|---|---|
@@ -126,6 +163,10 @@ DuckDB is an embedded columnar analytical database. Same deployment model as SQL
 | "Recent 20 events for SSE stream" | SQLite | Simple `ORDER BY ts DESC LIMIT 20` |
 | "Which AI tool has best direction scores?" | DuckDB | `GROUP BY ai_tool` on typed column (no json_extract) |
 | "Cost per directed decision" | DuckDB | Join `events` + `decisions` with window functions |
+| "Find entities similar to this pattern" | CozoDB | HNSW vector search on `entity:semantic_vec` index |
+| "What decisions led to this capability?" | CozoDB | Datalog graph traversal: `*edge{src, dst, type: 'produced-by'}` |
+| "Which analyzer contributed to this entity?" | CozoDB | `*entity_source{entity_id, analyzer}` provenance lookup |
+| "Cross-project pattern correlation" | CozoDB | Datalog join across `entity` and `edge` with `project_id` dimension |
 
 ---
 
@@ -509,6 +550,9 @@ The Go daemon writes JSONL to `~/.unfade/events/`. It does not know about DuckDB
 | `engine.ts` | Receives `AnalyzerContext` with both handles. Checks min data on `analytics`. Writes lineage to `operational` |
 | All 8 analyzers | Query `ctx.analytics` (DuckDB). Direct column access, no `json_extract` |
 | Lineage (`event_insight_map`) | Written to `ctx.operational` (SQLite) — operational lookup pattern |
+| `SubstrateEngine` | Receives `EntityContribution[]` from analyzers → writes entities/edges to CozoDB graph |
+| CozoDB (`cozo-manager.ts`) | Singleton graph DB at `~/.unfade/intelligence/graph.db`. SQLite storage backend. Lazily initialized |
+| Datalog queries | Intelligence surfaces query CozoDB for cross-entity reasoning (causal chains, pattern clusters, semantic similarity via HNSW) |
 
 ### Layer 4 — Distill Pipeline: Minimal
 
@@ -539,6 +583,9 @@ Reads events from DuckDB for richer signal extraction. File-based outputs (disti
 | **SQLite keeps `event_insight_map`** | Lineage is an operational lookup ("which insights came from this event?"). Point-lookup pattern — SQLite excels here |
 | **DuckDB graceful degradation** | If `@duckdb/node-api` is unavailable, `cache.analytics` is null. Intelligence degrades but system runs |
 | **Async `exec()` return type** | DuckDB Node API is fully async. `DbLike.exec()` returns `Array | Promise<Array>`. All callers `await` the result |
+| **CozoDB as intelligence graph, not primary store** | CozoDB stores derived entities/edges from analyzer outputs. It's a graph index over intelligence, not a replacement for DuckDB/SQLite. If CozoDB is unavailable, falls back to in-memory instance |
+| **CozoDB SQLite storage backend** | Uses `cozo-node` with SQLite engine for persistence at `~/.unfade/intelligence/graph.db`. Chosen for single-file portability and crash safety |
+| **Datalog for graph queries** | CozoDB uses Datalog (not SQL) — natural fit for recursive traversals, causal chains, and rule-based inference. HNSW vector index enables semantic similarity search (dim=64) |
 
 ---
 
@@ -563,6 +610,11 @@ Reads events from DuckDB for richer signal extraction. File-based outputs (disti
 | `src/services/mcp/tools.ts` | MCP tools — `unfade_query` uses SQLite FTS |
 | `src/server/routes/heatmap.ts` | Heatmap API — reads DuckDB analytics |
 | `src/server/routes/intelligence.ts` | Intelligence API — reads files + SQLite lineage |
+| `src/services/substrate/cozo-manager.ts` | CozoDB singleton — init, health check, schema migration, graceful fallback to in-memory |
+| `src/services/substrate/schema.ts` | CozoDB relation definitions: `entity`, `edge`, `entity_source`, `meta` + HNSW vector index |
+| `src/services/substrate/substrate-engine.ts` | SubstrateEngine — ingests `EntityContribution[]` from analyzers into CozoDB graph |
+| `src/services/substrate/propagation-rules.ts` | Datalog propagation rules for derived graph relationships |
+| `src/services/substrate/entity-resolver.ts` | Entity deduplication and resolution across analyzers |
 
 ---
 

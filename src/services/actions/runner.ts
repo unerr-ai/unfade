@@ -100,7 +100,7 @@ function logAction(repoRoot: string, entry: ActionLogEntry): void {
   const logsDir = getLogsDir(repoRoot);
   mkdirSync(logsDir, { recursive: true });
   const logFile = join(logsDir, "actions.jsonl");
-  appendFileSync(logFile, JSON.stringify(entry) + "\n", "utf-8");
+  appendFileSync(logFile, `${JSON.stringify(entry)}\n`, "utf-8");
 }
 
 // --- Atomic file write utilities ---

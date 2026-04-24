@@ -12,7 +12,7 @@ import type {
   UpdateResult,
 } from "../incremental-state.js";
 import { detectTrend } from "../utils/trend.js";
-import type { AnalyzerContext, AnalyzerResult } from "./index.js";
+import type { AnalyzerContext } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // State
@@ -26,7 +26,7 @@ interface VelocityState {
 // Compute helpers — all take db (analytics) only
 // ---------------------------------------------------------------------------
 
-async function collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
+async function _collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise<string[]> {
   try {
     const result = await db.exec(`
       SELECT id FROM events
@@ -73,7 +73,7 @@ async function computeDomainTurns(
       if (!domainWeeks.has(domain)) domainWeeks.set(domain, new Map());
       const weeks = domainWeeks.get(domain)!;
       if (!weeks.has(weekKey)) weeks.set(weekKey, []);
-      weeks.get(weekKey)!.push(turns);
+      weeks.get(weekKey)?.push(turns);
     }
   } catch {
     return new Map();
