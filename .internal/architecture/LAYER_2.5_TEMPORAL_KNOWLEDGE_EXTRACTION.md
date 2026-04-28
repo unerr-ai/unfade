@@ -1154,12 +1154,14 @@ ALTER TABLE events ADD COLUMN IF NOT EXISTS segments JSON;
 
 | Integration | Direction | How |
 |---|---|---|
-| Layer 2 → 3.5 | Input | MaterializerDaemon triggers extraction after new events materialize |
-| Layer 2.5 → Layer 3 | Output | EntityContributions feed into existing DAG analyzers via CozoDB |
+| Layer 2 → 2.5 | Input | MaterializerDaemon triggers extraction after new events materialize |
+| Layer 2.5 → Layer 3 | Output | Layer 3 analyzers consume extracted knowledge via `KnowledgeReader` on `AnalyzerContext`. See **LAYER_3_INTELLIGENCE_EXTRACTOR.md §17 (KGI sprints)** for the full integration plan. |
 | Layer 2.5 → Distill | Output | Comprehension assessments + facts feed daily distill narrative |
 | Layer 2.5 → MCP | Output | `unfade-comprehension` tool returns decay-aware scores |
 | Layer 2.5 → Cards | Output | Comprehension Score + domain strengths feed Thinking Card |
 | Layer 2.5 → Profile | Output | Metacognitive density, entity engagement feed reasoning_model.json |
+
+> **Cross-reference:** The Knowledge-Grounded Intelligence (KGI) sprint plan in `LAYER_3_INTELLIGENCE_EXTRACTOR.md §17` defines 14 sprints (KGI-1 through KGI-14) that rewire Layer 3's 25 analyzers to consume Layer 2.5's extracted knowledge as their primary signal. Layer 2.5 is the knowledge foundation; Layer 3 is the analytics + synthesis layer over that knowledge.
 
 ### Trigger Points
 
@@ -1359,7 +1361,7 @@ The implementation builds on these concrete, verified codepath entry points:
 
 ### Sprint Structure
 
-21 sprints (KE-1 through KE-21), each designed to be completable in a single day (~4–8 hours focused work). Each sprint produces 2–3 tasks with clear, testable deliverables.
+18 sprints (KE-1 through KE-18), each designed to be completable in a single day (~4–8 hours focused work). Each sprint produces 2–3 tasks with clear, testable deliverables.
 
 **Dependency graph:**
 ```
@@ -1397,13 +1399,7 @@ KE-1: Zod Schemas
               │
               └─► KE-17: Knowledge Extraction Orchestrator
                     │
-                    ├─► KE-18: Materializer + Server Hook
-                    │
-                    ├─► KE-19: Distill + MCP Integration
-                    │
-                    └─► KE-20: E2E Integration Tests
-                          │
-                          └─► KE-21: Hardening & Performance
+                    └─► KE-18: Materializer + Server Hook
 ```
 
 **Parallelism:** After KE-1, sprints KE-2/KE-3 can run in parallel. After KE-4, sprints KE-5/KE-9/KE-11/KE-13/KE-15 can run in parallel (independent extraction dimensions). KE-16 requires KE-10/KE-12 (embedding used by entity resolver + contradiction detector).
@@ -2355,179 +2351,6 @@ if (newRows > 0 && this.knowledgeConfig) {
 
 ---
 
-### KE-19: Distill + MCP Integration
-
-**Goal:** Integrate contradiction batch and comprehension scores into the daily distill pipeline, and expose comprehension data via MCP tool.
-
-**Day estimate:** ~5 hours. Modifying 4 existing files + tests.
-
-**Depends on:** KE-12 (contradiction batch), KE-14 (comprehension aggregator), KE-15 (decay engine), KE-17 (orchestrator)
-
----
-
-**KE-19.1: Distill Integration**
-
-**Modify:** `src/services/distill/distiller.ts`
-
-Add to `distill()` pipeline (after signal extraction, before synthesis):
-
-```typescript
-// Run daily contradiction batch
-const contradictions = await classifyContradictionBatch(candidates, todayFacts, llmConfig, cozo);
-
-// Run daily comprehension decay
-await computeDecay(analytics, projectId);
-
-// Compute daily comprehension score
-const comprehensionScore = await computeDailyComprehensionScore(date, projectId, analytics);
-
-// Feed into distill narrative
-// Add comprehension section to distill output:
-//   "Comprehension Score: 73 (stable). Deep engagement with payment refactoring.
-//    Auth module comprehension decaying — last deep engagement 18 days ago."
-```
-
-**Modify:** `src/schemas/distill.ts`
-- Add `comprehensionScore`, `comprehensionTrend`, `contradictions[]`, `metacognitiveDensity` to `DailyDistillSchema`
-
-**Test:** Distill with comprehension data → output includes comprehension narrative. Distill with contradictions → output includes "you evolved your thinking" narrative.
-
----
-
-**KE-19.2: MCP Comprehension Tool**
-
-**Modify:** `src/services/mcp/tools.ts`
-
-Add or update `unfade-comprehension` tool:
-
-```typescript
-// Tool: unfade-comprehension
-// Input: { projectId?: string, domain?: string }
-// Output: {
-//   score: number,
-//   trend: "improving" | "stable" | "declining",
-//   domains: Array<{ name, score, stability, daysSinceTouch, trend }>,
-//   metacognitiveDensity: number,
-//   recentAssessments: Array<{ episodeId, overallScore, timestamp }>
-// }
-```
-
-Reads from DuckDB `comprehension_scores` and `domain_comprehension` tables.
-
-**Modify:** `src/schemas/mcp.ts` — add `ComprehensionInputSchema`
-
-**Test:** MCP tool call returns comprehension data. Tool with no data → returns `degraded: true` with reason.
-
----
-
-### KE-20: E2E Integration Tests
-
-**Goal:** Full pipeline integration tests that verify the entire extraction flow end-to-end.
-
-**Day estimate:** ~5 hours. Two comprehensive test files with real database instances.
-
-**Depends on:** KE-18, KE-19 (all pipeline wiring complete)
-
----
-
-**KE-20.1: End-to-End Integration Test**
-
-**New file:** `test/integration/knowledge-extraction.test.ts`
-
-Full pipeline test with a real (or mocked) LLM:
-1. Write 5 JSONL events (mix of AI conversations, git commits, terminal sessions)
-2. Materialize into DuckDB/SQLite
-3. Run `extractKnowledge()` on all 5
-4. Verify: entities in CozoDB, facts in CozoDB + facts.jsonl, comprehension in DuckDB, segments in SQLite
-5. Run `computeDecay()` → verify domain scores updated
-6. Run `computeDailyComprehensionScore()` → verify aggregated score
-7. Query MCP comprehension tool → returns data
-
----
-
-**KE-20.2: Contradiction End-to-End Test**
-
-**New file:** `test/integration/contradiction-detection.test.ts`
-
-1. Extract event with fact "project USES Redis for caching"
-2. Extract later event with fact "project SWITCHED_FROM Redis to DuckDB for caching"
-3. Run contradiction candidate retrieval → candidate found
-4. Run daily batch classification → old fact invalidated
-5. Query "what's true now?" → only DuckDB fact returned
-
----
-
-### KE-21: Hardening & Performance
-
-**Goal:** Error recovery, retry logic, graceful shutdown, and performance validation.
-
-**Day estimate:** ~5 hours. Four small improvements across existing modules + benchmarks.
-
-**Depends on:** KE-20 (E2E tests passing)
-
----
-
-**KE-21.1: Deferred Extraction Recovery**
-
-**Modify:** `src/services/knowledge/extractor.ts`
-
-Add recovery for deferred events:
-```typescript
-export async function extractDeferred(
-  config: KnowledgeExtractionConfig
-): Promise<{ processed: number }>
-```
-
-- Query `extraction_status` where `status = 'deferred'`
-- Process all deferred events (now that LLM is configured)
-- Called from server startup when LLM configuration is detected
-
-**Test:** 10 deferred events → configure LLM → `extractDeferred()` processes all 10.
-
----
-
-**KE-21.2: Extraction Retry Logic**
-
-**Modify:** `src/services/knowledge/extraction-tracker.ts`
-
-Add retry logic:
-- Failed events with `retry_count < 3` are retried on next tick
-- Exponential backoff: 1st retry after 1 tick, 2nd after 3 ticks, 3rd after 10 ticks
-- After 3 failures: event stays in `failed` status, logged for manual investigation
-
-**Test:** Event fails 2 times → retried. Fails 3rd time → stays failed, not retried.
-
----
-
-**KE-21.3: Graceful Shutdown**
-
-**Modify:** `src/server/unfade-server.ts`
-
-On shutdown:
-- Finish in-progress extraction calls (await pending promises)
-- Unload embedding model (`embeddingModel.unload()`)
-- Write extraction watermark state (so next startup resumes correctly)
-- CozoDB close already handled by existing `CozoManager.close()` in shutdown path
-
-**Test:** Start extraction, trigger shutdown → in-progress extraction completes, no data loss.
-
----
-
-**KE-21.4: Performance Validation**
-
-**New file:** `test/integration/knowledge-performance.test.ts`
-
-Benchmarks (not hard CI gates, but documented expectations):
-- Structural segmentation: <10ms per conversation (50 turns)
-- LLM extraction call: <5s per event (depends on provider, measure p95)
-- Entity resolution (3-pass): <100ms per extraction (excluding LLM confirmation)
-- Embedding generation: <50ms per entity
-- HNSW contradiction search: <10ms per fact
-- FSRS decay computation: <100ms for 100 domains
-- Full pipeline (1 event): <10s end-to-end (dominated by LLM latency)
-
----
-
 ### Implementation Tracker
 
 | Sprint | Task | Status | Files |
@@ -2566,14 +2389,6 @@ Benchmarks (not hard CI gates, but documented expectations):
 | **KE-17** | KE-17.2: Public API | ✅ Complete | `src/services/knowledge/index.ts` (~50 lines, barrel export of all 18 knowledge modules) |
 | **KE-18** | KE-18.1: Materializer hook | ✅ Complete | `src/services/cache/materializer-daemon.ts` (KnowledgeExtractionHook + tick integration), `src/services/knowledge/extractor.ts` (loadCaptureEventsForExtraction) |
 | **KE-18** | KE-18.2: Server startup integration | ✅ Complete | `src/services/daemon/repo-manager.ts` (createKnowledgeExtractionHook — lazy CozoDB+LLM+embedding init) |
-| **KE-19** | KE-19.1: Distill integration | ☐ Not started | `src/services/distill/distiller.ts`, `src/schemas/distill.ts` |
-| **KE-19** | KE-19.2: MCP comprehension tool | ☐ Not started | `src/services/mcp/tools.ts`, `src/schemas/mcp.ts` |
-| **KE-20** | KE-20.1: End-to-end integration test | ☐ Not started | `test/integration/knowledge-extraction.test.ts` |
-| **KE-20** | KE-20.2: Contradiction end-to-end test | ☐ Not started | `test/integration/contradiction-detection.test.ts` |
-| **KE-21** | KE-21.1: Deferred extraction recovery | ☐ Not started | `src/services/knowledge/extractor.ts` |
-| **KE-21** | KE-21.2: Extraction retry logic | ☐ Not started | `src/services/knowledge/extraction-tracker.ts` |
-| **KE-21** | KE-21.3: Graceful shutdown | ☐ Not started | `src/server/unfade-server.ts` |
-| **KE-21** | KE-21.4: Performance validation | ☐ Not started | `test/integration/knowledge-performance.test.ts` |
 
 ### Sprint Calendar (Suggested)
 
@@ -2582,12 +2397,11 @@ Benchmarks (not hard CI gates, but documented expectations):
 | **W1** | KE-1: Zod Schemas | KE-2: CozoDB v3 | KE-3: DuckDB Extensions | KE-4: Storage Utils | KE-5: Turn Parser |
 | **W2** | KE-6: Segmentation | KE-7: Extraction Prompt | KE-8: LLM Caller | KE-9: Entity Norm+Writer | KE-10: Entity Resolver |
 | **W3** | KE-11: Fact Writer | KE-12: Contradiction | KE-13: Comprehension | KE-14: Score Aggregator | KE-15: FSRS Decay |
-| **W4** | KE-16: Embeddings | KE-17: Orchestrator | KE-18: Materializer Hook | KE-19: Distill+MCP | KE-20: E2E Tests |
-| **W5** | KE-21: Hardening | — | — | — | — |
+| **W4** | KE-16: Embeddings | KE-17: Orchestrator | KE-18: Materializer Hook | — | — |
 
-**Total: 21 working days (~4.2 weeks)**
+**Total: 18 working days (~3.6 weeks)**
 
-Note: Sprints KE-2/KE-3, KE-5/KE-9/KE-11/KE-13/KE-15 can overlap if multiple contributors are available, reducing calendar time.
+Note: Sprints KE-2/KE-3, KE-5/KE-9/KE-11/KE-13/KE-15 can overlap if multiple contributors are available, reducing calendar time. Distill/MCP integration, E2E tests, and hardening are deferred to post-KGI (Knowledge-Grounded Intelligence) sprints — see `LAYER_3_INTELLIGENCE_EXTRACTOR.md §17`.
 
 ### File Manifest (All New Files)
 
@@ -2617,7 +2431,7 @@ Note: Sprints KE-2/KE-3, KE-5/KE-9/KE-11/KE-13/KE-15 can overlap if multiple con
 
 **Total new files:** 21
 **Total estimated lines:** ~2,270
-**Files modified:** 9 (schema.ts, cozo-manager.ts, duckdb-schema.ts, manager.ts, cache/schema.ts, materializer-daemon.ts, unfade-server.ts, distiller.ts, mcp tools.ts)
+**Files modified:** 7 (schema.ts, cozo-manager.ts, duckdb-schema.ts, manager.ts, cache/schema.ts, materializer-daemon.ts, unfade-server.ts)
 
 ### Integration with Existing Systems
 
@@ -2626,8 +2440,8 @@ Note: Sprints KE-2/KE-3, KE-5/KE-9/KE-11/KE-13/KE-15 can overlap if multiple con
 | **Layer 2 Materializer** | KE-18 | `extractKnowledge()` called in `onTick` after materialization |
 | **Layer 3 Intelligence DAG** | KE-2, KE-3, KE-9, KE-13 | Knowledge entities feed into CozoDB → existing analyzers query graph. Old `comprehension_proxy`/`comprehension_by_module` tables fully removed and replaced by `comprehension_assessment`/`domain_comprehension`. All 8+ analyzer callers updated (KE-3.2). |
 | **Substrate Engine** | KE-2, KE-9, KE-11 | New CozoDB relations extend existing substrate. Entity/fact writes use same `escCozo()` injection prevention. |
-| **Distill Pipeline** | KE-19 | Contradiction batch + decay + comprehension score computed during daily distill. Narrative includes comprehension section. |
-| **MCP Server** | KE-19 | `unfade-comprehension` tool exposes decay-aware scores. Existing context tools enriched with knowledge graph data. |
+| **Distill Pipeline** | Post-KGI | Contradiction batch + decay + comprehension score computed during daily distill. Deferred until intelligence pipeline is unified. |
+| **MCP Server** | Post-KGI | `unfade-comprehension` tool exposes decay-aware scores. Deferred until KnowledgeReader interface is stable. |
 | **Profile/Cards** | Future | Metacognitive density, entity engagement patterns, comprehension trajectory feed into reasoning_model.json and Thinking Card generation. |
 | **Decision Records** | KE-11 | Facts with decision predicates (DECIDED, CHOSEN_OVER, REPLACED_BY) directly feed the existing decision graph in `~/.unfade/graph/decisions.jsonl`. |
 

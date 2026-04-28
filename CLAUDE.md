@@ -206,8 +206,10 @@ make clean        # Remove binaries
 - `.internal/architecture/LAYER_0_FOUNDATION.md` — Build pipeline, schemas, paths, logger, CLI entry, config, Go scaffold
 - `.internal/architecture/LAYER_1_GO_DAEMON.md` — Go capture engine: git-only + ai-global modes, IPC, JSONL output
 - `.internal/architecture/LAYER_2_DUAL_DB_MATERIALIZER.md` — SQLite + DuckDB materializer, incremental ingest, cursor tracking
-- `.internal/architecture/LAYER_3_INTELLIGENCE_AND_SUBSTRATE.md` — 25 DAG-ordered analyzers, SubstrateEngine/CozoDB, profile accumulator
-- `.internal/architecture/LAYER_4_UI_HTTP_SSE.md` — React 19 + Vite 8 SPA, Hono API, SSE push, TanStack Query
+- `.internal/architecture/LAYER_2.5_TEMPORAL_KNOWLEDGE_EXTRACTION.md` — Knowledge extraction from conversations: entities, facts, comprehension, FSRS decay, contradictions
+- `.internal/architecture/LAYER_3_INTELLIGENCE_EXTRACTOR.md` — 25 DAG-ordered analyzers, SubstrateEngine/CozoDB, profile accumulator, KGI integration sprints
+- `.internal/architecture/LAYER_4_INTELLIGENCE_PRESENTATION.md` — Evidence linking, cross-analyzer correlation, API enrichment, Intelligence Hub UI transformation (IP sprints)
+- `.internal/architecture/LAYER_5_UI_HTTP_SSE.md` — React 19 + Vite 8 SPA, Hono API, SSE push, TanStack Query
 - `.internal/architecture/CROSS_LAYER_FLOW.md` — Startup/shutdown flow, event lifecycle, ownership rules, timing budget
 
 ### Architecture — Active Phase Docs

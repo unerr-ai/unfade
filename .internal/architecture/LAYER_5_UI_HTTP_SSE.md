@@ -1,6 +1,16 @@
-# Layer 4: UI, HTTP API & SSE Transport
+# Layer 5: UI, HTTP API & SSE Transport
 
 React 19 SPA served by a Hono HTTP server on `localhost:7654`. Intelligence from Layer 3 analyzers flows through 25+ JSON API routes, is pushed in real-time via Server-Sent Events, cached client-side by TanStack Query, and rendered through a component system built on shadcn/ui with Tailwind CSS.
+
+> **Dependency chain:** Layer 2.5 (knowledge extraction → CozoDB) → Layer 3 (25 DAG-ordered analyzers, KGI sprints ground them in extracted knowledge) → Layer 4 (`LAYER_4_INTELLIGENCE_PRESENTATION.md` — evidence linking, cross-analyzer correlation, enriched API responses, IP sprints) → **Layer 5** (this doc — transport, rendering, client state).
+>
+> **Post-IP sprint updates pending:** Once IP-1 through IP-14 are implemented, this doc needs updates to:
+> - §3 API Routes: add evidence endpoints (`/api/intelligence/evidence/*`), explain endpoint, substrate explore endpoint
+> - §3 Intelligence Route Pattern: routes gain `_meta.freshness` and `evidenceAvailable` — no longer pure file passthrough
+> - §4 Data Flow: add CozoDB → KnowledgeReader → analyzer path (knowledge-grounded intelligence)
+> - §8 Shared Components: add ShowMore, MetricDecomposition, CorrelationCard, EvidenceEventCard, CorrelationPanel
+> - §9 Hooks: add useCorrelations, useEvidence, useExplanation
+> - §12 Integration Map: add correlation engine, evidence linker, and substrate query outputs
 
 ---
 

@@ -1,6 +1,6 @@
-# Layer 7: Intelligence Substrate — End-to-End Transformation
+# Layer 4: Intelligence Presentation — Evidence, Correlation & Actionable Intelligence
 
-> How Unfade's 24-analyzer intelligence pipeline, DAG scheduler, CozoDB substrate, and 8-tab Intelligence Hub are transformed from metric dashboards into an evidence-linked, causally-connected, actionable intelligence system using the DRRVE framework.
+> Builds on top of Layer 2.5 (knowledge extraction: entities, facts, comprehension, FSRS decay) and Layer 3 (25 DAG-ordered analyzers + KGI integration sprints that ground analyzers in extracted knowledge). Transforms the intelligence pipeline from metric dashboards into an evidence-linked, cross-analyzer correlated, actionable intelligence system with full drill-through to source events.
 
 ---
 
@@ -25,9 +25,13 @@
 
 ## Overview
 
-The Intelligence Substrate is Unfade's analytical brain — 24 DAG-ordered analyzers producing 7+ core output files, orchestrated by the `IntelligenceScheduler`, fed into a CozoDB knowledge graph (`SubstrateEngine`), and rendered across an 8-tab Intelligence Hub in the dashboard. Today, it produces isolated metrics that tell users *what their numbers are* but not *why those numbers matter* or *what to do about them*.
+Layer 4 sits on top of a complete knowledge + intelligence stack:
 
-**The transformation:** Apply Decision Intelligence principles (Layer 5) to the entire intelligence substrate — every analyzer, every API endpoint, every UI tab gets evidence linking, causal reasoning, cross-analyzer correlation, and actionable drill-through. The substrate graph becomes the connective tissue that links insights across analyzers, and every claim shown to the user is backed by traceable evidence.
+- **Layer 2.5** (`LAYER_2.5_TEMPORAL_KNOWLEDGE_EXTRACTION.md`) — extracts entities, facts, decisions, comprehension assessments, metacognitive signals, and FSRS decay from developer-AI conversations. Writes to CozoDB + DuckDB.
+- **Layer 3** (`LAYER_3_INTELLIGENCE_EXTRACTOR.md`) — 25 DAG-ordered `IncrementalAnalyzer` instances, orchestrated by the `IntelligenceScheduler`, producing intelligence output files. **KGI sprints (KGI-1 through KGI-14)** rewrite analyzers to consume Layer 2.5's extracted knowledge as primary signal.
+- **Layer 4** (this doc) — adds evidence linking, cross-analyzer correlation, enriched API responses, and UI transformation. Every metric shown to the user becomes traceable to source events.
+
+Today, the intelligence pipeline produces isolated metrics that tell users *what their numbers are* but not *why those numbers matter* or *what to do about them*. Layer 4 transforms every analyzer output, API endpoint, and UI tab with evidence linking, causal reasoning, cross-analyzer correlation, and actionable drill-through. The substrate graph becomes the connective tissue that links insights across analyzers, and every claim shown to the user is backed by traceable evidence.
 
 ### Current state vs. target state
 
@@ -1123,124 +1127,1104 @@ interface IntelligenceResponse<T> {
 
 ---
 
-## Implementation Plan
+## Implementation Plan — Intelligence Presentation Sprints (IP)
 
-### Phase 1: Evidence Tracking Foundation
+Layer 3 (KGI sprints) unifies knowledge extraction into analyzers. These sprints build the **presentation, evidence, and correlation** layer on top — transforming isolated metrics into an evidence-linked, cross-analyzer, actionable intelligence system.
 
-Add per-metric evidence tracking to all analyzers and remove artificial caps.
+**Prerequisite:** KGI-1 through KGI-14 must be complete. Layer 4 reads analyzer outputs and CozoDB knowledge that KGI sprints produce.
 
-| File | Change | Description |
-|------|--------|-------------|
-| `src/services/intelligence/engine.ts` | Modify | Remove `.slice(0, 20)` on sourceEventIds (line 264). Add Phase 5 and Phase 6 hooks after topological loop. |
-| `src/services/intelligence/incremental-state.ts` | Modify | Replace `domain: "general"` with `classifyDomain()`. Replace `LIMIT 500` with paginated batch building. |
-| `src/services/intelligence/evidence-linker.ts` | **Create** | Evidence chain builder: per-metric evidence grouping, cross-analyzer evidence merging. |
+### Sprint Dependency Graph
 
-### Phase 2: Analyzer Output Enrichment
+```
+IP-1: Schemas + Evidence Linker Foundation
+  │
+  ├─► IP-2: Engine Hooks — Remove Caps + Add Post-Run Phases
+  │     │
+  │     ├─► IP-3: Analyzer Output Enrichment — Group A (efficiency, comprehension-radar, cost-attribution, loop-detector)
+  │     │
+  │     ├─► IP-4: Analyzer Output Enrichment — Group B (velocity-tracker, prompt-patterns, blind-spots, decision-replay)
+  │     │     │
+  │     │     └──────────────────────────────────────────────┐
+  │     │                                                    │
+  │     ├─► IP-5: Cross-Analyzer Correlation Engine          │
+  │     │     │                                              │
+  │     │     └─► IP-6: LLM Narrative Enhancement            │
+  │     │                                                    │
+  │     └─► IP-7: Substrate Query Layer                      │
+  │                                                          ▼
+  ├─► IP-8: Shared UI Components (ShowMore, MetricDecomposition, CorrelationCard, EvidenceEventCard)
+  │     │
+  │     └─► IP-9: API Layer — Evidence + Correlation Endpoints
+  │           │
+  │           ├─► IP-10: Intelligence Hub UI — Comprehension + Autonomy + Patterns + Cost Tabs
+  │           │
+  │           ├─► IP-11: Intelligence Hub UI — Velocity + Narratives + Maturity + Efficiency Tabs
+  │           │     │
+  │           │     └─► IP-12: Intelligence Hub UI — Overview + Correlation Highlights
+  │           │
+  │           └─► IP-13: Substrate Explorer UI
+  │
+  └─► IP-14: E2E Verification + Performance Budget
+```
 
-Enhance each analyzer to include diagnostics, freshness, and per-metric evidence.
+**Parallelism:** After IP-1, sprints IP-2 and IP-8 can run in parallel (backend vs frontend foundations). After IP-2, sprints IP-3 through IP-7 are all independent. IP-9 requires IP-3/IP-4/IP-5 complete (needs enriched outputs to serve). IP-10 and IP-11 are independent tab batches. IP-14 depends on all prior sprints.
 
-| File | Change | Description |
-|------|--------|-------------|
-| `src/services/intelligence/analyzers/efficiency.ts` | Modify | Add `_meta` freshness block. Add `diagnostics[]` with context-aware messages. Add `evidenceEventIds` per sub-metric. |
-| `src/services/intelligence/analyzers/comprehension-radar.ts` | Modify | Add per-module `evidenceEventIds` and `topContributors`. Add `_meta` block. Enhance blind spot messages with specific evidence. |
-| `src/services/intelligence/analyzers/cost-attribution.ts` | Modify | Add per-model and per-domain `evidenceEventIds`. Remove LIMIT 10 on cost dimensions. Add `_meta` block. |
-| `src/services/intelligence/analyzers/loop-detector.ts` | Modify | Remove `.slice(0, 3)` on similar rejections. Add `evidenceEventIds` per stuck loop. Add `_meta` block. |
-| `src/services/intelligence/analyzers/velocity-tracker.ts` | Modify | Add per-domain `evidenceEventIds`. Add `_meta` block. |
-| `src/services/intelligence/analyzers/prompt-patterns.ts` | Modify | Add `exampleSessionIds` per effective pattern. Remove LIMIT 500 on prompt query. Add `_meta` block. |
-| `src/services/intelligence/analyzers/blind-spots.ts` | Modify | Add `evidenceEventIds` per alert. Enhance messages with specific session references. Add `_meta` block. |
-| `src/services/intelligence/analyzers/decision-replay.ts` | Modify | Remove `.slice(-10)` on replays. Add `evidenceEventIds` per replay. Add `_meta` block. |
-
-### Phase 3: Cross-Analyzer Correlation
-
-Build the correlation engine and narrative upgrade.
-
-| File | Change | Description |
-|------|--------|-------------|
-| `src/services/intelligence/correlation-engine.ts` | **Create** | 6 initial correlation patterns. Reads all analyzer outputs post-run. Writes `correlations.json`. |
-| `src/services/intelligence/narrative-engine.ts` | Modify | Add LLM path for daily narrative generation. Enhance fallback with cross-analyzer references and evidence linking. |
-
-### Phase 4: Substrate Graph Enhancement
-
-Upgrade the substrate with query capabilities and evidence.
-
-| File | Change | Description |
-|------|--------|-------------|
-| `src/services/substrate/substrate-engine.ts` | Modify | Add `SubstrateQueries` interface: `entitiesByDomain()`, `findPath()`, `hubEntities()`, `crossValidatedEntities()`. Add `evidenceEventIds` to `EntityContribution`. |
-
-### Phase 5: API Layer Overhaul
-
-Enhance all intelligence endpoints with evidence and correlations.
-
-| File | Change | Description |
-|------|--------|-------------|
-| `src/server/routes/intelligence.ts` | Modify | Add `_meta.freshness` to all responses. Add `_meta.correlations` when relevant. Add evidence sub-endpoints per analyzer. Add `GET /api/intelligence/correlations`. Add `GET /api/intelligence/explain/:insightId`. |
-| `src/server/routes/substrate.ts` | Modify | Add `GET /api/substrate/explore/:entityId` with neighborhood + evidence. |
-| `src/ui/lib/api.ts` | Modify | Add evidence, correlation, and explanation API methods. Update intelligence response types. |
-| `src/ui/types/intelligence.ts` | Modify | Add `IntelligenceResponse<T>` wrapper with freshness. Add `Correlation`, `EvidenceChain`, `DiagnosticMessage` types. |
-
-### Phase 6: Intelligence Hub UI Transformation
-
-Transform all 8 tabs with evidence, correlations, freshness, and drill-through.
-
-| File | Change | Description |
-|------|--------|-------------|
-| `src/ui/pages/IntelligencePage.tsx` | Modify | Replace hardcoded card extracts with analyzer-provided diagnostics. Add `CorrelationHighlights` above cards. |
-| `src/ui/pages/intelligence/ComprehensionTab.tsx` | Modify | Add module click → evidence drawer. Remove `.slice(0, 8)` on radar. Add `FreshnessBadge`. |
-| `src/ui/pages/intelligence/AutonomyTab.tsx` | Modify | Add `MetricDecomposition` for independence index. Add domain row click → evidence drawer. Add `FreshnessBadge`. |
-| `src/ui/pages/intelligence/PatternsTab.tsx` | Modify | Add pattern click → evidence drawer with example sessions. Add `FreshnessBadge`. |
-| `src/ui/pages/intelligence/CostTab.tsx` | Modify | Add model row click → evidence drawer. Add waste ratio click → drawer. Add `FreshnessBadge`. |
-| `src/ui/pages/intelligence/VelocityTab.tsx` | Modify | Add domain row click → Decisions page (filtered). Add `FreshnessBadge`. |
-| `src/ui/pages/intelligence/NarrativesTab.tsx` | Modify | Remove `.slice(0, 5)` caps. Add evidence per narrative. Add `FreshnessBadge`. |
-| `src/ui/pages/intelligence/MaturityTab.tsx` | Modify | Add `MetricDecomposition` for overall score. Remove `.slice(0, 8)` on radar. Add `FreshnessBadge`. |
-| `src/ui/pages/intelligence/EfficiencyTab.tsx` | Modify | Add sub-metric decomposition. Add trend point click → evidence. Add `FreshnessBadge`. |
-| `src/ui/components/shared/ShowMore.tsx` | **Create** | Generic expandable list: shows N items with "Show X more" button. |
-| `src/ui/components/shared/MetricDecomposition.tsx` | **Create** | Visual formula breakdown: component bars with weights and contributions. |
-| `src/ui/components/shared/CorrelationCard.tsx` | **Create** | Cross-analyzer insight card with multi-analyzer badges and evidence link. |
-
-### Phase 7: Shared Component Extraction (from FEATURE_IMPROVEMENT_TRACKER)
-
-| File | Change | Description |
-|------|--------|-------------|
-| `src/ui/lib/event-labels.ts` | **Create** | Extract `sourceLabel()`, `typeLabel()`, `sourceBadgeClass()` from DecisionsPage. |
-| `src/ui/components/shared/EvidenceEventCard.tsx` | **Create** | Extract `EvidenceEventCard` from DecisionsPage for reuse across all tabs. |
-| `src/ui/lib/date-utils.ts` | **Create** | Extract `relativeDate()` from DecisionsPage. |
-| `src/ui/hooks/useProjectNames.ts` | **Create** | Shared hook for projectId → name resolution from repos data. |
+**Total estimate:** ~14 sprints, ~56 hours (~7 working days).
 
 ---
 
-## Verification
+### IP-1: Schemas + Evidence Linker Foundation
 
-1. **`pnpm typecheck`** — no type errors after schema changes
-2. **`pnpm lint:fix`** — passes biome
-3. **`pnpm build`** — builds cleanly
-4. **Evidence tracking test:** Trigger intelligence processing on a repo with diverse events. Verify:
-   - All analyzer outputs include `_meta` with freshness and confidence
-   - Comprehension output includes per-module `evidenceEventIds`
-   - Cost output includes per-model evidence
-   - Evidence files exist in `~/.unfade/intelligence/evidence/`
-5. **Correlation detection test:** Verify:
-   - `correlations.json` is written after scheduler run
-   - At least one correlation detected when test data has overlapping issues (e.g., low comprehension + declining efficiency in same domain)
-   - Each correlation includes `evidenceEventIds` from multiple analyzers
-6. **API test:** Verify:
-   - All intelligence endpoints include `_meta.freshness`
-   - Evidence sub-endpoints return per-metric evidence chains
-   - Correlation endpoint returns detected patterns
-   - Explanation endpoint (if LLM configured) returns natural-language explanation
-7. **UI test:** Verify:
-   - All tabs show `FreshnessBadge`
-   - No `.slice()` caps visible — all data accessible via `ShowMore`
-   - Clicking metrics opens evidence drawer with source events
-   - Correlation highlights appear above cards when correlations exist
-   - `MetricDecomposition` renders for composite scores (AES, independence index, maturity)
-8. **Substrate test:** Verify:
-   - `GET /api/substrate/explore/:entityId` returns entity + neighborhood + evidence
-   - Entity contributions include `evidenceEventIds`
-9. **Performance test:** Verify:
-   - Scheduler still completes within 10s budget on typical workload
-   - Evidence tracking doesn't double memory usage (evidence files are separate)
-   - API response times remain under 200ms for card-level data (evidence loaded on demand)
-10. **Backward compat test:** Verify:
-    - MCP intelligence tools (`unfade_efficiency`, `unfade_comprehension`, etc.) still return valid data
-    - Dashboard renders correctly even when `correlations.json` doesn't exist yet (cold start)
-    - Existing analyzer state files are compatible (no migration needed — new fields are additive)
+**Goal:** Define all shared types (evidence chains, correlations, diagnostics, analyzer output meta) and build the evidence linker module that groups source events by metric and analyzer.
+
+**Day estimate:** ~4 hours. Schema definitions + evidence linker + tests.
+
+**Depends on:** KGI-14 (all analyzer rewrites complete).
+
+---
+
+**IP-1.1: Define Shared Schemas**
+
+**Create:** `src/schemas/intelligence-presentation.ts`
+
+All types used across Layer 4 sprints. Single source of truth — analyzers, API, and UI all import from here.
+
+```typescript
+import { z } from "zod";
+
+// ─── Analyzer Output Meta (added to every analyzer output) ──────────
+
+export const AnalyzerOutputMetaSchema = z.object({
+  updatedAt: z.string(),
+  dataPoints: z.number(),
+  confidence: z.enum(["high", "medium", "low"]),
+  watermark: z.string(),
+  stalenessMs: z.number(),
+});
+export type AnalyzerOutputMeta = z.infer<typeof AnalyzerOutputMetaSchema>;
+
+// ─── Diagnostic Message (per-analyzer actionable insights) ──────────
+
+export const DiagnosticMessageSchema = z.object({
+  severity: z.enum(["info", "warning", "critical"]),
+  message: z.string(),
+  evidence: z.string(),
+  actionable: z.string(),
+  relatedAnalyzers: z.array(z.string()).default([]),
+  evidenceEventIds: z.array(z.string()).default([]),
+});
+export type DiagnosticMessage = z.infer<typeof DiagnosticMessageSchema>;
+
+// ─── Evidence Chain (per-metric drill-through) ──────────────────────
+
+export const EvidenceEntrySchema = z.object({
+  eventId: z.string(),
+  timestamp: z.string(),
+  source: z.string(),
+  type: z.string(),
+  summary: z.string(),
+  contribution: z.number(),
+  role: z.enum(["primary", "corroborating", "context"]),
+});
+export type EvidenceEntry = z.infer<typeof EvidenceEntrySchema>;
+
+export const EvidenceChainSchema = z.object({
+  metric: z.string(),
+  scope: z.string().optional(),
+  events: z.array(EvidenceEntrySchema),
+  analyzers: z.array(z.string()),
+  confidence: z.number(),
+});
+export type EvidenceChain = z.infer<typeof EvidenceChainSchema>;
+
+// ─── Correlation (cross-analyzer insight) ───────────────────────────
+
+export const CorrelationSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  severity: z.enum(["info", "warning", "critical"]),
+  title: z.string(),
+  explanation: z.string(),
+  analyzers: z.array(z.string()),
+  domain: z.string().optional(),
+  evidenceEventIds: z.array(z.string()).default([]),
+  actionable: z.string(),
+  detectedAt: z.string(),
+});
+export type Correlation = z.infer<typeof CorrelationSchema>;
+```
+
+---
+
+**IP-1.2: Build Evidence Linker**
+
+**Create:** `src/services/intelligence/evidence-linker.ts`
+
+Reads analyzer output files and groups source events into per-metric evidence chains. Three responsibilities:
+
+1. **Per-metric grouping:** For analyzers with sub-metrics (comprehension by module, cost by model), groups `sourceEventIds` by the sub-metric dimension using event metadata (files, domain tags).
+
+2. **Cross-analyzer merging:** When correlation engine detects a cross-analyzer pattern, merges evidence from all involved analyzers into a unified chain.
+
+3. **Evidence file persistence:** Writes per-analyzer evidence JSON to `~/.unfade/intelligence/evidence/<analyzerName>.json`. Separate from main output to keep card rendering fast.
+
+```typescript
+import type { EvidenceChain, EvidenceEntry } from "../../schemas/intelligence-presentation.js";
+
+export interface EvidenceLinkerConfig {
+  intelligenceDir: string;  // ~/.unfade/intelligence/
+  analytics: DbLike;        // DuckDB — for event metadata lookups
+}
+
+/**
+ * Build evidence chains for a single analyzer's output.
+ * Reads the analyzer's sourceEventIds + sub-metric breakdown,
+ * enriches each event ID with metadata from DuckDB, and groups by metric.
+ */
+export async function buildEvidenceChains(
+  analyzerName: string,
+  output: AnalyzerOutputWithEvidence,
+  config: EvidenceLinkerConfig,
+): Promise<EvidenceChain[]> { ... }
+
+/**
+ * Merge evidence chains from multiple analyzers into a cross-analyzer chain.
+ * Used by the correlation engine when a pattern involves 2+ analyzers.
+ */
+export function mergeEvidenceChains(
+  chains: EvidenceChain[],
+  correlationType: string,
+): EvidenceChain { ... }
+
+/**
+ * Persist evidence chains to disk. Written after each scheduler run.
+ * File: ~/.unfade/intelligence/evidence/<analyzerName>.json
+ */
+export async function writeEvidenceFile(
+  analyzerName: string,
+  chains: EvidenceChain[],
+  intelligenceDir: string,
+): Promise<void> { ... }
+
+/**
+ * Load evidence chains for a specific analyzer (API serves on demand).
+ */
+export async function loadEvidenceFile(
+  analyzerName: string,
+  intelligenceDir: string,
+): Promise<EvidenceChain[]> { ... }
+```
+
+---
+
+**IP-1.3: Evidence Linker Tests**
+
+**Create:** `test/services/intelligence/evidence-linker.test.ts`
+
+- `buildEvidenceChains()` — groups events by sub-metric dimension, assigns contribution scores, orders by impact
+- `mergeEvidenceChains()` — deduplicates shared events across analyzers, preserves highest contribution
+- `writeEvidenceFile()` / `loadEvidenceFile()` — round-trip serialization, handles missing directory
+- Edge case: empty sourceEventIds → empty chain (no error)
+- Edge case: event IDs not found in DuckDB → gracefully excluded from chain
+
+---
+
+### IP-2: Engine Hooks — Remove Caps + Add Post-Run Phases
+
+**Goal:** Remove all artificial data caps from the intelligence engine and add Phase 5 (correlation) and Phase 6 (evidence persistence) hooks to the scheduler's post-run flow.
+
+**Day estimate:** ~3 hours. Engine modifications + incremental-state cleanup + tests.
+
+**Depends on:** IP-1 (schemas and evidence linker).
+
+---
+
+**IP-2.1: Remove Caps from Engine**
+
+**Modify:** `src/services/intelligence/engine.ts`
+
+- Remove `.slice(0, 20)` on `sourceEventIds` in the topological processing loop. Source event IDs must flow through untruncated so evidence linker can build per-metric chains.
+- Add `Phase 5: Correlation` hook after all analyzers complete: calls `runCorrelations()` (IP-5) with all analyzer outputs.
+- Add `Phase 6: Evidence` hook after correlation: calls `buildAndPersistEvidence()` (IP-1) for each analyzer + any correlation-generated chains.
+
+```typescript
+// After existing Phase 4 (topological analyzer loop)
+
+// Phase 5: Cross-analyzer correlation (added by IP-5, no-op until then)
+if (this.correlationEngine) {
+  const correlations = await this.correlationEngine.detect(analyzerOutputs);
+  await writeCorrelations(correlations, this.intelligenceDir);
+}
+
+// Phase 6: Evidence persistence
+if (this.evidenceLinker) {
+  for (const [name, output] of analyzerOutputs) {
+    const chains = await buildEvidenceChains(name, output, this.evidenceConfig);
+    await writeEvidenceFile(name, chains, this.intelligenceDir);
+  }
+}
+```
+
+---
+
+**IP-2.2: Remove Caps from Incremental State**
+
+**Modify:** `src/services/intelligence/incremental-state.ts`
+
+- Replace `LIMIT 500` in batch building queries with paginated iteration (process in batches of 500 but don't stop at 500).
+- Replace `domain: "general"` fallback with `classifyDomain()` from the domain classification pipeline.
+- Ensure `sourceEventIds` from each analyzer's `update()` call are stored without truncation.
+
+---
+
+**IP-2.3: Engine Hook Tests**
+
+**Create:** `test/services/intelligence/engine-hooks.test.ts`
+
+- Verify Phase 5 hook is called after all analyzers complete
+- Verify Phase 6 hook writes evidence files for each analyzer
+- Verify `sourceEventIds` pass through without truncation (mock analyzer returning 100 IDs, assert all 100 appear in output)
+- Verify engine still completes when correlation/evidence hooks are null (backward compat)
+
+---
+
+### IP-3: Analyzer Output Enrichment — Group A
+
+**Goal:** Add `_meta` freshness block, `diagnostics[]`, and per-metric `evidenceEventIds` to efficiency, comprehension-radar, cost-attribution, and loop-detector analyzers.
+
+**Day estimate:** ~5 hours. 4 analyzer modifications + tests.
+
+**Depends on:** IP-2 (engine caps removed, evidence hooks in place).
+
+---
+
+**IP-3.1: Enrich efficiency analyzer**
+
+**Modify:** `src/services/intelligence/analyzers/efficiency.ts`
+
+- Add `_meta: AnalyzerOutputMeta` to output with `updatedAt`, `dataPoints`, `confidence`, `watermark`, `stalenessMs`.
+- Add `diagnostics: DiagnosticMessage[]` — context-aware messages like "AES declining in auth domain — 3 sessions showed low direction scores" with `evidenceEventIds` pointing to those sessions.
+- Add `evidenceEventIds` per sub-metric: each dimension of the AES composite score tracks which events contributed to it.
+- Remove any remaining `.slice()` caps on trend data.
+
+---
+
+**IP-3.2: Enrich comprehension-radar analyzer**
+
+**Modify:** `src/services/intelligence/analyzers/comprehension-radar.ts`
+
+- Add `_meta: AnalyzerOutputMeta`.
+- Add per-module `evidenceEventIds` — each module's comprehension score links to the sessions that contributed to it.
+- Add `topContributors` per module — top 3 events by comprehension impact.
+- Enhance blind spot messages: "src/auth is a blind spot — only 2 sessions in 14 days, HDS 34/100" with `evidenceEventIds`.
+
+---
+
+**IP-3.3: Enrich cost-attribution analyzer**
+
+**Modify:** `src/services/intelligence/analyzers/cost-attribution.ts`
+
+- Add `_meta: AnalyzerOutputMeta`.
+- Add per-model `evidenceEventIds` — which sessions used each model.
+- Add per-domain `evidenceEventIds` — which sessions drove cost in each domain.
+- Remove `LIMIT 10` on cost dimensions — let all dimensions flow through.
+
+---
+
+**IP-3.4: Enrich loop-detector analyzer**
+
+**Modify:** `src/services/intelligence/analyzers/loop-detector.ts`
+
+- Add `_meta: AnalyzerOutputMeta`.
+- Remove `.slice(0, 3)` on similar rejections — all rejection instances available via evidence.
+- Add `evidenceEventIds` per stuck loop — sessions where the loop was detected.
+
+---
+
+**IP-3.5: Group A Enrichment Tests**
+
+**Modify:** `test/services/intelligence/analyzers/efficiency.test.ts`, `comprehension-radar.test.ts`, `cost-attribution.test.ts`, `loop-detector.test.ts`
+
+For each analyzer:
+- Verify output includes `_meta` with all required fields
+- Verify `diagnostics` array is populated when conditions met (e.g., declining trend, blind spot detected)
+- Verify `evidenceEventIds` per sub-metric are non-empty when events exist
+- Verify no `.slice()` truncation — mock 50 items, assert all 50 appear in output
+
+---
+
+### IP-4: Analyzer Output Enrichment — Group B
+
+**Goal:** Add `_meta`, `diagnostics[]`, and per-metric `evidenceEventIds` to velocity-tracker, prompt-patterns, blind-spots, and decision-replay analyzers.
+
+**Day estimate:** ~5 hours. 4 analyzer modifications + tests.
+
+**Depends on:** IP-2 (engine caps removed, evidence hooks in place).
+
+---
+
+**IP-4.1: Enrich velocity-tracker analyzer**
+
+**Modify:** `src/services/intelligence/analyzers/velocity-tracker.ts`
+
+- Add `_meta: AnalyzerOutputMeta`.
+- Add per-domain `evidenceEventIds` — events driving velocity in each domain.
+
+---
+
+**IP-4.2: Enrich prompt-patterns analyzer**
+
+**Modify:** `src/services/intelligence/analyzers/prompt-patterns.ts`
+
+- Add `_meta: AnalyzerOutputMeta`.
+- Add `exampleSessionIds` per effective pattern — sessions that used this pattern successfully.
+- Remove `LIMIT 500` on prompt query — paginated batch processing.
+
+---
+
+**IP-4.3: Enrich blind-spots analyzer**
+
+**Modify:** `src/services/intelligence/analyzers/blind-spots.ts`
+
+- Add `_meta: AnalyzerOutputMeta`.
+- Add `evidenceEventIds` per alert — sessions in blind spot domains.
+- Enhance messages with specific session references: "3 sessions in src/auth, all with HDS < 40".
+
+---
+
+**IP-4.4: Enrich decision-replay analyzer**
+
+**Modify:** `src/services/intelligence/analyzers/decision-replay.ts`
+
+- Add `_meta: AnalyzerOutputMeta`.
+- Remove `.slice(-10)` on replays — full replay history accessible.
+- Add `evidenceEventIds` per replay — sessions where each decision was made.
+
+---
+
+**IP-4.5: Group B Enrichment Tests**
+
+**Modify:** `test/services/intelligence/analyzers/velocity-tracker.test.ts`, `prompt-patterns.test.ts`, `blind-spots.test.ts`, `decision-replay.test.ts`
+
+Same pattern as IP-3.5: `_meta` present, `diagnostics` populated, `evidenceEventIds` per sub-metric, no truncation.
+
+---
+
+### IP-5: Cross-Analyzer Correlation Engine
+
+**Goal:** Build the correlation engine that detects meaningful patterns spanning multiple analyzers. Runs as Phase 5 of the scheduler, after all individual analyzers complete.
+
+**Day estimate:** ~5 hours. New module + 6 patterns + scheduler integration + tests.
+
+**Depends on:** IP-2 (Phase 5 hook in engine).
+
+---
+
+**IP-5.1: Build Correlation Engine**
+
+**Create:** `src/services/intelligence/correlation-engine.ts`
+
+```typescript
+import type { Correlation } from "../../schemas/intelligence-presentation.js";
+
+export interface CorrelationPattern {
+  id: string;
+  name: string;
+  analyzers: string[];
+  detect: (outputs: Map<string, unknown>) => Correlation | null;
+}
+
+export class CorrelationEngine {
+  private patterns: CorrelationPattern[] = [];
+
+  register(pattern: CorrelationPattern): void { ... }
+
+  /**
+   * Run all registered patterns against the current analyzer outputs.
+   * Called by the engine's Phase 5 hook after all analyzers complete.
+   */
+  async detect(outputs: Map<string, unknown>): Promise<Correlation[]> {
+    const results: Correlation[] = [];
+    for (const pattern of this.patterns) {
+      const hasAllOutputs = pattern.analyzers.every(a => outputs.has(a));
+      if (!hasAllOutputs) continue;
+      const result = pattern.detect(outputs);
+      if (result) results.push(result);
+    }
+    return results;
+  }
+}
+```
+
+**IP-5.2: Implement 6 Initial Correlation Patterns**
+
+**Create:** `src/services/intelligence/correlation-patterns.ts`
+
+Each pattern is a pure function that reads specific analyzer outputs and returns a `Correlation` or null:
+
+1. **Efficiency-Blind-Spot:** Efficiency declining in domain where comprehension is low → warning/critical.
+2. **Cost-Loop:** High waste ratio + stuck loops in same domain → warning.
+3. **Velocity-Comprehension:** Velocity decelerating in low-comprehension domain → info.
+4. **Pattern-Efficiency:** Effective prompt pattern correlating with efficiency improvement → info (positive reinforcement).
+5. **Expertise-Cost:** High cost in deep-expertise domain → warning (potential over-reliance on AI).
+6. **Blind-Spot-Acceptance:** High AI acceptance rate in blind spot domain → critical (dangerous uncritical acceptance).
+
+Each pattern sets `severity`, `evidenceEventIds` (merged from both analyzers), and an `actionable` recommendation.
+
+---
+
+**IP-5.3: Correlation Persistence**
+
+**Add to:** `src/services/intelligence/correlation-engine.ts`
+
+```typescript
+/**
+ * Write detected correlations to ~/.unfade/intelligence/correlations.json.
+ * Replaces previous file (correlations are recomputed each tick).
+ */
+export async function writeCorrelations(
+  correlations: Correlation[],
+  intelligenceDir: string,
+): Promise<void> { ... }
+
+export async function loadCorrelations(
+  intelligenceDir: string,
+): Promise<Correlation[]> { ... }
+```
+
+---
+
+**IP-5.4: Correlation Engine Tests**
+
+**Create:** `test/services/intelligence/correlation-engine.test.ts`
+
+- Each of 6 patterns tested: provide mock analyzer outputs that trigger the pattern, verify correlation emitted with correct severity, analyzers, evidenceEventIds
+- Negative test for each pattern: provide outputs that don't trigger, verify null
+- `detect()` with missing analyzer output → pattern skipped (no error)
+- `writeCorrelations()` / `loadCorrelations()` round-trip
+- Multiple patterns triggered in same run → all returned
+
+---
+
+### IP-6: LLM Narrative Enhancement
+
+**Goal:** Upgrade narrative-engine to use LLM for daily narrative generation with a template fallback. Narratives reference cross-analyzer correlations and include evidence linking.
+
+**Day estimate:** ~4 hours. Narrative engine dual path + tests.
+
+**Depends on:** IP-5 (correlation engine provides cross-analyzer insights for narrative context).
+
+---
+
+**IP-6.1: Add LLM Path to Narrative Engine**
+
+**Modify:** `src/services/intelligence/narrative-engine.ts`
+
+Add dual-path narrative generation:
+
+1. **LLM path (daily):** Once per day, synthesize all analyzer outputs + correlations into natural-language narratives. The LLM receives: analyzer summaries, correlation insights, evidence highlights. Produces narratives grouped by category (comprehension, efficiency, patterns, cost, growth).
+
+2. **Template fallback (per-tick):** Enhanced templates that reference correlation data and include evidence counts. Used when no LLM is configured or between daily runs.
+
+```typescript
+export interface NarrativeEngineConfig {
+  llmConfig: LLMConfig | null;  // null = template-only mode
+  correlations: Correlation[];   // from correlation engine
+  intelligenceDir: string;
+}
+
+/**
+ * Generate narratives. Uses LLM if configured and last LLM run > 24h ago.
+ * Falls back to enhanced templates with correlation awareness.
+ */
+export async function generateNarratives(
+  analyzerOutputs: Map<string, unknown>,
+  config: NarrativeEngineConfig,
+): Promise<NarrativeOutput> { ... }
+```
+
+---
+
+**IP-6.2: Narrative Tests**
+
+**Modify:** `test/services/intelligence/narrative-engine.test.ts`
+
+- LLM path: mock LLM call, verify narratives include correlation references
+- Template fallback: verify enhanced templates generate without LLM
+- Template with correlations: verify cross-analyzer insights appear in output
+- Evidence linking: verify narrative entries include `evidenceEventIds`
+- Graceful degradation: LLM call fails → falls back to template (no error)
+
+---
+
+### IP-7: Substrate Query Layer
+
+**Goal:** Add high-level query methods to SubstrateEngine for evidence-linked entity exploration, and add `evidenceEventIds` to `EntityContribution`.
+
+**Day estimate:** ~3 hours. Substrate modifications + tests.
+
+**Depends on:** IP-2 (enriched analyzer outputs with evidence).
+
+---
+
+**IP-7.1: Add SubstrateQueries Interface**
+
+**Modify:** `src/services/substrate/substrate-engine.ts`
+
+```typescript
+export interface SubstrateQueries {
+  /** Entities in a domain, ranked by engagement frequency. */
+  entitiesByDomain(domain: string, limit?: number): Promise<EntityWithEvidence[]>;
+  /** Shortest path between two entities in the knowledge graph. */
+  findPath(fromEntity: string, toEntity: string): Promise<GraphPath | null>;
+  /** Hub entities — highest degree centrality in the graph. */
+  hubEntities(limit?: number): Promise<EntityWithEvidence[]>;
+  /** Entities validated by multiple sources (git + AI session). */
+  crossValidatedEntities(limit?: number): Promise<EntityWithEvidence[]>;
+}
+
+interface EntityWithEvidence {
+  id: string;
+  name: string;
+  type: string;
+  domain: string;
+  evidenceEventIds: string[];
+  engagement: number;
+}
+```
+
+Each method is a Datalog query against CozoDB. `evidenceEventIds` comes from joining the entity with the `fact` relation's `episode_id` field.
+
+---
+
+**IP-7.2: Add Evidence to EntityContribution**
+
+**Modify:** `src/services/substrate/substrate-engine.ts`
+
+In the existing `contributeEntities()` flow, add `evidenceEventIds` to each `EntityContribution` so the substrate graph tracks which events support each entity relationship.
+
+---
+
+**IP-7.3: Substrate Query Tests**
+
+**Create:** `test/services/substrate/substrate-queries.test.ts`
+
+- `entitiesByDomain()` — returns entities with evidence, ordered by engagement
+- `findPath()` — returns path between connected entities, null for disconnected
+- `hubEntities()` — returns high-centrality nodes
+- `crossValidatedEntities()` — only returns entities with both git and AI-session evidence
+- Edge: empty graph → empty results (no error)
+
+---
+
+### IP-8: Shared UI Components
+
+**Goal:** Build the 4 shared React components needed across all Intelligence Hub tabs: ShowMore, MetricDecomposition, CorrelationCard, EvidenceEventCard. Also extract shared utilities.
+
+**Day estimate:** ~5 hours. 4 components + 3 utility modules + tests.
+
+**Depends on:** IP-1 (schema types for props).
+
+---
+
+**IP-8.1: ShowMore Component**
+
+**Create:** `src/ui/components/shared/ShowMore.tsx`
+
+Generic expandable list. Replaces all `.slice(0, N)` patterns across the UI.
+
+```tsx
+interface ShowMoreProps<T> {
+  items: T[];
+  initialCount: number;
+  renderItem: (item: T, index: number) => React.ReactNode;
+  label?: string;  // "Show {N} more {label}"
+}
+
+export function ShowMore<T>({ items, initialCount, renderItem, label = "items" }: ShowMoreProps<T>) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? items : items.slice(0, initialCount);
+  const remaining = items.length - initialCount;
+
+  return (
+    <>
+      {visible.map((item, i) => renderItem(item, i))}
+      {!expanded && remaining > 0 && (
+        <Button variant="ghost" onClick={() => setExpanded(true)}>
+          Show {remaining} more {label}
+        </Button>
+      )}
+    </>
+  );
+}
+```
+
+---
+
+**IP-8.2: MetricDecomposition Component**
+
+**Create:** `src/ui/components/shared/MetricDecomposition.tsx`
+
+Visual formula breakdown showing component weights and contributions for composite scores (AES, independence index, maturity).
+
+```tsx
+interface MetricComponent {
+  name: string;
+  weight: number;     // 0-1 (e.g., 0.30 for 30%)
+  value: number;      // raw value (0-100)
+  contribution: number; // weight * value
+}
+
+interface MetricDecompositionProps {
+  label: string;            // "Independence Index"
+  totalScore: number;       // 62
+  components: MetricComponent[];
+  onComponentClick?: (component: MetricComponent) => void;
+}
+```
+
+Renders as horizontal bars with weight labels and contribution values. Clicking a component triggers evidence drawer for that sub-metric.
+
+---
+
+**IP-8.3: CorrelationCard Component**
+
+**Create:** `src/ui/components/shared/CorrelationCard.tsx`
+
+Cross-analyzer insight card shown at the top of Intelligence Hub tabs when correlations involve that tab's analyzer.
+
+```tsx
+interface CorrelationCardProps {
+  correlation: Correlation;
+  onEvidenceClick?: (eventIds: string[]) => void;
+}
+```
+
+Renders severity badge, multi-analyzer badges (shows which analyzers detected the pattern), explanation text, and actionable recommendation. Click opens evidence drawer.
+
+---
+
+**IP-8.4: EvidenceEventCard + Shared Utilities**
+
+**Create:** `src/ui/components/shared/EvidenceEventCard.tsx`
+
+Reusable event card for evidence drawers — shows event summary, timestamp, source badge, contribution weight. Extracted from DecisionsPage pattern.
+
+**Create:** `src/ui/lib/event-labels.ts`
+
+Extract `sourceLabel()`, `typeLabel()`, `sourceBadgeClass()` from DecisionsPage for reuse.
+
+**Create:** `src/ui/lib/date-utils.ts`
+
+Extract `relativeDate()` from DecisionsPage.
+
+**Create:** `src/ui/hooks/useProjectNames.ts`
+
+Shared hook for `projectId` → display name resolution from repos data.
+
+---
+
+**IP-8.5: Shared Component Tests**
+
+**Create:** `test/ui/components/ShowMore.test.tsx`, `MetricDecomposition.test.tsx`, `CorrelationCard.test.tsx`, `EvidenceEventCard.test.tsx`
+
+- ShowMore: renders `initialCount` items, click "Show N more" renders all, handles 0 items
+- MetricDecomposition: renders all components with weights, total matches sum, click triggers callback
+- CorrelationCard: renders severity badge, analyzer badges, explanation text
+- EvidenceEventCard: renders event summary, source badge, contribution weight, relative date
+
+---
+
+### IP-9: API Layer — Evidence + Correlation Endpoints
+
+**Goal:** Add evidence and correlation endpoints to the intelligence API. Enhance all existing intelligence responses with `_meta.freshness` and `_meta.evidenceAvailable`.
+
+**Day estimate:** ~5 hours. Route modifications + API client + types + tests.
+
+**Depends on:** IP-3/IP-4 (enriched analyzer outputs), IP-5 (correlations.json).
+
+---
+
+**IP-9.1: Add Evidence + Correlation Routes**
+
+**Modify:** `src/server/routes/intelligence.ts`
+
+New endpoints:
+
+```
+GET /api/intelligence/evidence/:analyzerName
+  → Returns EvidenceChain[] for a specific analyzer (loaded from evidence/ dir)
+
+GET /api/intelligence/evidence/:analyzerName/:metric
+  → Returns EvidenceChain for a specific metric within an analyzer
+
+GET /api/intelligence/correlations
+  → Returns Correlation[] (loaded from correlations.json)
+
+GET /api/intelligence/explain/:insightId
+  → LLM-generated natural language explanation of a specific insight
+  → Returns { explanation: string, evidenceEventIds: string[] }
+  → Falls back to template if no LLM configured
+```
+
+---
+
+**IP-9.2: Enrich Existing Intelligence Responses**
+
+**Modify:** `src/server/routes/intelligence.ts`
+
+All existing endpoints (`/api/intelligence/efficiency`, `/api/intelligence/comprehension`, etc.) gain:
+
+```typescript
+{
+  data: { /* existing analyzer output */ },
+  _meta: {
+    tool: "intelligence",
+    durationMs: number,
+    freshness: {
+      updatedAt: string,
+      dataPoints: number,
+      confidence: "high" | "medium" | "low",
+    },
+    evidenceAvailable: true,  // enables "view evidence" in UI
+    correlations: Correlation[],  // correlations involving this analyzer
+  }
+}
+```
+
+---
+
+**IP-9.3: Substrate Explore Endpoint**
+
+**Modify:** `src/server/routes/substrate.ts`
+
+```
+GET /api/substrate/explore/:entityId
+  → Returns entity details + 1-hop neighborhood + evidenceEventIds
+  → Uses SubstrateQueries from IP-7
+```
+
+---
+
+**IP-9.4: API Client + Types**
+
+**Modify:** `src/ui/lib/api.ts`
+
+Add methods:
+- `fetchEvidence(analyzerName: string, metric?: string): Promise<EvidenceChain[]>`
+- `fetchCorrelations(): Promise<Correlation[]>`
+- `fetchExplanation(insightId: string): Promise<{ explanation: string; evidenceEventIds: string[] }>`
+- `fetchSubstrateEntity(entityId: string): Promise<EntityExploreResult>`
+
+**Modify:** `src/ui/types/intelligence.ts`
+
+Add `IntelligenceResponse<T>` wrapper type, `Correlation`, `EvidenceChain`, `DiagnosticMessage` types — all derived from the shared Zod schemas in `src/schemas/intelligence-presentation.ts`.
+
+---
+
+**IP-9.5: API Tests**
+
+**Create:** `test/server/routes/intelligence-evidence.test.ts`
+
+- Evidence endpoint returns chains for valid analyzer name
+- Evidence endpoint returns 404 for unknown analyzer
+- Correlation endpoint returns detected correlations
+- Correlation endpoint returns empty array on cold start (no correlations.json)
+- All existing intelligence endpoints include `_meta.freshness`
+- Explain endpoint returns explanation when LLM configured
+- Explain endpoint returns template fallback when no LLM
+
+---
+
+### IP-10: Intelligence Hub UI — Comprehension + Autonomy + Patterns + Cost Tabs
+
+**Goal:** Transform 4 of the 8 Intelligence Hub tabs with evidence drill-through, FreshnessBadge, ShowMore, MetricDecomposition, and CorrelationHighlights.
+
+**Day estimate:** ~5 hours. 4 tab component modifications.
+
+**Depends on:** IP-8 (shared components), IP-9 (API endpoints).
+
+---
+
+**IP-10.1: ComprehensionTab Enhancement**
+
+**Modify:** `src/ui/pages/intelligence/ComprehensionTab.tsx`
+
+- Add `FreshnessBadge` using `_meta.freshness` from API response.
+- Replace `.slice(0, 8)` on radar modules with `ShowMore` + full radar toggle.
+- Module click → opens EvidenceDrawer showing sessions with comprehension contribution for that module.
+- Blind spot click → EvidenceDrawer showing low-HDS sessions in that module.
+- Add `CorrelationHighlights` at top if any correlations involve comprehension analyzer.
+
+---
+
+**IP-10.2: AutonomyTab Enhancement**
+
+**Modify:** `src/ui/pages/intelligence/AutonomyTab.tsx`
+
+- Add `FreshnessBadge`.
+- Add `MetricDecomposition` for independence index (HDS weight, modification rate, context leverage, comprehension trend).
+- Domain steering map row click → EvidenceDrawer showing sessions in that domain.
+- Diagnostics from analyzer shown instead of hardcoded.
+
+---
+
+**IP-10.3: PatternsTab Enhancement**
+
+**Modify:** `src/ui/pages/intelligence/PatternsTab.tsx`
+
+- Add `FreshnessBadge`.
+- Pattern click → EvidenceDrawer showing example sessions using that pattern (via `exampleSessionIds`).
+- Anti-pattern click → EvidenceDrawer showing sessions exhibiting the anti-pattern.
+- Add `CorrelationHighlights` for pattern-efficiency correlation.
+
+---
+
+**IP-10.4: CostTab Enhancement**
+
+**Modify:** `src/ui/pages/intelligence/CostTab.tsx`
+
+- Add `FreshnessBadge`.
+- Model row click → EvidenceDrawer showing most expensive sessions for that model.
+- Waste ratio click → EvidenceDrawer showing abandoned/looping sessions.
+- Add per-session cost visibility with sortable table.
+- Add `CorrelationHighlights` for cost-loop and expertise-cost correlations.
+
+---
+
+### IP-11: Intelligence Hub UI — Velocity + Narratives + Maturity + Efficiency Tabs
+
+**Goal:** Transform the remaining 4 Intelligence Hub tabs.
+
+**Day estimate:** ~5 hours. 4 tab component modifications.
+
+**Depends on:** IP-8 (shared components), IP-9 (API endpoints).
+
+---
+
+**IP-11.1: VelocityTab Enhancement**
+
+**Modify:** `src/ui/pages/intelligence/VelocityTab.tsx`
+
+- Add `FreshnessBadge`.
+- Domain row click → navigate to Decisions page filtered by domain + time period.
+- Trend line with data points; click any point → events from that time period.
+- Add `CorrelationHighlights` for velocity-comprehension correlation.
+
+---
+
+**IP-11.2: NarrativesTab Enhancement**
+
+**Modify:** `src/ui/pages/intelligence/NarrativesTab.tsx`
+
+- Add `FreshnessBadge`.
+- Remove all `.slice(0, 5)` caps → `ShowMore` with all narratives.
+- Each narrative card shows evidence event count; click → EvidenceDrawer.
+- Correlation-based narratives highlighted with multi-analyzer badges.
+
+---
+
+**IP-11.3: MaturityTab Enhancement**
+
+**Modify:** `src/ui/pages/intelligence/MaturityTab.tsx`
+
+- Add `FreshnessBadge`.
+- Add `MetricDecomposition` for overall maturity score showing all dimension contributions.
+- Remove `.slice(0, 8)` on radar → full dimension rendering.
+- Next phase requirements clickable → EvidenceDrawer showing current state evidence for each dimension.
+
+---
+
+**IP-11.4: EfficiencyTab Enhancement**
+
+**Modify:** `src/ui/pages/intelligence/EfficiencyTab.tsx`
+
+- Add `FreshnessBadge`.
+- Add `MetricDecomposition` for AES showing all 5 sub-metric weights and contributions.
+- Trend point click → events from that time period.
+- Add `CorrelationHighlights` for efficiency-blind-spot correlation.
+
+---
+
+### IP-12: Intelligence Hub UI — Overview + Correlation Highlights
+
+**Goal:** Transform the Intelligence Hub overview page (card layout) to use analyzer-provided diagnostics and show correlation highlights prominently.
+
+**Day estimate:** ~3 hours. Overview page + correlation integration.
+
+**Depends on:** IP-10 and IP-11 (all tabs enhanced).
+
+---
+
+**IP-12.1: IntelligencePage Overview Enhancement**
+
+**Modify:** `src/ui/pages/IntelligencePage.tsx`
+
+- Replace hardcoded card extract logic with analyzer-provided `diagnostics[]` — each card shows the analyzer's own diagnostic messages instead of the overview page computing them.
+- Add `CorrelationHighlights` section above the card grid — shows all active correlations with severity badges, enabling users to spot cross-analyzer issues at a glance.
+- Each card shows `FreshnessBadge` inline.
+- Card click → navigates to tab with evidence drawer pre-armed if correlation exists.
+
+---
+
+**IP-12.2: Correlation Panel Component**
+
+**Create:** `src/ui/components/shared/CorrelationPanel.tsx`
+
+A panel component that fetches correlations and renders them as a prioritized list (critical → warning → info). Used on the overview page and optionally on individual tabs.
+
+```tsx
+interface CorrelationPanelProps {
+  filterAnalyzer?: string;  // show only correlations involving this analyzer
+  maxVisible?: number;      // default 5
+}
+```
+
+---
+
+### IP-13: Substrate Explorer UI
+
+**Goal:** Add a substrate entity explorer to the dashboard — users can browse the knowledge graph, see entity neighborhoods, and drill through to evidence.
+
+**Day estimate:** ~4 hours. New page/panel + substrate API integration.
+
+**Depends on:** IP-7 (SubstrateQueries), IP-9 (substrate explore endpoint).
+
+---
+
+**IP-13.1: Entity Explorer Component**
+
+**Create:** `src/ui/pages/intelligence/SubstrateExplorerTab.tsx`
+
+A new tab (or sub-panel) in the Intelligence Hub showing:
+
+- **Entity search:** Type-ahead search across all entities in the knowledge graph.
+- **Entity detail:** Selected entity shows type, domain, engagement score, related facts, and `evidenceEventIds`.
+- **Neighborhood view:** 1-hop connections from the selected entity — related entities, shared facts, co-occurrence in sessions.
+- **Hub entities:** Top entities by centrality — the most connected concepts in the user's knowledge graph.
+- **Cross-validated entities:** Entities confirmed by multiple sources (git + AI session) — highest confidence knowledge.
+
+---
+
+**IP-13.2: Substrate Explorer Tests**
+
+**Create:** `test/ui/pages/SubstrateExplorerTab.test.tsx`
+
+- Entity search renders results
+- Entity detail shows facts and evidence
+- Empty graph state renders message (not error)
+- Hub entities render with engagement scores
+
+---
+
+### IP-14: E2E Verification + Performance Budget
+
+**Goal:** End-to-end verification that the full pipeline (analyzer → evidence → correlation → API → UI) works correctly and within the 10s timing budget.
+
+**Day estimate:** ~4 hours. Integration tests + performance assertions.
+
+**Depends on:** All prior sprints (IP-1 through IP-13).
+
+---
+
+**IP-14.1: Pipeline Integration Test**
+
+**Create:** `test/integration/intelligence-presentation.test.ts`
+
+- Seed DuckDB with diverse test events (git commits, AI sessions across multiple domains).
+- Run full scheduler cycle (all analyzers + correlation + evidence).
+- Verify: all analyzer outputs include `_meta`, evidence files exist for each analyzer, correlations.json exists.
+- Verify: at least one correlation detected with overlapping test data (low comprehension + declining efficiency in same domain).
+- Verify: evidence chains link back to source events correctly (event IDs exist in DuckDB).
+
+---
+
+**IP-14.2: API Integration Test**
+
+**Create:** `test/integration/intelligence-api.test.ts`
+
+- Start test server with seeded intelligence data.
+- Verify all intelligence endpoints return `_meta.freshness`.
+- Verify evidence endpoints return per-metric chains.
+- Verify correlation endpoint returns detected patterns.
+- Verify substrate explore endpoint returns entity + neighborhood.
+
+---
+
+**IP-14.3: Performance Budget Assertions**
+
+**Add to:** `test/integration/intelligence-presentation.test.ts`
+
+- Full scheduler cycle (25 analyzers + correlation + evidence) completes within 10s on test workload.
+- Evidence file writes add < 500ms to total cycle time.
+- API response for card-level data (no evidence) returns within 200ms.
+- Evidence endpoint (single analyzer) returns within 500ms.
+- Correlation detection (6 patterns) completes within 100ms.
+
+---
+
+**IP-14.4: Cold Start Verification**
+
+- Fresh install (no intelligence data, no correlations.json, no evidence files).
+- Dashboard renders all tabs without errors.
+- FreshnessBadge shows "No data" state.
+- Correlation panel shows empty state.
+- Evidence drawer shows "No evidence available" when opened.
+
+---
+
+### Implementation Tracker
+
+| Sprint | Task | Status | Files |
+|---|---|---|---|
+| IP-1 | IP-1.1: Define shared schemas | ☐ Not started | `src/schemas/intelligence-presentation.ts` |
+| IP-1 | IP-1.2: Build evidence linker | ☐ Not started | `src/services/intelligence/evidence-linker.ts` |
+| IP-1 | IP-1.3: Evidence linker tests | ☐ Not started | `test/services/intelligence/evidence-linker.test.ts` |
+| IP-2 | IP-2.1: Remove caps from engine | ☐ Not started | `src/services/intelligence/engine.ts` |
+| IP-2 | IP-2.2: Remove caps from incremental state | ☐ Not started | `src/services/intelligence/incremental-state.ts` |
+| IP-2 | IP-2.3: Engine hook tests | ☐ Not started | `test/services/intelligence/engine-hooks.test.ts` |
+| IP-3 | IP-3.1: Enrich efficiency analyzer | ☐ Not started | `src/services/intelligence/analyzers/efficiency.ts` |
+| IP-3 | IP-3.2: Enrich comprehension-radar analyzer | ☐ Not started | `src/services/intelligence/analyzers/comprehension-radar.ts` |
+| IP-3 | IP-3.3: Enrich cost-attribution analyzer | ☐ Not started | `src/services/intelligence/analyzers/cost-attribution.ts` |
+| IP-3 | IP-3.4: Enrich loop-detector analyzer | ☐ Not started | `src/services/intelligence/analyzers/loop-detector.ts` |
+| IP-3 | IP-3.5: Group A enrichment tests | ☐ Not started | `test/services/intelligence/analyzers/*.test.ts` |
+| IP-4 | IP-4.1: Enrich velocity-tracker analyzer | ☐ Not started | `src/services/intelligence/analyzers/velocity-tracker.ts` |
+| IP-4 | IP-4.2: Enrich prompt-patterns analyzer | ☐ Not started | `src/services/intelligence/analyzers/prompt-patterns.ts` |
+| IP-4 | IP-4.3: Enrich blind-spots analyzer | ☐ Not started | `src/services/intelligence/analyzers/blind-spots.ts` |
+| IP-4 | IP-4.4: Enrich decision-replay analyzer | ☐ Not started | `src/services/intelligence/analyzers/decision-replay.ts` |
+| IP-4 | IP-4.5: Group B enrichment tests | ☐ Not started | `test/services/intelligence/analyzers/*.test.ts` |
+| IP-5 | IP-5.1: Build correlation engine | ☐ Not started | `src/services/intelligence/correlation-engine.ts` |
+| IP-5 | IP-5.2: Implement 6 correlation patterns | ☐ Not started | `src/services/intelligence/correlation-patterns.ts` |
+| IP-5 | IP-5.3: Correlation persistence | ☐ Not started | `src/services/intelligence/correlation-engine.ts` |
+| IP-5 | IP-5.4: Correlation engine tests | ☐ Not started | `test/services/intelligence/correlation-engine.test.ts` |
+| IP-6 | IP-6.1: Add LLM path to narrative engine | ☐ Not started | `src/services/intelligence/narrative-engine.ts` |
+| IP-6 | IP-6.2: Narrative tests | ☐ Not started | `test/services/intelligence/narrative-engine.test.ts` |
+| IP-7 | IP-7.1: Add SubstrateQueries interface | ☐ Not started | `src/services/substrate/substrate-engine.ts` |
+| IP-7 | IP-7.2: Add evidence to EntityContribution | ☐ Not started | `src/services/substrate/substrate-engine.ts` |
+| IP-7 | IP-7.3: Substrate query tests | ☐ Not started | `test/services/substrate/substrate-queries.test.ts` |
+| IP-8 | IP-8.1: ShowMore component | ☐ Not started | `src/ui/components/shared/ShowMore.tsx` |
+| IP-8 | IP-8.2: MetricDecomposition component | ☐ Not started | `src/ui/components/shared/MetricDecomposition.tsx` |
+| IP-8 | IP-8.3: CorrelationCard component | ☐ Not started | `src/ui/components/shared/CorrelationCard.tsx` |
+| IP-8 | IP-8.4: EvidenceEventCard + utilities | ☐ Not started | `src/ui/components/shared/EvidenceEventCard.tsx`, `src/ui/lib/event-labels.ts`, `src/ui/lib/date-utils.ts`, `src/ui/hooks/useProjectNames.ts` |
+| IP-8 | IP-8.5: Shared component tests | ☐ Not started | `test/ui/components/*.test.tsx` |
+| IP-9 | IP-9.1: Evidence + correlation routes | ☐ Not started | `src/server/routes/intelligence.ts` |
+| IP-9 | IP-9.2: Enrich existing intelligence responses | ☐ Not started | `src/server/routes/intelligence.ts` |
+| IP-9 | IP-9.3: Substrate explore endpoint | ☐ Not started | `src/server/routes/substrate.ts` |
+| IP-9 | IP-9.4: API client + types | ☐ Not started | `src/ui/lib/api.ts`, `src/ui/types/intelligence.ts` |
+| IP-9 | IP-9.5: API tests | ☐ Not started | `test/server/routes/intelligence-evidence.test.ts` |
+| IP-10 | IP-10.1: ComprehensionTab enhancement | ☐ Not started | `src/ui/pages/intelligence/ComprehensionTab.tsx` |
+| IP-10 | IP-10.2: AutonomyTab enhancement | ☐ Not started | `src/ui/pages/intelligence/AutonomyTab.tsx` |
+| IP-10 | IP-10.3: PatternsTab enhancement | ☐ Not started | `src/ui/pages/intelligence/PatternsTab.tsx` |
+| IP-10 | IP-10.4: CostTab enhancement | ☐ Not started | `src/ui/pages/intelligence/CostTab.tsx` |
+| IP-11 | IP-11.1: VelocityTab enhancement | ☐ Not started | `src/ui/pages/intelligence/VelocityTab.tsx` |
+| IP-11 | IP-11.2: NarrativesTab enhancement | ☐ Not started | `src/ui/pages/intelligence/NarrativesTab.tsx` |
+| IP-11 | IP-11.3: MaturityTab enhancement | ☐ Not started | `src/ui/pages/intelligence/MaturityTab.tsx` |
+| IP-11 | IP-11.4: EfficiencyTab enhancement | ☐ Not started | `src/ui/pages/intelligence/EfficiencyTab.tsx` |
+| IP-12 | IP-12.1: IntelligencePage overview enhancement | ☐ Not started | `src/ui/pages/IntelligencePage.tsx` |
+| IP-12 | IP-12.2: CorrelationPanel component | ☐ Not started | `src/ui/components/shared/CorrelationPanel.tsx` |
+| IP-13 | IP-13.1: Entity explorer component | ☐ Not started | `src/ui/pages/intelligence/SubstrateExplorerTab.tsx` |
+| IP-13 | IP-13.2: Substrate explorer tests | ☐ Not started | `test/ui/pages/SubstrateExplorerTab.test.tsx` |
+| IP-14 | IP-14.1: Pipeline integration test | ☐ Not started | `test/integration/intelligence-presentation.test.ts` |
+| IP-14 | IP-14.2: API integration test | ☐ Not started | `test/integration/intelligence-api.test.ts` |
+| IP-14 | IP-14.3: Performance budget assertions | ☐ Not started | `test/integration/intelligence-presentation.test.ts` |
+| IP-14 | IP-14.4: Cold start verification | ☐ Not started | `test/integration/intelligence-presentation.test.ts` |

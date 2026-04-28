@@ -22,7 +22,11 @@ Layer 3: Intelligence Pipeline & CozoDB Substrate
   25 DAG-ordered analyzers read DuckDB → produce intelligence JSON + entity graph
   Writes: ~/.unfade/intelligence/*.json, ~/.unfade/intelligence/graph.db
 
-Layer 4: UI, HTTP API & SSE
+Layer 4: Intelligence Presentation — Evidence, Correlation & Actionable Intelligence
+  Evidence linker, cross-analyzer correlation engine, API enrichment, narrative generation.
+  Reads: Layer 2.5 knowledge graph + Layer 3 analyzer outputs. Writes: enriched intelligence.
+
+Layer 5: UI, HTTP API & SSE
   Hono serves API routes + React SPA. SSE pushes real-time. TanStack Query caches.
   Reads: everything above. Writes: nothing persistent.
 ```
@@ -48,7 +52,7 @@ Layer 0 — Config + Registry (src/config/manager.ts, src/services/registry/regi
   │  loadRegistry(): read all tracked repos
   │
   ▼
-Layer 4 — HTTP Server (src/server/http.ts)
+Layer 5 — HTTP Server (src/server/http.ts)
   │  createApp(): build Hono instance with middleware chain
   │    CORS → static cache headers → request logging → setup enforcement → error handler
   │  findAvailablePort(7654–7660)
@@ -112,7 +116,7 @@ Layer 3 — Intelligence (triggered inside materializer tick)
   │    eventBus({ type: "intelligence", data }) for SSE push
   │
   ▼
-Layer 4 — SSE Push (src/server/routes/stream.ts → src/ui/lib/sse.ts)
+Layer 5 — SSE Push (src/server/routes/stream.ts → src/ui/lib/sse.ts)
       Browser's EventSource at /api/stream receives:
         "summary" → queryClient.setQueryData(["summary"], data)
         "intelligence" → queryClient.invalidateQueries(["intelligence"])
@@ -171,7 +175,7 @@ Layer 3 — Intelligence (same tick, after materialization)
   │  eventBus.emitBus({ type: "intelligence", data: { analyzer: "velocity" } })
   │
   ▼
-Layer 4 — UI Update
+Layer 5 — UI Update
   │  SSE stream receives "intelligence" event
   │  sse.ts listener: queryClient.invalidateQueries({ queryKey: ["intelligence"] })
   │  TanStack Query refetches GET /api/intelligence/velocity (and others)
@@ -188,7 +192,7 @@ USER SEES: Velocity metric updates on Intelligence page within ~3s of commit.
 
 ## 4. Real-Time Push Chain: EventBus → SSE → React
 
-The event bus is the coordination point between Layer 2/3 (producers) and Layer 4 (consumer).
+The event bus is the coordination point between Layer 2/3 (producers) and Layer 5 (consumer).
 
 ```
 PRODUCERS (server-side):
@@ -203,7 +207,7 @@ PRODUCERS (server-side):
     ON analyzer output updated:
       eventBus.emitBus({ type: "intelligence", data: { analyzer: name } })
 
-TRANSPORT (Layer 4 server):
+TRANSPORT (Layer 5 server):
 
   GET /api/stream  (src/server/routes/stream.ts)
     ON connect:
@@ -216,7 +220,7 @@ TRANSPORT (Layer 4 server):
     Every 30s: health tick with daemon/materializer status
     ON client disconnect: offBus(listener), cleanup
 
-CONSUMER (Layer 4 client):
+CONSUMER (Layer 5 client):
 
   connectSSE()  (src/ui/lib/sse.ts)
     EventSource at /api/stream
@@ -246,7 +250,7 @@ CONSUMER (Layer 4 client):
         ┌──────────────────────────┼──────────────────────────┐
         │                          │                          │
         ▼                          ▼                          ▼
-  Layer 1 (Go)              Layer 2 (Materializer)     Layer 4 (HTTP)
+  Layer 1 (Go)              Layer 2 (Materializer)     Layer 5 (HTTP)
   ┌────────────┐            ┌─────────────────┐        ┌─────���───────┐
   │  unfaded    │            │  Tail JSONL      │        │  Hono server │
   │  git watch  │ ─JSONL──▶ │  → SQLite + Duck │        │  API routes  │
@@ -289,7 +293,7 @@ Coordinated reverse-order teardown. Each layer cleans up before the next starts.
 ```
 USER: Ctrl+C (SIGINT)
 
-Layer 4 — unfade-server.ts shutdown handler
+Layer 5 — unfade-server.ts shutdown handler
   │
   │  1. Stop registry poll timer (clearInterval)
   │
@@ -309,7 +313,7 @@ Layer 1 — Stop all Go daemons
   │  repoManager.stopGlobalAICapture()
   │
   ▼
-Layer 4 — Close HTTP server
+Layer 5 — Close HTTP server
   │  server.close()
   │  unlink ~/.unfade/state/server.json
   │
@@ -398,18 +402,18 @@ Each file or directory has exactly one writer. Readers are many; writers are one
 | Resource | Writer (Layer) | Readers |
 |---|---|---|
 | `~/.unfade/events/*.jsonl` | Layer 1 (Go daemon) | Layer 2 (materializer) |
-| `~/.unfade/cache/unfade.db` | Layer 2 (materializer) | Layer 3 (operational queries), Layer 4 (lineage API) |
-| `~/.unfade/cache/unfade.duckdb` | Layer 2 (materializer) | Layer 3 (all analytics), Layer 4 (via Layer 3 JSON) |
-| `~/.unfade/intelligence/*.json` | Layer 3 (analyzers) | Layer 4 (HTTP routes read files) |
-| `~/.unfade/intelligence/graph.db` | Layer 3 (SubstrateEngine) | Layer 4 (substrate API routes) |
-| `~/.unfade/state/summary.json` | Layer 3 (summary-writer) | Layer 4 (SSE backfill, /api/summary) |
+| `~/.unfade/cache/unfade.db` | Layer 2 (materializer) | Layer 3 (operational queries), Layer 4 (evidence linker), Layer 5 (lineage API) |
+| `~/.unfade/cache/unfade.duckdb` | Layer 2 (materializer) | Layer 3 (all analytics), Layer 4 (correlation engine), Layer 5 (via enriched JSON) |
+| `~/.unfade/intelligence/*.json` | Layer 3 (analyzers) | Layer 4 (enrichment input), Layer 5 (HTTP routes read files) |
+| `~/.unfade/intelligence/graph.db` | Layer 3 (SubstrateEngine) | Layer 4 (substrate queries), Layer 5 (substrate API routes) |
+| `~/.unfade/state/summary.json` | Layer 3 (summary-writer) | Layer 5 (SSE backfill, /api/summary) |
 | `~/.unfade/state/registry.v1.json` | Layer 0 (registry module) | Layer 1 (daemon manager reads repos) |
-| `~/.unfade/state/server.json` | Layer 4 (HTTP server) | External tools (port discovery) |
+| `~/.unfade/state/server.json` | Layer 5 (HTTP server) | External tools (port discovery) |
 | `~/.unfade/state/materializer.json` | Layer 2 (cursor module) | Layer 2 (resume from offset) |
 | `~/.unfade/config.json` | Layer 0 (config manager) | All layers |
-| `~/.unfade/distills/*.md` | Layer 3 (distiller) | Layer 4 (distill page) |
-| `~/.unfade/profile/` | Layer 3 (profile updater) | Layer 4 (profile page) |
-| Event bus (in-memory) | Layer 2 + 3 (emitBus) | Layer 4 (SSE route subscribes) |
+| `~/.unfade/distills/*.md` | Layer 3 (distiller) | Layer 5 (distill page) |
+| `~/.unfade/profile/` | Layer 3 (profile updater) | Layer 5 (profile page) |
+| Event bus (in-memory) | Layer 2 + 3 (emitBus) | Layer 5 (SSE route subscribes) |
 
 ---
 
@@ -437,16 +441,25 @@ Batching:   buildEventBatch() queries events after global watermark
 Filtering:  Each analyzer's eventFilter selects relevant rows
 ```
 
-### Layer 3 → Layer 4: JSON Files + Event Bus
+### Layer 3 → Layer 4: Analyzer Outputs + Knowledge Graph
 
 ```
 Contract:   Each analyzer writes ~/.unfade/intelligence/<outputFile>.json
-Interface:  HTTP routes read JSON files; return 202 "warming_up" if not yet written
+Interface:  Layer 4 evidence linker reads analyzer JSON + DuckDB source events
+Graph:      CozoDB knowledge graph provides entity/fact context for correlation engine
+Enrichment: Layer 4 adds _meta (freshness, evidence chains, diagnostics) to each output
+```
+
+### Layer 4 → Layer 5: Enriched JSON + Event Bus
+
+```
+Contract:   Enriched intelligence JSON with evidence chains + correlation highlights
+Interface:  HTTP routes read enriched JSON; return 202 "warming_up" if not yet written
 Push:       eventBus({ type: "intelligence" }) triggers SSE → client query invalidation
 Freshness:  File mtime determines freshness badge in UI (R-3 compliance)
 ```
 
-### Layer 4 Internal: HTTP → SSE → React
+### Layer 5 Internal: HTTP → SSE → React
 
 ```
 Contract:   API response shapes defined in src/ui/types/ and src/ui/lib/api.ts
@@ -467,9 +480,9 @@ Event construction + JSONL write:        ~10ms    (Layer 1)
 Materializer tick interval:              ≤2000ms  (Layer 2, worst case)
 JSONL parse + dual-DB insert:            ~50ms    (Layer 2)
 Intelligence DAG processing:             ~200ms   (Layer 3, 25 analyzers)
-EventBus emit → SSE write:              ~1ms     (Layer 4 server)
-SSE → EventSource → cache injection:    ~10ms    (Layer 4 client)
-React re-render:                         ~16ms    (Layer 4 client)
+EventBus emit → SSE write:              ~1ms     (Layer 5 server)
+SSE → EventSource → cache injection:    ~10ms    (Layer 5 client)
+React re-render:                         ~16ms    (Layer 5 client)
                                          ─────
 Typical end-to-end:                      ~2.5s    (dominated by materializer interval)
 Worst case:                              ~4s      (tick just missed + full DAG)

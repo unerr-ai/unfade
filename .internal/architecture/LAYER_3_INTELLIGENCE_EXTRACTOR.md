@@ -818,3 +818,698 @@ Key algorithmic quality patterns implemented across the pipeline:
 | **Temporal decay** | Session intelligence loop risk, diagnostic TTL, entity lifecycle | Older signals naturally age out |
 | **Cascade magnitude throttling** | DAG scheduler | Prevents small upstream changes from triggering full DAG recomputation |
 | **Datalog injection prevention** | SubstrateEngine | `escCozo()` escapes all string interpolation in Datalog queries |
+
+---
+
+## 17. Knowledge-Grounded Intelligence — Integration Sprints (KGI)
+
+Layer 2.5 (Temporal Knowledge Extraction) produces entities, facts, decisions, comprehension assessments, and metacognitive signals from actual conversation content. Layer 3's analyzers currently derive intelligence from DuckDB numeric columns independently. These sprints unify both layers so that Layer 3 analyzers **consume** Layer 2.5's extracted knowledge as their primary signal, with DuckDB metrics as a secondary/complementary source.
+
+**Thesis:** Layer 2.5 is the knowledge foundation. Layer 3 becomes the analytics + synthesis layer OVER that knowledge. CozoDB is the unified meeting point.
+
+### Analyzer Classification
+
+| Group | Analyzers | Integration Strategy |
+|---|---|---|
+| **A: Pure Metrics** (7) | token-proxy, cost-attribution, window-aggregator, summary-writer, intelligence-snapshots, git-commit-analyzer, git-file-churn | No changes — pure event-metric accounting |
+| **B: Knowledge-Overlapping** (4) | comprehension-radar, blind-spots, decision-replay, loop-detector | **Rewrite** — consume CozoDB extracted knowledge instead of re-deriving from HDS/similarity heuristics |
+| **C: Behavioral** (6) | file-direction, session-intelligence, efficiency, velocity-tracker, prompt-patterns, causality | **Enhance** — read DuckDB metrics + CozoDB knowledge context |
+| **D: Synthesis** (3) | maturity-model, narrative-engine, profile-accumulator | **Deepen** — ground outputs in actual extracted facts/decisions, not just numeric scores |
+| **E: Cross-Source** (5) | git-ai-linker, git-expertise-map, cross-efficiency-survival, cross-dual-velocity, cross-maturity-ownership | **Enhance** — add entity-level linking and comprehension grounding |
+
+### Sprint Dependency Graph
+
+```
+KGI-1: AnalyzerContext + Knowledge Query Layer
+  │
+  ├─► KGI-2: Rewrite comprehension-radar (Group B)
+  │
+  ├─► KGI-3: Rewrite blind-spots (Group B)
+  │
+  ├─► KGI-4: Rewrite decision-replay (Group B)
+  │
+  ├─► KGI-5: Rewrite loop-detector (Group B)
+  │     │
+  │     └──────────────────────────────────────┐
+  │                                            │
+  ├─► KGI-6: Enhance efficiency (Group C)      │
+  │                                            │
+  ├─► KGI-7: Enhance session-intelligence      │
+  │          (Group C)                         │
+  │                                            │
+  ├─► KGI-8: Enhance velocity-tracker +        │
+  │          causality + file-direction +       │
+  │          prompt-patterns (Group C)          │
+  │                                            ▼
+  ├─► KGI-9: Deepen maturity-model (Group D)
+  │     │
+  │     └─► KGI-10: Deepen narrative-engine (Group D)
+  │           │
+  │           └─► KGI-11: Deepen profile-accumulator (Group D)
+  │
+  ├─► KGI-12: Enhance cross-source analyzers (Group E)
+  │
+  └─► KGI-13: E2E Integration Tests + DAG Verification
+        │
+        └─► KGI-14: Cleanup — Remove Dead Heuristic Code
+```
+
+**Parallelism:** After KGI-1, sprints KGI-2 through KGI-8 and KGI-12 can all run in parallel (independent analyzer rewrites). KGI-9 depends on Group B completion (maturity reads comprehension + loop + decision data). KGI-10 depends on KGI-9. KGI-13 depends on all prior sprints.
+
+---
+
+### KGI-1: AnalyzerContext + Knowledge Query Layer
+
+**Goal:** Add CozoDB knowledge access to `AnalyzerContext` so any analyzer can query extracted knowledge. Build a thin query layer that abstracts common knowledge lookups.
+
+**Day estimate:** ~6 hours. Context extension + query module + tests.
+
+---
+
+**KGI-1.1: Extend AnalyzerContext with Knowledge Handle**
+
+**Modify:** `src/services/intelligence/analyzers/index.ts`
+
+Add `knowledge` field to `AnalyzerContext`:
+
+```typescript
+export interface AnalyzerContext {
+  analytics: DbLike;          // DuckDB — existing
+  operational: DbLike;        // SQLite — existing
+  repoRoot: string;           // existing
+  config: Record<string, unknown>; // existing
+  dependencyStates?: Map<string, IncrementalState<unknown>>; // existing
+  knowledge: KnowledgeReader | null;  // NEW — CozoDB knowledge access
+}
+```
+
+`KnowledgeReader` is a read-only interface (analyzers never write to CozoDB directly during their update cycle — that's Layer 2.5's job):
+
+```typescript
+export interface KnowledgeReader {
+  /** Get comprehension assessments for entities in a module/domain. */
+  getComprehension(opts: { domain?: string; module?: string; since?: string }): Promise<ComprehensionEntry[]>;
+  /** Get extracted facts for a subject entity or domain. */
+  getFacts(opts: { subject?: string; domain?: string; predicate?: string; activeOnly?: boolean }): Promise<FactEntry[]>;
+  /** Get extracted decisions (facts with decision predicates). */
+  getDecisions(opts: { domain?: string; since?: string }): Promise<FactEntry[]>;
+  /** Get entity engagement stats (how often an entity appears in conversations). */
+  getEntityEngagement(opts: { since?: string; minOccurrences?: number }): Promise<EntityEngagement[]>;
+  /** Get comprehension decay state (FSRS stability + retrievability). */
+  getDecayState(opts: { domain?: string; entity?: string }): Promise<DecayEntry[]>;
+  /** Check if knowledge extraction data exists (for graceful degradation). */
+  hasKnowledgeData(): Promise<boolean>;
+}
+```
+
+**New file:** `src/services/intelligence/knowledge-reader.ts`
+
+Implements `KnowledgeReader` by wrapping CozoDB Datalog queries. Each method is a focused Datalog query against the relations Layer 2.5 populates (fact, comprehension_assessment, entity, etc.).
+
+**Critical design rule:** Every analyzer MUST gracefully degrade when `knowledge` is null (no CozoDB available) or when `hasKnowledgeData()` returns false (Layer 2.5 hasn't run yet). Analyzers fall back to their existing DuckDB-only logic. This ensures the system works before any LLM extraction has occurred.
+
+**Modify:** `src/services/daemon/repo-manager.ts`
+
+In the `onTick` callback where `AnalyzerContext` is constructed, inject the `knowledge` field:
+
+```typescript
+const knowledgeReader = cozo ? createKnowledgeReader(cozo) : null;
+const ctx: AnalyzerContext = {
+  analytics, operational, repoRoot, config,
+  knowledge: knowledgeReader,
+};
+```
+
+---
+
+**KGI-1.2: Knowledge Query Layer Tests**
+
+**New file:** `test/services/intelligence/knowledge-reader.test.ts`
+
+- In-memory CozoDB with Layer 2.5 relations populated
+- `getComprehension()` returns assessments filtered by domain/module/since
+- `getFacts()` returns active facts, filters by predicate
+- `getDecisions()` returns only decision-predicate facts
+- `getEntityEngagement()` aggregates entity occurrence counts
+- `getDecayState()` returns FSRS stability/retrievability
+- `hasKnowledgeData()` returns false on empty graph, true after population
+- Null safety: all methods return empty arrays when graph is empty
+
+---
+
+### KGI-2: Rewrite comprehension-radar
+
+**Goal:** Replace HDS-averaging heuristic with actual comprehension assessments from CozoDB. The radar becomes a thin reader over Layer 2.5's extracted comprehension data with FSRS decay applied.
+
+**Day estimate:** ~5 hours. Rewrite core + retain DuckDB fallback + tests.
+
+**Depends on:** KGI-1
+
+---
+
+**KGI-2.1: Rewrite comprehension-radar Core**
+
+**Modify:** `src/services/intelligence/analyzers/comprehension-radar.ts`
+
+Current approach (remove): Queries DuckDB `domain_comprehension` table, averages HDS per module, applies phase-normalized baselines, percentile-based blind spot detection.
+
+New approach:
+1. Query `knowledge.getComprehension({ since: watermark })` for all recent assessments
+2. Query `knowledge.getDecayState({})` for FSRS decay-adjusted scores per entity/domain
+3. Group by module (using entity's module association from CozoDB edges)
+4. Per-module score = weighted average of decay-adjusted comprehension across entities in that module
+5. Overall score = weighted average across modules (weight = entity count per module)
+6. Blind spots = modules where decay-adjusted comprehension < 40 AND entity count > 3
+
+**Fallback:** If `ctx.knowledge === null || !await ctx.knowledge.hasKnowledgeData()`, fall back to existing DuckDB HDS-average logic (preserve current code as `computeRadarFromHDS()`). This ensures the analyzer works before Layer 2.5 has produced any data.
+
+**State shape change:** Add `source: 'knowledge' | 'hds-fallback'` to state so downstream analyzers know which signal they're getting.
+
+---
+
+**KGI-2.2: comprehension-radar Tests**
+
+**Modify:** `test/services/intelligence/analyzers/comprehension-radar.test.ts` (or create if missing)
+
+- Knowledge-grounded path: mock KnowledgeReader with comprehension + decay data → correct per-module scores
+- Fallback path: null knowledge → falls back to DuckDB HDS averages
+- Mixed path: some modules have knowledge data, some don't → blend appropriately
+- Blind spot detection from low decay-adjusted comprehension
+- Entity count threshold: modules with < 3 entities not flagged as blind spots
+
+---
+
+### KGI-3: Rewrite blind-spots
+
+**Goal:** Replace sustained-low-HDS alert heuristic with knowledge-gap detection from CozoDB. A real blind spot = entity where comprehension is decaying AND the developer keeps accepting AI output without pushback.
+
+**Day estimate:** ~5 hours. Rewrite + tests.
+
+**Depends on:** KGI-1
+
+---
+
+**KGI-3.1: Rewrite blind-spots Core**
+
+**Modify:** `src/services/intelligence/analyzers/blind-spots.ts`
+
+Current approach (remove): Monitors acceptance rate, comprehension, and direction trends with phase-normalized baselines. Generates max 2 alerts/week when thresholds sustained 2+ weeks.
+
+New approach:
+1. Query `knowledge.getDecayState({})` for all entities with stability data
+2. Query `knowledge.getComprehension({ since: twoWeeksAgo })` for recent assessments
+3. Query `knowledge.getFacts({ predicate: 'uses', activeOnly: true })` for active usage patterns
+4. Blind spot criteria (ALL must be true):
+   - Entity comprehension retrievability < 0.4 (FSRS: knowledge is fading)
+   - Entity was referenced in recent events (still active, not abandoned)
+   - Assessment shows low pushback count (developer accepting without questioning)
+   - At least 3 assessments exist for this entity (sufficient evidence)
+5. Alert severity: `retrievability < 0.2` = severe, `< 0.3` = moderate, `< 0.4` = mild
+6. Keep max 2 alerts/week rate limit
+
+**Fallback:** Same graceful degradation — if no knowledge data, fall back to current HDS + acceptance rate heuristic.
+
+---
+
+**KGI-3.2: blind-spots Tests**
+
+- Knowledge path: decaying comprehension + high acceptance → alert generated
+- No alert when comprehension is stable (retrievability > 0.5)
+- No alert when entity abandoned (not in recent events)
+- Severity graduation: retrievability thresholds
+- Rate limiting: max 2 alerts/week
+- Fallback path: null knowledge → HDS-based alerts
+
+---
+
+### KGI-4: Rewrite decision-replay
+
+**Goal:** Replace heuristic domain-drift detection with monitoring of actual extracted decisions from CozoDB. Decision replay triggers when a fact contradicts or supersedes a prior decision.
+
+**Day estimate:** ~5 hours. Rewrite + tests.
+
+**Depends on:** KGI-1
+
+---
+
+**KGI-4.1: Rewrite decision-replay Core**
+
+**Modify:** `src/services/intelligence/analyzers/decision-replay.ts`
+
+Current approach (remove): Domain drift via cosine similarity (0.3–1.0), echoed dead-end detection via string similarity (≥ 0.5). Heuristic confidence scoring.
+
+New approach:
+1. Query `knowledge.getDecisions({ since: watermark })` for newly extracted decisions
+2. For each new decision, query `knowledge.getFacts({ subject: decision.subject, predicate: 'decided' })` for prior decisions on the same entity
+3. Check Layer 2.5's contradiction detection results: if a new fact was classified as CONTRADICTORY or SUPERSEDES relative to a prior decision fact → trigger replay
+4. Replay recommendation includes:
+   - The original decision (fact text + episode source)
+   - The contradicting/superseding fact
+   - The confidence from contradiction detection
+   - Time elapsed since original decision
+5. Keep max 2 replays/week rate limit
+
+**Fallback:** If no knowledge data, fall back to current string-similarity approach.
+
+---
+
+**KGI-4.2: decision-replay Tests**
+
+- New decision contradicting prior → replay triggered with both facts
+- New decision superseding prior → replay triggered
+- Consistent decisions → no replay
+- Rate limiting: max 2/week
+- Fallback: null knowledge → similarity-based detection
+
+---
+
+### KGI-5: Rewrite loop-detector
+
+**Goal:** Replace cosine-similarity clustering with entity-repetition-without-progress detection from CozoDB. A real loop = same entity discussed repeatedly without new facts being extracted.
+
+**Day estimate:** ~5 hours. Rewrite + tests.
+
+**Depends on:** KGI-1
+
+---
+
+**KGI-5.1: Rewrite loop-detector Core**
+
+**Modify:** `src/services/intelligence/analyzers/loop-detector.ts`
+
+Current approach (remove): Greedy clustering by `domain::approach` key, cosine similarity ≥ 0.7. Flags 3+ similar low-direction sessions as stuck.
+
+New approach:
+1. Query `knowledge.getEntityEngagement({ since: oneWeekAgo, minOccurrences: 3 })` for frequently discussed entities
+2. For each high-engagement entity, query `knowledge.getFacts({ subject: entity, since: oneWeekAgo })` to count new facts
+3. Loop detection criteria:
+   - Entity discussed in 3+ sessions this week
+   - Fewer than 1 new fact per session for that entity (low knowledge progress)
+   - Direction scores in those sessions below 0.5 (developer not steering effectively)
+4. Loop risk score = `sessions_without_progress / total_sessions` per entity
+5. Stuck loop = entity with risk score > 0.7
+
+**Fallback:** If no knowledge data, fall back to current cosine-similarity clustering.
+
+---
+
+**KGI-5.2: loop-detector Tests**
+
+- Entity discussed 5 times, 1 fact extracted → loop detected
+- Entity discussed 5 times, 5 facts extracted → no loop
+- Entity discussed 2 times → below threshold, no loop
+- Risk score calculation
+- Fallback: null knowledge → similarity-based clustering
+
+---
+
+### KGI-6: Enhance efficiency
+
+**Goal:** Add comprehension improvement rate to the AES composite metric. "Efficiency" should account for whether the developer is actually learning, not just steering.
+
+**Day estimate:** ~4 hours. Add dimension + tests.
+
+**Depends on:** KGI-1
+
+---
+
+**KGI-6.1: Add Comprehension Efficiency Dimension**
+
+**Modify:** `src/services/intelligence/analyzers/efficiency.ts`
+
+Add a 6th sub-metric to the AES composite: **ComprehensionEfficiency** (10% weight, reduce others proportionally):
+- `comprehensionDelta = (latest_comprehension - earliest_comprehension_in_window) / tokens_spent`
+- Measures: how much comprehension improved per token invested
+- High value = developer is learning efficiently. Low value = tokens spent without understanding gain.
+- Source: `knowledge.getComprehension({ since: windowStart })` grouped by domain
+
+When knowledge data unavailable, this dimension contributes 0 with weight 0 (effectively excluded from composite). Existing 5 sub-metrics retain their relative proportions.
+
+---
+
+**KGI-6.2: efficiency Tests**
+
+- With knowledge: comprehension delta contributes to AES
+- Without knowledge: AES unchanged from current behavior
+- Edge case: no comprehension change → dimension score = 0.5 (neutral)
+
+---
+
+### KGI-7: Enhance session-intelligence
+
+**Goal:** Add "what was learned in this session" from extracted facts to session intelligence output. Session diagnostics should reference actual knowledge gained, not just phase transitions.
+
+**Day estimate:** ~4 hours. Enhancement + tests.
+
+**Depends on:** KGI-1
+
+---
+
+**KGI-7.1: Add Knowledge Progress to Session Intelligence**
+
+**Modify:** `src/services/intelligence/session-intelligence.ts`
+
+After existing phase/loop/direction computation, add knowledge progress section:
+1. Query `knowledge.getFacts({ since: sessionStartTime })` filtered to this session's events
+2. Count facts extracted, entities encountered, decisions made
+3. Add to output: `knowledgeProgress: { factsExtracted, entitiesEngaged, decisionsRecorded, comprehensionDelta }`
+4. Enhance `suggestedActions`: if factsExtracted = 0 after 5+ turns → "Consider asking deeper questions about the topic"
+
+**Fallback:** `knowledgeProgress` is null when no knowledge data. Existing diagnostics unchanged.
+
+---
+
+**KGI-7.2: session-intelligence Tests**
+
+- Session with facts → knowledgeProgress populated
+- Session without facts after many turns → action suggested
+- No knowledge data → knowledgeProgress null, existing output unchanged
+
+---
+
+### KGI-8: Enhance Remaining Group C Analyzers
+
+**Goal:** Add knowledge context to velocity-tracker, causality, file-direction, and prompt-patterns. Lighter-touch enhancements than the Group B rewrites.
+
+**Day estimate:** ~6 hours. Four small enhancements + tests.
+
+**Depends on:** KGI-1
+
+---
+
+**KGI-8.1: velocity-tracker — Real Velocity Validation**
+
+**Modify:** `src/services/intelligence/analyzers/velocity-tracker.ts`
+
+Add `velocityQuality` field to per-domain output:
+- `hollowVelocity`: high turns-to-acceptance speed BUT comprehension delta ≤ 0 (fast acceptance without learning)
+- `genuineVelocity`: fast acceptance AND positive comprehension delta
+- Source: cross-reference velocity data with `knowledge.getComprehension()` delta per domain
+
+---
+
+**KGI-8.2: causality — Fact-Chain Causality**
+
+**Modify:** `src/services/intelligence/causality.ts`
+
+Enhance causal chain detection: when Layer 2.5 fact supersession chains exist (fact A superseded by fact B), use those as high-confidence causal links instead of heuristic phase-transition matching. Query `knowledge.getFacts({ predicate: 'replaced-by' })`.
+
+---
+
+**KGI-8.3: file-direction — Entity Annotation**
+
+**Modify:** `src/services/intelligence/file-direction.ts`
+
+For each file/directory in the direction map, annotate with entities from that module: `knowledge.getEntityEngagement({ module: dirPath })`. Output gains `entities: string[]` per entry.
+
+---
+
+**KGI-8.4: prompt-patterns — Topic Context**
+
+**Modify:** `src/services/intelligence/analyzers/prompt-patterns.ts`
+
+Add entity/topic context to prompt pattern clusters. When knowledge data is available, tag each cluster with the primary entities discussed (from extraction). This enables "prompts about auth are more effective than prompts about testing" instead of just structural pattern correlation.
+
+---
+
+**KGI-8.5: Group C Tests**
+
+One test file per enhanced analyzer, covering: knowledge-enhanced path, fallback path, edge cases.
+
+---
+
+### KGI-9: Deepen maturity-model
+
+**Goal:** Ground maturity assessment in actual comprehension trajectory from Layer 2.5, not just HDS distributions. Maturity phases should reflect genuine understanding growth.
+
+**Day estimate:** ~6 hours. Dimension rewiring + tests.
+
+**Depends on:** KGI-1, KGI-2 (comprehension-radar rewrite provides knowledge-grounded comprehension)
+
+---
+
+**KGI-9.1: Knowledge-Grounded Maturity Dimensions**
+
+**Modify:** `src/services/intelligence/maturity-model.ts`
+
+Rewire 3 of the 7 dimensions to use knowledge-grounded data:
+
+1. **comprehension** dimension: Read from rewritten comprehension-radar (which now uses CozoDB data). No change to maturity-model code, but the input is now knowledge-grounded.
+
+2. **loop-resilience** dimension: Read from rewritten loop-detector (which now uses entity-repetition-without-progress). Resolved loops = entities that were stuck but now have new facts.
+
+3. **decision-durability** dimension: Read from rewritten decision-replay. Durable decisions = extracted decisions not superseded or contradicted. `durability = 1 - (superseded_decisions / total_decisions)`.
+
+The other 4 dimensions (direction, efficiency, domain-consistency, context-leverage) remain DuckDB-metric-based. They provide complementary behavioral signal.
+
+Add `knowledgeGrounded: boolean` flag to maturity assessment output indicating whether knowledge data was available for the grounded dimensions.
+
+---
+
+**KGI-9.2: maturity-model Tests**
+
+- Knowledge-grounded path: comprehension + loop + decision dimensions use CozoDB data
+- Mixed path: some dimensions grounded, others use DuckDB metrics
+- Fallback: all dimensions use DuckDB metrics when no knowledge data
+- Phase transitions still work correctly with knowledge-grounded inputs
+
+---
+
+### KGI-10: Deepen narrative-engine
+
+**Goal:** Generate narratives from actual extracted facts and decisions, not just maturity score templates. "You decided X on Monday, but your comprehension of that area is declining" instead of "Your direction density in auth was 0.72."
+
+**Day estimate:** ~6 hours. Template system overhaul + tests.
+
+**Depends on:** KGI-9 (maturity provides knowledge-grounded assessment)
+
+---
+
+**KGI-10.1: Knowledge-Grounded Narrative Templates**
+
+**Modify:** `src/services/intelligence/narrative-engine.ts`
+
+Extend `NarrativeContext` with knowledge data:
+
+```typescript
+interface NarrativeContext {
+  maturity: MaturityAssessment;   // existing
+  dimensions: MaturityDimension[]; // existing
+  eventCount: number;              // existing
+  // NEW: knowledge-grounded context
+  recentDecisions?: FactEntry[];      // last 7 days
+  contradictions?: FactEntry[];       // superseded/contradicted facts
+  comprehensionTrends?: { domain: string; delta: number; direction: 'improving' | 'declining' | 'stable' }[];
+  stuckEntities?: { name: string; sessions: number; factsGained: number }[];
+}
+```
+
+Add new template categories:
+- **decision-insight**: "You made {N} decisions about {domain} this week. {contradictions} contradicted earlier decisions."
+- **comprehension-trajectory**: "Your understanding of {domain} has {improved/declined} from {score_then} to {score_now}."
+- **stuck-loop-narrative**: "You've discussed {entity} in {N} sessions without gaining new knowledge."
+- **knowledge-velocity**: "This week you extracted {N} new facts across {M} domains."
+
+Existing vehicle-analogy templates remain for dimensions that aren't knowledge-grounded. Knowledge templates take priority when data is available.
+
+---
+
+**KGI-10.2: narrative-engine Tests**
+
+- Knowledge-grounded narrative: references actual decisions and comprehension
+- Mixed narrative: some knowledge templates, some vehicle-analogy templates
+- Fallback: all vehicle-analogy templates when no knowledge data
+- Contradiction narrative: correctly references superseded decision
+
+---
+
+### KGI-11: Deepen profile-accumulator
+
+**Goal:** Build the developer reasoning profile from entity graph data (domains, comprehension levels, decision patterns), not just efficiency averages.
+
+**Day estimate:** ~5 hours. Profile enrichment + tests.
+
+**Depends on:** KGI-10 (narrative feeds profile)
+
+---
+
+**KGI-11.1: Knowledge-Enriched Profile**
+
+**Modify:** `src/services/personalization/profile-accumulator.ts`
+
+Add to profile output:
+- `domainExpertise`: map of domain → { comprehensionScore, factCount, decisionCount, trend } from CozoDB
+- `knowledgeVelocity`: facts extracted per day over last 30 days
+- `decisionPatterns`: { totalDecisions, superseded, contradicted, durable } counts
+- `topEntities`: most-engaged entities with comprehension and fact counts
+
+Existing efficiency + window-based profile data retained as behavioral complement.
+
+---
+
+**KGI-11.2: profile-accumulator Tests**
+
+- Profile includes domain expertise from CozoDB
+- Profile includes decision pattern stats
+- Fallback: existing profile shape when no knowledge data
+
+---
+
+### KGI-12: Enhance Cross-Source Analyzers
+
+**Goal:** Add entity-level linking and comprehension grounding to the 5 cross-source analyzers.
+
+**Day estimate:** ~6 hours. Five small enhancements + tests.
+
+**Depends on:** KGI-1
+
+---
+
+**KGI-12.1: git-ai-linker — Entity-Level Linking**
+
+**Modify:** `src/services/intelligence/git-ai-linker.ts`
+
+When linking AI sessions to commits, also link at entity level: "AI session discussed entity `useAuth` → commit modified `src/auth/useAuth.ts`". Query `knowledge.getEntityEngagement()` for entities mentioned in the AI session, cross-reference with commit file paths.
+
+---
+
+**KGI-12.2: git-expertise-map — Comprehension Overlay**
+
+**Modify:** `src/services/intelligence/git-expertise-map.ts`
+
+Add comprehension overlay to expertise classification:
+- `deep` + high comprehension = genuine expertise
+- `deep` + low comprehension = ownership risk (owns the code but understanding is fading)
+- `ai-dependent` + high comprehension = assisted expertise (AI helps but developer understands)
+- `ai-dependent` + low comprehension = dangerous dependency
+
+---
+
+**KGI-12.3: cross-efficiency-survival — Fact Durability**
+
+**Modify:** `src/services/intelligence/cross-efficiency-survival.ts`
+
+Replace code-survival (file churn) with fact-durability: survival = decisions not superseded within N days. `durable = 1 - (superseded / total)`. This measures whether the developer's decisions survive, not just their code.
+
+---
+
+**KGI-12.4: cross-maturity-ownership — Comprehension Genuineness**
+
+**Modify:** `src/services/intelligence/cross-maturity-ownership.ts`
+
+Genuineness classification uses actual comprehension scores from CozoDB instead of just file ownership patterns. `genuine` = maturity phase matches comprehension level. `hollow` = high maturity phase but low extracted comprehension.
+
+---
+
+**KGI-12.5: Cross-Source Tests**
+
+One test per enhanced analyzer covering: knowledge-enhanced output, fallback, edge cases.
+
+---
+
+### KGI-13: E2E Integration Tests + DAG Verification
+
+**Goal:** Verify the full unified pipeline: events → materialization → Layer 2.5 extraction → Layer 3 knowledge-grounded analysis → substrate → narrative. Verify DAG topology still sorts correctly.
+
+**Day estimate:** ~6 hours. Integration tests.
+
+**Depends on:** All prior KGI sprints
+
+---
+
+**KGI-13.1: DAG Topology Verification**
+
+**New file:** `test/integration/unified-dag.test.ts`
+
+- Register all 25 analyzers → topological sort succeeds
+- No circular dependencies introduced
+- Dependency declarations match actual data flow
+- Group B analyzers correctly consume KnowledgeReader
+
+---
+
+**KGI-13.2: Full Pipeline Integration Test**
+
+**New file:** `test/integration/knowledge-grounded-pipeline.test.ts`
+
+- Ingest 10 AI-session events with conversation content
+- Run Layer 2.5 extraction (with mock LLM returning structured extraction results)
+- Run Layer 3 analyzer DAG
+- Verify: comprehension-radar reads from CozoDB, not HDS
+- Verify: blind-spots detects decaying comprehension entities
+- Verify: decision-replay triggers on contradicting facts
+- Verify: loop-detector identifies entities with repeated engagement but no new facts
+- Verify: narrative references actual decisions
+- Verify: maturity-model dimensions are knowledge-grounded
+
+---
+
+### KGI-14: Cleanup — Remove Dead Heuristic Code
+
+**Goal:** Remove the old heuristic codepaths from Group B analyzers that have been replaced by knowledge-grounded implementations. The fallback paths remain, but the old primary logic is deleted.
+
+**Day estimate:** ~3 hours. Code deletion + verification.
+
+**Depends on:** KGI-13 (tests pass)
+
+---
+
+**KGI-14.1: Remove Old Primary Codepaths**
+
+For each Group B analyzer:
+- `comprehension-radar`: Remove HDS-averaging as primary path. Rename `computeRadarFromHDS()` to private fallback.
+- `blind-spots`: Remove sustained-low-HDS alert generation as primary path. Rename to fallback.
+- `decision-replay`: Remove cosine-similarity domain-drift detection as primary path. Rename to fallback.
+- `loop-detector`: Remove greedy clustering as primary path. Rename to fallback.
+
+Remove any unused imports, dead helper functions, and test code that tested the old primary paths.
+
+---
+
+**KGI-14.2: Final Verification**
+
+- `pnpm typecheck` — zero errors
+- `pnpm test` — all tests pass
+- `pnpm build` — clean build
+- Verify no analyzer references DuckDB comprehension/direction data when CozoDB data is available
+
+---
+
+### Implementation Tracker
+
+| Sprint | Task | Status | Files |
+|---|---|---|---|
+| KGI-1 | KGI-1.1: Extend AnalyzerContext + KnowledgeReader | ☐ Not started | `src/services/intelligence/analyzers/index.ts`, `src/services/intelligence/knowledge-reader.ts`, `src/services/daemon/repo-manager.ts` |
+| KGI-1 | KGI-1.2: Knowledge query layer tests | ☐ Not started | `test/services/intelligence/knowledge-reader.test.ts` |
+| KGI-2 | KGI-2.1: Rewrite comprehension-radar | ☐ Not started | `src/services/intelligence/analyzers/comprehension-radar.ts` |
+| KGI-2 | KGI-2.2: comprehension-radar tests | ☐ Not started | `test/services/intelligence/analyzers/comprehension-radar.test.ts` |
+| KGI-3 | KGI-3.1: Rewrite blind-spots | ☐ Not started | `src/services/intelligence/analyzers/blind-spots.ts` |
+| KGI-3 | KGI-3.2: blind-spots tests | ☐ Not started | `test/services/intelligence/analyzers/blind-spots.test.ts` |
+| KGI-4 | KGI-4.1: Rewrite decision-replay | ☐ Not started | `src/services/intelligence/analyzers/decision-replay.ts` |
+| KGI-4 | KGI-4.2: decision-replay tests | ☐ Not started | `test/services/intelligence/analyzers/decision-replay.test.ts` |
+| KGI-5 | KGI-5.1: Rewrite loop-detector | ☐ Not started | `src/services/intelligence/analyzers/loop-detector.ts` |
+| KGI-5 | KGI-5.2: loop-detector tests | ☐ Not started | `test/services/intelligence/analyzers/loop-detector.test.ts` |
+| KGI-6 | KGI-6.1: Add comprehension efficiency dimension | ☐ Not started | `src/services/intelligence/analyzers/efficiency.ts` |
+| KGI-6 | KGI-6.2: efficiency tests | ☐ Not started | `test/services/intelligence/analyzers/efficiency.test.ts` |
+| KGI-7 | KGI-7.1: Add knowledge progress to session-intelligence | ☐ Not started | `src/services/intelligence/session-intelligence.ts` |
+| KGI-7 | KGI-7.2: session-intelligence tests | ☐ Not started | `test/services/intelligence/session-intelligence.test.ts` |
+| KGI-8 | KGI-8.1: velocity-tracker real velocity validation | ☐ Not started | `src/services/intelligence/analyzers/velocity-tracker.ts` |
+| KGI-8 | KGI-8.2: causality fact-chain enhancement | ☐ Not started | `src/services/intelligence/causality.ts` |
+| KGI-8 | KGI-8.3: file-direction entity annotation | ☐ Not started | `src/services/intelligence/file-direction.ts` |
+| KGI-8 | KGI-8.4: prompt-patterns topic context | ☐ Not started | `src/services/intelligence/analyzers/prompt-patterns.ts` |
+| KGI-8 | KGI-8.5: Group C tests | ☐ Not started | `test/services/intelligence/group-c-enhancements.test.ts` |
+| KGI-9 | KGI-9.1: Knowledge-grounded maturity dimensions | ☐ Not started | `src/services/intelligence/maturity-model.ts` |
+| KGI-9 | KGI-9.2: maturity-model tests | ☐ Not started | `test/services/intelligence/maturity-model.test.ts` |
+| KGI-10 | KGI-10.1: Knowledge-grounded narrative templates | ☐ Not started | `src/services/intelligence/narrative-engine.ts` |
+| KGI-10 | KGI-10.2: narrative-engine tests | ☐ Not started | `test/services/intelligence/narrative-engine.test.ts` |
+| KGI-11 | KGI-11.1: Knowledge-enriched profile | ☐ Not started | `src/services/personalization/profile-accumulator.ts` |
+| KGI-11 | KGI-11.2: profile-accumulator tests | ☐ Not started | `test/services/personalization/profile-accumulator.test.ts` |
+| KGI-12 | KGI-12.1: git-ai-linker entity-level linking | ☐ Not started | `src/services/intelligence/git-ai-linker.ts` |
+| KGI-12 | KGI-12.2: git-expertise-map comprehension overlay | ☐ Not started | `src/services/intelligence/git-expertise-map.ts` |
+| KGI-12 | KGI-12.3: cross-efficiency-survival fact durability | ☐ Not started | `src/services/intelligence/cross-efficiency-survival.ts` |
+| KGI-12 | KGI-12.4: cross-maturity-ownership comprehension genuineness | ☐ Not started | `src/services/intelligence/cross-maturity-ownership.ts` |
+| KGI-12 | KGI-12.5: Cross-source tests | ☐ Not started | `test/services/intelligence/cross-source-enhancements.test.ts` |
+| KGI-13 | KGI-13.1: DAG topology verification | ☐ Not started | `test/integration/unified-dag.test.ts` |
+| KGI-13 | KGI-13.2: Full pipeline integration test | ☐ Not started | `test/integration/knowledge-grounded-pipeline.test.ts` |
+| KGI-14 | KGI-14.1: Remove old heuristic primary codepaths | ☐ Not started | Group B analyzer files |
+| KGI-14 | KGI-14.2: Final verification | ☐ Not started | — |
