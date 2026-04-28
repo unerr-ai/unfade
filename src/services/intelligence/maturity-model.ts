@@ -24,6 +24,8 @@ export interface MaturityAssessment {
   trajectory: MaturityDataPoint[];
   bottlenecks: MaturityBottleneck[];
   nextPhaseRequirements: PhaseRequirement[];
+  /** KGI-9: Whether knowledge-grounded data was available for comprehension, loop, and decision dimensions. */
+  knowledgeGrounded: boolean;
   assessedAt: string;
   projectId: string;
 }
@@ -69,6 +71,7 @@ interface MaturityModelState {
   previousDimensionScores: Record<string, number>;
   scoreHistory: Record<string, number[]>;
   updatedAt: string;
+  knowledgeGrounded: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,8 +167,20 @@ const DIMENSION_DEFS: DimensionDef[] = [
     compute: (ctx) => {
       const ld = ctx.dependencyStates?.get("loop-detector");
       if (!ld) return 0.5;
-      const loops = (ld.value as { output?: { stuckLoops?: unknown[] } })?.output?.stuckLoops ?? [];
+      const stateVal = ld.value as { output?: { stuckLoops?: unknown[] }; source?: string };
+      const loops = stateVal?.output?.stuckLoops ?? [];
       const activeLoops = Array.isArray(loops) ? loops.length : 0;
+
+      // KGI-9: Knowledge-grounded loop resilience considers entity progress
+      if (stateVal?.source === "knowledge") {
+        const entries = (stateVal?.output as { entries?: unknown[] })?.entries ?? [];
+        const entryCount = Array.isArray(entries) ? entries.length : 0;
+        const resolvedRatio = entryCount > 0 && activeLoops < entryCount
+          ? (entryCount - activeLoops) / entryCount
+          : activeLoops === 0 ? 1 : 0;
+        return resolvedRatio * 0.7 + (1 - Math.min(1, activeLoops * 0.2)) * 0.3;
+      }
+
       return Math.max(0, 1 - activeLoops * 0.2);
     },
   },
@@ -177,8 +192,19 @@ const DIMENSION_DEFS: DimensionDef[] = [
     compute: (ctx) => {
       const dr = ctx.dependencyStates?.get("decision-replay");
       if (!dr) return 0.5;
-      const replays = (dr.value as { output?: { replays?: unknown[] } })?.output?.replays ?? [];
+      const stateVal = dr.value as { output?: { replays?: unknown[] }; source?: string };
+      const replays = stateVal?.output?.replays ?? [];
       const replayCount = Array.isArray(replays) ? replays.length : 0;
+
+      // KGI-9: Knowledge-grounded durability from actual fact supersession
+      if (stateVal?.source === "knowledge") {
+        const contradictions = (replays as Array<{ triggerReason?: string }>).filter(
+          (r) => r.triggerReason === "contradiction" || r.triggerReason === "supersession",
+        ).length;
+        const total = Math.max(replayCount, 1);
+        return Math.max(0, 1 - contradictions / total);
+      }
+
       return Math.max(0, 1 - replayCount * 0.1);
     },
   },
@@ -222,6 +248,19 @@ const PHASE_THRESHOLDS: Record<number, Record<string, number>> = {
 // IncrementalAnalyzer
 // ---------------------------------------------------------------------------
 
+// KGI-9: Check if knowledge-grounded data was available
+function isKnowledgeGrounded(ctx: AnalyzerContext): boolean {
+  const loopState = ctx.dependencyStates?.get("loop-detector");
+  const replayState = ctx.dependencyStates?.get("decision-replay");
+  const comprehensionState = ctx.dependencyStates?.get("comprehension-radar");
+
+  const loopSource = (loopState?.value as { source?: string })?.source;
+  const replaySource = (replayState?.value as { source?: string })?.source;
+  const compSource = (comprehensionState?.value as { source?: string })?.source;
+
+  return loopSource === "knowledge" || replaySource === "knowledge" || compSource === "knowledge";
+}
+
 export const maturityModelAnalyzer: IncrementalAnalyzer<MaturityModelState, MaturityAssessment> = {
   name: "maturity-model",
   outputFile: "maturity-assessment.json",
@@ -242,6 +281,7 @@ export const maturityModelAnalyzer: IncrementalAnalyzer<MaturityModelState, Matu
     const phase = computeMaturityPhase(dimensions);
     const scoreHistory: Record<string, number[]> = {};
     for (const d of dimensions) scoreHistory[d.name] = [d.score];
+    const knowledgeGrounded = isKnowledgeGrounded(ctx);
     return {
       value: {
         currentPhase: phase,
@@ -250,6 +290,7 @@ export const maturityModelAnalyzer: IncrementalAnalyzer<MaturityModelState, Matu
         previousDimensionScores: Object.fromEntries(dimensions.map((d) => [d.name, d.score])),
         scoreHistory,
         updatedAt: new Date().toISOString(),
+        knowledgeGrounded,
       },
       watermark: "",
       eventCount: 0,
@@ -305,6 +346,7 @@ export const maturityModelAnalyzer: IncrementalAnalyzer<MaturityModelState, Matu
     }
 
     const changed = Math.abs(phase - prevPhase) > 0.1;
+    const knowledgeGrounded = isKnowledgeGrounded(ctx);
 
     return {
       state: {
@@ -315,6 +357,7 @@ export const maturityModelAnalyzer: IncrementalAnalyzer<MaturityModelState, Matu
           previousDimensionScores: Object.fromEntries(dimensions.map((d) => [d.name, d.score])),
           scoreHistory,
           updatedAt: new Date().toISOString(),
+          knowledgeGrounded,
         },
         watermark:
           batch.events.length > 0 ? batch.events[batch.events.length - 1].ts : state.watermark,
@@ -327,7 +370,7 @@ export const maturityModelAnalyzer: IncrementalAnalyzer<MaturityModelState, Matu
   },
 
   derive(state): MaturityAssessment {
-    const { currentPhase, dimensions, trajectory } = state.value;
+    const { currentPhase, dimensions, trajectory, knowledgeGrounded } = state.value;
     return {
       phase: currentPhase,
       phaseLabel: phaseToLabel(currentPhase),
@@ -337,6 +380,7 @@ export const maturityModelAnalyzer: IncrementalAnalyzer<MaturityModelState, Matu
       trajectory,
       bottlenecks: detectBottlenecks(dimensions, currentPhase),
       nextPhaseRequirements: computeNextPhaseRequirements(dimensions, currentPhase),
+      knowledgeGrounded,
       assessedAt: state.updatedAt,
       projectId: "",
     };

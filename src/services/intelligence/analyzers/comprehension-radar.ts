@@ -1,7 +1,18 @@
-// FILE: src/services/intelligence/analyzers/comprehension-radar.ts
-// UF-103 + 11E.7: Comprehension Radar — per-module comprehension with blind spot detection.
-// Uses phase-normalized HDS baselines (11E.6) so debugging sessions aren't flagged as blind spots.
+// KGI-2 + IP-3.2: Comprehension Radar — knowledge-grounded per-module comprehension
+// with blind spot detection, evidence linking, and diagnostics.
+//
+// Primary path (when knowledge extraction data exists):
+//   1. Query CozoDB comprehension assessments via KnowledgeReader
+//   2. Query DuckDB domain_comprehension for FSRS decay-adjusted scores
+//   3. Per-domain score = decay-adjusted current_score from FSRS engine
+//   4. Blind spots = domains where decayed score < 40 AND interaction_count >= 3
+//
+// Fallback path (before knowledge extraction has run):
+//   DuckDB domain_comprehension HDS-based scores
+//
+// IP-3.2 enrichment: _meta freshness, per-module evidenceEventIds + topContributors, diagnostics.
 
+import type { AnalyzerOutputMeta, DiagnosticMessage } from "../../../schemas/intelligence-presentation.js";
 import type { ComprehensionRadar } from "../../../schemas/intelligence/comprehension.js";
 import type {
   IncrementalAnalyzer,
@@ -9,144 +20,211 @@ import type {
   NewEventBatch,
   UpdateResult,
 } from "../incremental-state.js";
-import { computePhaseBaselines, isHdsConcerning, type PhaseBaseline } from "../phase-baselines.js";
+import type { ComprehensionEntry } from "../knowledge-reader.js";
 import type { AnalyzerContext } from "./index.js";
 
 const BLIND_SPOT_THRESHOLD = 40;
-const MIN_EVENTS_FOR_BLIND_SPOT = 5;
+const MIN_ENTITIES_FOR_BLIND_SPOT = 3;
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
+// ─── State ──────────────────────────────────────────────────────────────────
 
 interface ComprehensionRadarState {
   output: ComprehensionRadar;
+  source: "knowledge" | "hds-fallback";
 }
 
-// ---------------------------------------------------------------------------
-// Compute helpers — all take db (analytics) only
-// ---------------------------------------------------------------------------
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 type ModuleEntry = {
   score: number;
   decisionsCount: number;
   lastUpdated: string;
   confidence: "high" | "medium" | "low";
+  evidenceEventIds: string[];
+  topContributors: Array<{ eventId: string; impact: number; summary: string }>;
 };
 
-async function computeByModule(
-  db: AnalyzerContext["analytics"],
-  now: string,
-  baselines: Record<string, PhaseBaseline>,
-): Promise<Record<string, ModuleEntry>> {
-  const modules: Record<string, ModuleEntry> = {};
+interface DomainDecayRow {
+  domain: string;
+  baseScore: number;
+  currentScore: number;
+  interactionCount: number;
+  lastTouch: string;
+  stability: number;
+}
 
+// ─── Event Evidence Helpers ─────────────────────────────────────────────────
+
+async function collectDomainEventIds(
+  ctx: AnalyzerContext,
+  domain: string,
+): Promise<string[]> {
   try {
-    const result = await db.exec(
-      `SELECT domain AS module, current_score AS score, interaction_count AS event_count, updated_at
+    const result = await ctx.analytics.exec(
+      `SELECT id FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+         AND (content_summary LIKE '%${domain.replace(/'/g, "''")}%'
+              OR intent_summary LIKE '%${domain.replace(/'/g, "''")}%')
+       ORDER BY ts DESC`,
+    );
+    return (result[0]?.values ?? []).map((r) => String(r[0]));
+  } catch {
+    return [];
+  }
+}
+
+function buildTopContributors(
+  assessments: ComprehensionEntry[],
+  domain: string,
+): Array<{ eventId: string; impact: number; summary: string }> {
+  const relevant = assessments.filter(
+    (a) => a.overallScore > 0,
+  );
+
+  return relevant
+    .sort((a, b) => b.overallScore - a.overallScore)
+    .slice(0, 3)
+    .map((a) => ({
+      eventId: a.episodeId,
+      impact: Math.round(a.overallScore * 100) / 100,
+      summary: `Comprehension assessment: ${a.assessmentMethod} — overall ${Math.round(a.overallScore)}/100, domain: ${domain}`,
+    }));
+}
+
+// ─── Primary Path: Knowledge-Grounded ───────────────────────────────────────
+
+async function computeRadarFromKnowledge(ctx: AnalyzerContext): Promise<ComprehensionRadar> {
+  const now = new Date().toISOString();
+
+  const domainRows = await loadDomainDecayState(ctx);
+
+  if (domainRows.length === 0) {
+    return emptyRadar(now);
+  }
+
+  const assessments = await ctx.knowledge!.getComprehension({});
+  const assessmentAvg = computeAverageAssessment(assessments);
+
+  const byModule: Record<string, ModuleEntry> = {};
+  const byDomain: Record<string, number> = {};
+
+  for (const row of domainRows) {
+    const score = Math.round(Math.max(0, Math.min(100, row.currentScore * 10)));
+    const domainEventIds = await collectDomainEventIds(ctx, row.domain);
+    const contributors = buildTopContributors(assessments, row.domain);
+
+    byModule[row.domain] = {
+      score,
+      decisionsCount: row.interactionCount,
+      lastUpdated: row.lastTouch || now,
+      confidence: row.interactionCount >= 10 ? "high" : row.interactionCount >= 5 ? "medium" : "low",
+      evidenceEventIds: domainEventIds,
+      topContributors: contributors,
+    };
+
+    byDomain[row.domain] = score;
+  }
+
+  const overall = assessmentAvg > 0
+    ? Math.round(assessmentAvg)
+    : computeOverall(byModule);
+
+  const { blindSpots, alerts } = await detectBlindSpots(byModule, ctx);
+  const totalDataPoints = domainRows.reduce((s, d) => s + d.interactionCount, 0);
+  const _meta = await buildMeta(ctx, totalDataPoints, now);
+  const diagnostics = buildDiagnostics(overall, byModule, blindSpots);
+
+  return {
+    overall,
+    confidence: totalDataPoints >= 20 ? "high" : totalDataPoints >= 10 ? "medium" : "low",
+    byModule,
+    byDomain,
+    blindSpots,
+    blindSpotAlerts: alerts,
+    updatedAt: now,
+    _meta,
+    diagnostics,
+  };
+}
+
+function computeAverageAssessment(
+  assessments: Array<{ overallScore: number }>,
+): number {
+  if (assessments.length === 0) return 0;
+  const sum = assessments.reduce((s, a) => s + a.overallScore, 0);
+  return sum / assessments.length;
+}
+
+// ─── Fallback Path: DuckDB HDS Averages ─────────────────────────────────────
+
+async function computeRadarFromHDS(ctx: AnalyzerContext): Promise<ComprehensionRadar> {
+  const now = new Date().toISOString();
+
+  const domainRows = await loadDomainDecayState(ctx);
+
+  if (domainRows.length === 0) {
+    return emptyRadar(now);
+  }
+
+  const byModule: Record<string, ModuleEntry> = {};
+  const byDomain: Record<string, number> = {};
+
+  for (const row of domainRows) {
+    const score = Math.round(Math.max(0, Math.min(100, row.currentScore * 10)));
+    const domainEventIds = await collectDomainEventIds(ctx, row.domain);
+
+    byModule[row.domain] = {
+      score,
+      decisionsCount: row.interactionCount,
+      lastUpdated: row.lastTouch || now,
+      confidence: row.interactionCount >= 10 ? "high" : row.interactionCount >= 5 ? "medium" : "low",
+      evidenceEventIds: domainEventIds,
+      topContributors: [],
+    };
+
+    byDomain[row.domain] = score;
+  }
+
+  const overall = computeOverall(byModule);
+  const { blindSpots, alerts } = await detectBlindSpots(byModule, ctx);
+  const totalDataPoints = domainRows.reduce((s, d) => s + d.interactionCount, 0);
+  const _meta = await buildMeta(ctx, totalDataPoints, now);
+  const diagnostics = buildDiagnostics(overall, byModule, blindSpots);
+
+  return {
+    overall,
+    confidence: totalDataPoints >= 20 ? "high" : totalDataPoints >= 10 ? "medium" : "low",
+    byModule,
+    byDomain,
+    blindSpots,
+    blindSpotAlerts: alerts,
+    updatedAt: now,
+    _meta,
+    diagnostics,
+  };
+}
+
+// ─── Shared Helpers ─────────────────────────────────────────────────────────
+
+async function loadDomainDecayState(ctx: AnalyzerContext): Promise<DomainDecayRow[]> {
+  try {
+    const result = await ctx.analytics.exec(
+      `SELECT domain, base_score, current_score, interaction_count, last_touch, stability
        FROM domain_comprehension
        ORDER BY interaction_count DESC`,
     );
-    if (!result[0]?.values.length) return modules;
-
-    const modulePhases = await getModuleDominantPhases(db);
-
-    for (const row of result[0].values) {
-      const module = row[0] as string;
-      const rawScore = Number(row[1] ?? 0);
-      const count = Number(row[2] ?? 0);
-      const updated = (row[3] as string) ?? now;
-
-      const dominantPhase = modulePhases[module];
-      const score = adjustScoreForPhase(rawScore, dominantPhase, baselines);
-
-      modules[module] = {
-        score,
-        decisionsCount: count,
-        lastUpdated: updated,
-        confidence: count >= 10 ? "high" : count >= 5 ? "medium" : "low",
-      };
-    }
+    const rows = result[0]?.values ?? [];
+    return rows.map((r) => ({
+      domain: (r[0] as string) ?? "",
+      baseScore: (r[1] as number) ?? 0,
+      currentScore: (r[2] as number) ?? 0,
+      interactionCount: (r[3] as number) ?? 0,
+      lastTouch: (r[4] as string) ?? "",
+      stability: (r[5] as number) ?? 1,
+    }));
   } catch {
-    // table may not exist yet
+    return [];
   }
-
-  return modules;
-}
-
-async function getModuleDominantPhases(
-  db: AnalyzerContext["analytics"],
-): Promise<Record<string, string>> {
-  const phases: Record<string, string> = {};
-  try {
-    const result = await db.exec(
-      `SELECT
-        COALESCE(content_project, 'unknown') as module,
-        execution_phase as phase,
-        COUNT(*) as cnt
-      FROM events
-      WHERE source IN ('ai-session', 'mcp-active')
-        AND ts >= now() - INTERVAL '30 days'
-        AND execution_phase IS NOT NULL
-      GROUP BY module, phase
-      ORDER BY module, cnt DESC`,
-    );
-    if (!result[0]?.values.length) return phases;
-
-    const seen = new Set<string>();
-    for (const row of result[0].values) {
-      const module = row[0] as string;
-      const phase = row[1] as string;
-      if (!seen.has(module)) {
-        phases[module] = phase;
-        seen.add(module);
-      }
-    }
-  } catch {
-    // non-fatal
-  }
-  return phases;
-}
-
-/**
- * Adjust comprehension score based on execution phase.
- * A debugging session with HDS 0.3 is NORMAL — don't penalize it.
- */
-function adjustScoreForPhase(
-  rawScore: number,
-  dominantPhase: string | undefined,
-  baselines: Record<string, PhaseBaseline>,
-): number {
-  if (!dominantPhase) return rawScore;
-
-  const rawHds = rawScore / 100;
-  if (!isHdsConcerning(rawHds, dominantPhase, baselines)) {
-    return Math.max(rawScore, 50);
-  }
-
-  return rawScore;
-}
-
-async function computeByDomain(db: AnalyzerContext["analytics"]): Promise<Record<string, number>> {
-  const domains: Record<string, number> = {};
-
-  try {
-    const result = await db.exec(
-      `SELECT domain, AVG(hds) as avg_hds
-       FROM decisions
-       WHERE domain IS NOT NULL AND domain != ''
-       GROUP BY domain`,
-    );
-    if (!result[0]?.values.length) return domains;
-
-    for (const row of result[0].values) {
-      domains[row[0] as string] = Math.round(Number(row[1] ?? 0) * 100);
-    }
-  } catch {
-    // table may not exist
-  }
-
-  return domains;
 }
 
 function computeOverall(
@@ -158,29 +236,50 @@ function computeOverall(
   let totalWeighted = 0;
   let totalWeight = 0;
   for (const entry of entries) {
-    totalWeighted += entry.score * entry.decisionsCount;
-    totalWeight += entry.decisionsCount;
+    const weight = Math.max(entry.decisionsCount, 1);
+    totalWeighted += entry.score * weight;
+    totalWeight += weight;
   }
 
   return totalWeight > 0 ? Math.round(totalWeighted / totalWeight) : 0;
 }
 
-function detectBlindSpots(byModule: Record<string, { score: number; decisionsCount: number }>): {
+async function detectBlindSpots(
+  byModule: Record<string, ModuleEntry>,
+  ctx: AnalyzerContext,
+): Promise<{
   blindSpots: string[];
-  alerts: Array<{ module: string; score: number; eventCount: number; suggestion: string }>;
-} {
+  alerts: Array<{
+    module: string;
+    score: number;
+    eventCount: number;
+    suggestion: string;
+    evidenceEventIds: string[];
+  }>;
+}> {
   const blindSpots: string[] = [];
-  const alerts: Array<{ module: string; score: number; eventCount: number; suggestion: string }> =
-    [];
+  const alerts: Array<{
+    module: string;
+    score: number;
+    eventCount: number;
+    suggestion: string;
+    evidenceEventIds: string[];
+  }> = [];
 
   for (const [module, data] of Object.entries(byModule)) {
-    if (data.score < BLIND_SPOT_THRESHOLD && data.decisionsCount >= MIN_EVENTS_FOR_BLIND_SPOT) {
+    if (data.score < BLIND_SPOT_THRESHOLD && data.decisionsCount >= MIN_ENTITIES_FOR_BLIND_SPOT) {
       blindSpots.push(module);
+
+      const eventIds = data.evidenceEventIds.length > 0
+        ? data.evidenceEventIds
+        : await collectDomainEventIds(ctx, module);
+
       alerts.push({
         module,
         score: data.score,
         eventCount: data.decisionsCount,
-        suggestion: `Your comprehension in ${module} is ${data.score}. Consider reviewing AI-generated code more carefully in this area, or pair-program on the next change.`,
+        suggestion: `Your comprehension of "${module}" is decaying (${data.score}/100) across ${data.decisionsCount} sessions. Consider reviewing this area or engaging more deeply with the code.`,
+        evidenceEventIds: eventIds,
       });
     }
   }
@@ -188,36 +287,103 @@ function detectBlindSpots(byModule: Record<string, { score: number; decisionsCou
   return { blindSpots, alerts };
 }
 
-// ---------------------------------------------------------------------------
-// Full computation — assembles a ComprehensionRadar output
-// ---------------------------------------------------------------------------
+// ─── Meta + Diagnostics ─────────────────────────────────────────────────────
 
-async function computeRadar(db: AnalyzerContext["analytics"]): Promise<ComprehensionRadar> {
-  const now = new Date().toISOString();
+async function buildMeta(
+  ctx: AnalyzerContext,
+  totalDataPoints: number,
+  updatedAt: string,
+): Promise<AnalyzerOutputMeta> {
+  const confidence: "high" | "medium" | "low" =
+    totalDataPoints >= 20 ? "high" : totalDataPoints >= 10 ? "medium" : "low";
 
-  const { baselines } = await computePhaseBaselines(db);
+  let watermark = updatedAt;
+  let stalenessMs = 0;
 
-  const byModule = await computeByModule(db, now, baselines);
-  const byDomain = await computeByDomain(db);
-  const overall = computeOverall(byModule);
-  const { blindSpots, alerts } = detectBlindSpots(byModule);
+  try {
+    const result = await ctx.analytics.exec(
+      "SELECT MAX(ts) FROM events WHERE source IN ('ai-session', 'mcp-active')",
+    );
+    const maxTs = result[0]?.values[0]?.[0] as string | null;
+    if (maxTs) {
+      watermark = maxTs;
+      stalenessMs = Math.max(0, Date.now() - new Date(maxTs).getTime());
+    }
+  } catch { /* non-fatal */ }
 
-  const totalDataPoints = Object.values(byModule).reduce((s, m) => s + m.decisionsCount, 0);
+  return { updatedAt, dataPoints: totalDataPoints, confidence, watermark, stalenessMs };
+}
 
+function buildDiagnostics(
+  overall: number,
+  byModule: Record<string, ModuleEntry>,
+  blindSpots: string[],
+): DiagnosticMessage[] {
+  const diagnostics: DiagnosticMessage[] = [];
+
+  if (blindSpots.length > 0) {
+    for (const module of blindSpots) {
+      const data = byModule[module];
+      if (!data) continue;
+
+      diagnostics.push({
+        severity: "warning",
+        message: `"${module}" is a blind spot — ${data.decisionsCount} sessions, comprehension ${data.score}/100`,
+        evidence: `FSRS decay model shows ${module} comprehension falling below ${BLIND_SPOT_THRESHOLD}/100 with ${data.decisionsCount} interactions`,
+        actionable: `Engage more deeply with ${module} — review recent changes, write tests, or pair on it to rebuild comprehension`,
+        relatedAnalyzers: ["efficiency", "blind-spots"],
+        evidenceEventIds: data.evidenceEventIds,
+      });
+    }
+  }
+
+  if (overall < 40) {
+    diagnostics.push({
+      severity: "critical",
+      message: `Overall comprehension critically low at ${overall}/100`,
+      evidence: `Weighted average across ${Object.keys(byModule).length} domains`,
+      actionable: "Focus on one domain at a time — deep engagement raises comprehension faster than breadth",
+      relatedAnalyzers: ["efficiency", "velocity-tracker"],
+      evidenceEventIds: [],
+    });
+  }
+
+  const highModules = Object.entries(byModule).filter(([, d]) => d.score >= 80);
+  if (highModules.length > 0 && overall >= 60) {
+    diagnostics.push({
+      severity: "info",
+      message: `Strong comprehension in ${highModules.map(([m]) => m).join(", ")} — ${highModules.length} domain(s) above 80/100`,
+      evidence: `Top modules: ${highModules.map(([m, d]) => `${m} (${d.score})`).join(", ")}`,
+      actionable: "Leverage strong domains as teaching opportunities or code review areas",
+      relatedAnalyzers: [],
+      evidenceEventIds: highModules.flatMap(([, d]) => d.evidenceEventIds.slice(0, 3)),
+    });
+  }
+
+  return diagnostics;
+}
+
+function emptyRadar(now: string): ComprehensionRadar {
   return {
-    overall,
-    confidence: totalDataPoints >= 20 ? "high" : totalDataPoints >= 10 ? "medium" : "low",
-    byModule,
-    byDomain,
-    blindSpots,
-    blindSpotAlerts: alerts,
+    overall: 0,
+    confidence: "low",
+    byModule: {},
+    byDomain: {},
+    blindSpots: [],
+    blindSpotAlerts: [],
     updatedAt: now,
+    _meta: {
+      updatedAt: now,
+      dataPoints: 0,
+      confidence: "low",
+      watermark: now,
+      stalenessMs: 0,
+    },
+    diagnostics: [],
   };
 }
 
-// ---------------------------------------------------------------------------
-// IncrementalAnalyzer export
-// ---------------------------------------------------------------------------
+// ─── IncrementalAnalyzer Export ──────────────────────────────────────────────
 
 export const comprehensionRadarAnalyzer: IncrementalAnalyzer<
   ComprehensionRadarState,
@@ -226,12 +392,12 @@ export const comprehensionRadarAnalyzer: IncrementalAnalyzer<
   name: "comprehension-radar",
   outputFile: "comprehension.json",
   eventFilter: { sources: ["ai-session", "mcp-active"] },
-  minDataPoints: 10,
+  minDataPoints: 5,
 
   async initialize(ctx: AnalyzerContext): Promise<IncrementalState<ComprehensionRadarState>> {
-    const output = await computeRadar(ctx.analytics);
+    const { output, source } = await computeRadarWithFallback(ctx);
     return {
-      value: { output },
+      value: { output, source },
       watermark: output.updatedAt,
       eventCount: 0,
       updatedAt: output.updatedAt,
@@ -247,20 +413,23 @@ export const comprehensionRadarAnalyzer: IncrementalAnalyzer<
       return { state, changed: false };
     }
 
-    const output = await computeRadar(ctx.analytics);
+    const { output, source } = await computeRadarWithFallback(ctx);
     const changed =
       output.overall !== state.value.output.overall ||
-      output.blindSpots.length !== state.value.output.blindSpots.length;
+      output.blindSpots.length !== state.value.output.blindSpots.length ||
+      source !== state.value.source;
 
     return {
       state: {
-        value: { output },
+        value: { output, source },
         watermark: output.updatedAt,
         eventCount: state.eventCount + newEvents.events.length,
         updatedAt: output.updatedAt,
       },
       changed,
-      changeMagnitude: changed ? Math.abs(output.overall - state.value.output.overall) : 0,
+      changeMagnitude: changed
+        ? Math.abs(output.overall - state.value.output.overall) / 100
+        : 0,
     };
   },
 
@@ -268,7 +437,7 @@ export const comprehensionRadarAnalyzer: IncrementalAnalyzer<
     return state.value.output;
   },
 
-  contributeEntities(state, _batch) {
+  contributeEntities(state) {
     const contributions: import("../../substrate/substrate-engine.js").EntityContribution[] = [];
     const output = state.value.output;
     const byModule = output.byModule ?? {};
@@ -282,6 +451,7 @@ export const comprehensionRadarAnalyzer: IncrementalAnalyzer<
         analyzerName: "comprehension-radar",
         stateFragment: {
           comprehension: (data.score ?? 0) / 100,
+          source: state.value.source,
         },
         relationships: [],
       });
@@ -290,3 +460,24 @@ export const comprehensionRadarAnalyzer: IncrementalAnalyzer<
     return contributions;
   },
 };
+
+// ─── Route to knowledge or fallback ─────────────────────────────────────────
+
+async function computeRadarWithFallback(
+  ctx: AnalyzerContext,
+): Promise<{ output: ComprehensionRadar; source: "knowledge" | "hds-fallback" }> {
+  if (ctx.knowledge) {
+    try {
+      const hasData = await ctx.knowledge.hasKnowledgeData();
+      if (hasData) {
+        const output = await computeRadarFromKnowledge(ctx);
+        return { output, source: "knowledge" };
+      }
+    } catch {
+      // Fall through to HDS fallback
+    }
+  }
+
+  const output = await computeRadarFromHDS(ctx);
+  return { output, source: "hds-fallback" };
+}

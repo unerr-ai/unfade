@@ -10,10 +10,12 @@ export interface FileDirectionEntry {
   path: string;
   directionDensity: number;
   eventCount: number;
+  entities?: string[];
 }
 
 interface DirectionByFileState {
   byDir: Record<string, { totalHds: number; count: number; avgHds: number }>;
+  entityAnnotations: Record<string, string[]>;
 }
 
 const FILE_PATTERN =
@@ -43,7 +45,7 @@ async function fullScan(db: DbLike): Promise<DirectionByFileState> {
         AND (content_detail IS NOT NULL OR content_summary IS NOT NULL)
     `);
 
-    if (!result[0]?.values.length) return { byDir };
+    if (!result[0]?.values.length) return { byDir, entityAnnotations: {} };
 
     for (const row of result[0].values) {
       const text = `${(row[0] as string) ?? ""} ${(row[1] as string) ?? ""}`;
@@ -60,7 +62,7 @@ async function fullScan(db: DbLike): Promise<DirectionByFileState> {
     // non-fatal
   }
 
-  return { byDir };
+  return { byDir, entityAnnotations: {} };
 }
 
 function syncToDb(db: DbLike, state: DirectionByFileState): void {
@@ -102,6 +104,7 @@ export const directionByFileAnalyzer: IncrementalAnalyzer<
 
     if (needsReconciliation) {
       const value = await fullScan(ctx.analytics);
+      value.entityAnnotations = await enrichEntityAnnotations(ctx);
       syncToDb(ctx.analytics, value);
       const newState: IncrementalState<DirectionByFileState> = {
         value,
@@ -142,16 +145,37 @@ export const directionByFileAnalyzer: IncrementalAnalyzer<
   },
 
   derive(state): FileDirectionEntry[] {
+    const annotations = state.value.entityAnnotations ?? {};
     return Object.entries(state.value.byDir)
       .filter(([, d]) => d.count >= 2)
       .map(([path, d]) => ({
         path,
         directionDensity: Math.round(d.avgHds * 100),
         eventCount: d.count,
+        ...(annotations[path]?.length ? { entities: annotations[path] } : {}),
       }))
       .sort((a, b) => b.eventCount - a.eventCount);
   },
 };
+
+// KGI-8.3: Entity annotations from knowledge graph
+async function enrichEntityAnnotations(
+  ctx: import("./analyzers/index.js").AnalyzerContext,
+): Promise<Record<string, string[]>> {
+  const annotations: Record<string, string[]> = {};
+  if (!ctx.knowledge) return annotations;
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return annotations;
+    const entities = await ctx.knowledge.getEntityEngagement({});
+    for (const entity of entities) {
+      const key = entity.type === "module" ? entity.name : entity.type;
+      if (!annotations[key]) annotations[key] = [];
+      annotations[key].push(entity.name);
+    }
+  } catch { /* non-fatal */ }
+  return annotations;
+}
 
 export async function readDirectionByFile(db: DbLike): Promise<FileDirectionEntry[]> {
   try {

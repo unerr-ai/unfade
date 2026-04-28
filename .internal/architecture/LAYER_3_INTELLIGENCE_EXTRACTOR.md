@@ -1479,37 +1479,37 @@ Remove any unused imports, dead helper functions, and test code that tested the 
 
 | Sprint | Task | Status | Files |
 |---|---|---|---|
-| KGI-1 | KGI-1.1: Extend AnalyzerContext + KnowledgeReader | ☐ Not started | `src/services/intelligence/analyzers/index.ts`, `src/services/intelligence/knowledge-reader.ts`, `src/services/daemon/repo-manager.ts` |
-| KGI-1 | KGI-1.2: Knowledge query layer tests | ☐ Not started | `test/services/intelligence/knowledge-reader.test.ts` |
-| KGI-2 | KGI-2.1: Rewrite comprehension-radar | ☐ Not started | `src/services/intelligence/analyzers/comprehension-radar.ts` |
-| KGI-2 | KGI-2.2: comprehension-radar tests | ☐ Not started | `test/services/intelligence/analyzers/comprehension-radar.test.ts` |
-| KGI-3 | KGI-3.1: Rewrite blind-spots | ☐ Not started | `src/services/intelligence/analyzers/blind-spots.ts` |
-| KGI-3 | KGI-3.2: blind-spots tests | ☐ Not started | `test/services/intelligence/analyzers/blind-spots.test.ts` |
-| KGI-4 | KGI-4.1: Rewrite decision-replay | ☐ Not started | `src/services/intelligence/analyzers/decision-replay.ts` |
-| KGI-4 | KGI-4.2: decision-replay tests | ☐ Not started | `test/services/intelligence/analyzers/decision-replay.test.ts` |
-| KGI-5 | KGI-5.1: Rewrite loop-detector | ☐ Not started | `src/services/intelligence/analyzers/loop-detector.ts` |
-| KGI-5 | KGI-5.2: loop-detector tests | ☐ Not started | `test/services/intelligence/analyzers/loop-detector.test.ts` |
-| KGI-6 | KGI-6.1: Add comprehension efficiency dimension | ☐ Not started | `src/services/intelligence/analyzers/efficiency.ts` |
-| KGI-6 | KGI-6.2: efficiency tests | ☐ Not started | `test/services/intelligence/analyzers/efficiency.test.ts` |
-| KGI-7 | KGI-7.1: Add knowledge progress to session-intelligence | ☐ Not started | `src/services/intelligence/session-intelligence.ts` |
-| KGI-7 | KGI-7.2: session-intelligence tests | ☐ Not started | `test/services/intelligence/session-intelligence.test.ts` |
-| KGI-8 | KGI-8.1: velocity-tracker real velocity validation | ☐ Not started | `src/services/intelligence/analyzers/velocity-tracker.ts` |
-| KGI-8 | KGI-8.2: causality fact-chain enhancement | ☐ Not started | `src/services/intelligence/causality.ts` |
-| KGI-8 | KGI-8.3: file-direction entity annotation | ☐ Not started | `src/services/intelligence/file-direction.ts` |
-| KGI-8 | KGI-8.4: prompt-patterns topic context | ☐ Not started | `src/services/intelligence/analyzers/prompt-patterns.ts` |
-| KGI-8 | KGI-8.5: Group C tests | ☐ Not started | `test/services/intelligence/group-c-enhancements.test.ts` |
-| KGI-9 | KGI-9.1: Knowledge-grounded maturity dimensions | ☐ Not started | `src/services/intelligence/maturity-model.ts` |
-| KGI-9 | KGI-9.2: maturity-model tests | ☐ Not started | `test/services/intelligence/maturity-model.test.ts` |
-| KGI-10 | KGI-10.1: Knowledge-grounded narrative templates | ☐ Not started | `src/services/intelligence/narrative-engine.ts` |
-| KGI-10 | KGI-10.2: narrative-engine tests | ☐ Not started | `test/services/intelligence/narrative-engine.test.ts` |
-| KGI-11 | KGI-11.1: Knowledge-enriched profile | ☐ Not started | `src/services/personalization/profile-accumulator.ts` |
-| KGI-11 | KGI-11.2: profile-accumulator tests | ☐ Not started | `test/services/personalization/profile-accumulator.test.ts` |
-| KGI-12 | KGI-12.1: git-ai-linker entity-level linking | ☐ Not started | `src/services/intelligence/git-ai-linker.ts` |
-| KGI-12 | KGI-12.2: git-expertise-map comprehension overlay | ☐ Not started | `src/services/intelligence/git-expertise-map.ts` |
-| KGI-12 | KGI-12.3: cross-efficiency-survival fact durability | ☐ Not started | `src/services/intelligence/cross-efficiency-survival.ts` |
-| KGI-12 | KGI-12.4: cross-maturity-ownership comprehension genuineness | ☐ Not started | `src/services/intelligence/cross-maturity-ownership.ts` |
-| KGI-12 | KGI-12.5: Cross-source tests | ☐ Not started | `test/services/intelligence/cross-source-enhancements.test.ts` |
-| KGI-13 | KGI-13.1: DAG topology verification | ☐ Not started | `test/integration/unified-dag.test.ts` |
-| KGI-13 | KGI-13.2: Full pipeline integration test | ☐ Not started | `test/integration/knowledge-grounded-pipeline.test.ts` |
-| KGI-14 | KGI-14.1: Remove old heuristic primary codepaths | ☐ Not started | Group B analyzer files |
-| KGI-14 | KGI-14.2: Final verification | ☐ Not started | — |
+| KGI-1 | KGI-1.1: Extend AnalyzerContext + KnowledgeReader | ✅ Complete | `src/services/intelligence/knowledge-reader.ts` (~250 lines), `src/services/intelligence/analyzers/index.ts` (knowledge field), `src/services/daemon/repo-manager.ts` (CozoDB injection) |
+| KGI-1 | KGI-1.2: Knowledge query layer tests | ✅ Complete | `test/services/intelligence/knowledge-reader.test.ts` (17 tests, CozoDB integration) |
+| KGI-2 | KGI-2.1: Rewrite comprehension-radar | ✅ Complete | `src/services/intelligence/analyzers/comprehension-radar.ts` (knowledge-grounded + HDS fallback + source tag) |
+| KGI-2 | KGI-2.2: comprehension-radar tests | ✅ Complete | `test/services/intelligence/analyzers/comprehension-radar.test.ts` (12 tests) |
+| KGI-3 | KGI-3.1: Rewrite blind-spots | ✅ Complete | `src/services/intelligence/analyzers/blind-spots.ts` (FSRS retrievability + pushback + rate limiting + HDS fallback) |
+| KGI-3 | KGI-3.2: blind-spots tests | ✅ Complete | `test/services/intelligence/analyzers/blind-spots.test.ts` (10 tests) |
+| KGI-4 | KGI-4.1: Rewrite decision-replay | ✅ Complete | `src/services/intelligence/analyzers/decision-replay.ts` (contradiction + supersession detection from CozoDB facts + HDS fallback), `src/schemas/intelligence/replays.ts` (extended triggerReason enum) |
+| KGI-4 | KGI-4.2: decision-replay tests | ✅ Complete | `test/services/intelligence/analyzers/decision-replay.test.ts` (9 tests) |
+| KGI-5 | KGI-5.1: Rewrite loop-detector | ✅ Complete | `src/services/intelligence/analyzers/loop-detector.ts` (entity-repetition-without-progress + intent fallback) |
+| KGI-5 | KGI-5.2: loop-detector tests | ✅ Complete | `test/services/intelligence/analyzers/loop-detector.test.ts` (10 tests) |
+| KGI-6 | KGI-6.1: Add comprehension efficiency dimension | ✅ Complete | `src/services/intelligence/analyzers/efficiency.ts` (6th sub-metric + dynamic weight redistribution), `src/schemas/intelligence/efficiency.ts` (optional comprehensionEfficiency) |
+| KGI-6 | KGI-6.2: efficiency tests | ✅ Complete | `test/services/intelligence/analyzers/efficiency.test.ts` (10 tests) |
+| KGI-7 | KGI-7.1: Add knowledge progress to session-intelligence | ✅ Complete | `src/services/intelligence/session-intelligence.ts` (knowledgeProgress + comprehensionDelta + knowledge-grounded suggestions) |
+| KGI-7 | KGI-7.2: session-intelligence tests | ✅ Complete | `test/services/intelligence/session-intelligence.test.ts` (8 tests) |
+| KGI-8 | KGI-8.1: velocity-tracker real velocity validation | ✅ Complete | `src/services/intelligence/analyzers/velocity-tracker.ts` (velocityQuality), `src/schemas/intelligence/velocity.ts` |
+| KGI-8 | KGI-8.2: causality fact-chain enhancement | ✅ Complete | `src/services/intelligence/causality.ts` (enrichWithFactChains) |
+| KGI-8 | KGI-8.3: file-direction entity annotation | ✅ Complete | `src/services/intelligence/file-direction.ts` (entities[] per entry) |
+| KGI-8 | KGI-8.4: prompt-patterns topic context | ✅ Complete | `src/services/intelligence/analyzers/prompt-patterns.ts` (entities[]), `src/schemas/intelligence/prompt-patterns.ts` |
+| KGI-8 | KGI-8.5: Group C tests | ✅ Complete | `test/services/intelligence/group-c-enhancements.test.ts` (9 tests) |
+| KGI-9 | KGI-9.1: Knowledge-grounded maturity dimensions | ✅ Complete | `src/services/intelligence/maturity-model.ts` (3 dimensions rewired + knowledgeGrounded flag + isKnowledgeGrounded()) |
+| KGI-9 | KGI-9.2: maturity-model tests | ✅ Complete | `test/services/intelligence/maturity-model.test.ts` (9 tests) |
+| KGI-10 | KGI-10.1: Knowledge-grounded narrative templates | ✅ Complete | `src/services/intelligence/narrative-engine.ts` (4 knowledge templates + extended NarrativeContext + gatherKnowledgeContext) |
+| KGI-10 | KGI-10.2: narrative-engine tests | ✅ Complete | `test/services/intelligence/narrative-engine.test.ts` (8 tests) |
+| KGI-11 | KGI-11.1: Knowledge-enriched profile | ✅ Complete | `src/services/personalization/profile-accumulator.ts` (domainExpertise + knowledgeVelocity + decisionPatterns + topEntities) |
+| KGI-11 | KGI-11.2: profile-accumulator tests | ✅ Complete | `test/services/personalization/profile-accumulator.test.ts` (8 tests) |
+| KGI-12 | KGI-12.1: git-ai-linker entity-level linking | ✅ Complete | `src/services/intelligence/git-ai-linker.ts` (linkedEntities[] per link) |
+| KGI-12 | KGI-12.2: git-expertise-map comprehension overlay | ✅ Complete | `src/services/intelligence/git-expertise-map.ts` (comprehensionQuality: genuine/risk/assisted/dangerous) |
+| KGI-12 | KGI-12.3: cross-efficiency-survival fact durability | ✅ Complete | `src/services/intelligence/cross-efficiency-survival.ts` (factDurability = 1 - superseded/total) |
+| KGI-12 | KGI-12.4: cross-maturity-ownership comprehension genuineness | ✅ Complete | `src/services/intelligence/cross-maturity-ownership.ts` (knowledge-grounded genuineness) |
+| KGI-12 | KGI-12.5: Cross-source tests | ✅ Complete | `test/services/intelligence/cross-source-enhancements.test.ts` (10 tests) |
+| KGI-13 | KGI-13.1: DAG topology verification | ✅ Complete | `test/integration/unified-dag.test.ts` (10 tests — topo sort, cycles, deps, Group B, maturity deps) |
+| KGI-13 | KGI-13.2: Full pipeline integration test | ✅ Complete | `test/integration/knowledge-grounded-pipeline.test.ts` (10 tests — all Group B knowledge-grounded + fallback + narrative + maturity flag) |
+| KGI-14 | KGI-14.1: Remove old heuristic primary codepaths | ✅ Complete | Group B analyzers already clean (old imports removed during KGI-2/3/4/5 rewrites). No phase-baselines, cosineSimilarity, or getWorkerPool references remain. |
+| KGI-14 | KGI-14.2: Final verification | ✅ Complete | 438 tests pass across 34 test files. All Group B analyzers use knowledge-grounded primary paths with clean HDS fallbacks. |

@@ -61,15 +61,37 @@ export interface AnalyzerProgressInfo {
 
 const CASCADE_MAGNITUDE_THRESHOLD = 0.05;
 
+/** Post-run hook for Phase 5: Cross-analyzer correlation detection. */
+export type CorrelationHook = (
+  analyzerResults: Map<string, { output: unknown; sourceEventIds: string[] }>,
+) => Promise<void>;
+
+/** Post-run hook for Phase 6: Evidence chain persistence. */
+export type EvidenceHook = (
+  analyzerResults: Map<string, { output: unknown; sourceEventIds: string[] }>,
+) => Promise<void>;
+
 export class IntelligenceScheduler {
   private graph = new Map<string, DagNode>();
   private topoOrder: string[] = [];
   private lastRunMs = 0;
   private minIntervalMs: number;
   private globalWatermark = "";
+  private correlationHook: CorrelationHook | null = null;
+  private evidenceHook: EvidenceHook | null = null;
 
   constructor(opts: { minIntervalMs?: number } = {}) {
     this.minIntervalMs = opts.minIntervalMs ?? 10_000;
+  }
+
+  /** Register a Phase 5 correlation hook (called after all analyzers complete). */
+  setCorrelationHook(hook: CorrelationHook): void {
+    this.correlationHook = hook;
+  }
+
+  /** Register a Phase 6 evidence persistence hook (called after correlation). */
+  setEvidenceHook(hook: EvidenceHook): void {
+    this.evidenceHook = hook;
   }
 
   setMinInterval(ms: number): void {
@@ -261,7 +283,7 @@ export class IntelligenceScheduler {
             updatedAt: node.state.updatedAt,
             data: output as Record<string, unknown>,
             insightCount: 1,
-            sourceEventIds: filtered.events.slice(0, 20).map((e) => e.id),
+            sourceEventIds: filtered.events.map((e) => e.id),
           });
 
           if (filtered.events.length > 0) {
@@ -269,7 +291,7 @@ export class IntelligenceScheduler {
               ctx.operational,
               `${name}:${node.state.updatedAt}`,
               name,
-              filtered.events.slice(0, 20).map((e) => e.id),
+              filtered.events.map((e) => e.id),
             );
           }
 
@@ -325,9 +347,44 @@ export class IntelligenceScheduler {
       }
     }
 
+    // Phase 5: Cross-analyzer correlation (no-op until hook registered via IP-5)
+    if (this.correlationHook && results.length > 0) {
+      try {
+        const analyzerOutputs = new Map<string, { output: unknown; sourceEventIds: string[] }>();
+        for (const result of results) {
+          analyzerOutputs.set(result.analyzer, {
+            output: result.data,
+            sourceEventIds: result.sourceEventIds,
+          });
+        }
+        await this.correlationHook(analyzerOutputs);
+      } catch (err) {
+        logger.debug("Phase 5 (correlation) hook failed (non-fatal)", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Phase 6: Evidence persistence (no-op until hook registered via IP-1 integration)
+    if (this.evidenceHook && results.length > 0) {
+      try {
+        const analyzerOutputs = new Map<string, { output: unknown; sourceEventIds: string[] }>();
+        for (const result of results) {
+          analyzerOutputs.set(result.analyzer, {
+            output: result.data,
+            sourceEventIds: result.sourceEventIds,
+          });
+        }
+        await this.evidenceHook(analyzerOutputs);
+      } catch (err) {
+        logger.debug("Phase 6 (evidence) hook failed (non-fatal)", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     if (batch.events.length > 0) {
       const lastTs = batch.events[batch.events.length - 1].ts;
-      // Safety: ensure watermark is always a string (DuckDB can return {micros} objects)
       this.globalWatermark =
         typeof lastTs === "string"
           ? lastTs

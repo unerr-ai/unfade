@@ -20,6 +20,8 @@ export interface AIGitLink {
   sharedFiles: string[];
   linkStrength: number;
   promptType: string | null;
+  /** KGI-12.1: Entities discussed in AI session that match commit file paths. */
+  linkedEntities?: string[];
 }
 
 export interface AIGitLinkerOutput {
@@ -65,6 +67,7 @@ export const aiGitLinkerAnalyzer: IncrementalAnalyzer<AIGitLinkerState, AIGitLin
     if (batch.events.length === 0) return { state, changed: false };
 
     const output = await computeLinks(ctx);
+    await enrichLinksWithEntities(output, ctx);
     const prevCount = state.value.output.totalLinksFound;
     const changed = output.totalLinksFound !== prevCount;
 
@@ -117,6 +120,35 @@ export const aiGitLinkerAnalyzer: IncrementalAnalyzer<AIGitLinkerState, AIGitLin
     return contributions;
   },
 };
+
+// ---------------------------------------------------------------------------
+// KGI-12.1: Entity-level linking enrichment
+// ---------------------------------------------------------------------------
+
+async function enrichLinksWithEntities(output: AIGitLinkerOutput, ctx: AnalyzerContext): Promise<void> {
+  if (!ctx.knowledge) return;
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return;
+    const entities = await ctx.knowledge.getEntityEngagement({});
+    if (entities.length === 0) return;
+    const entityNames = entities.map((e) => e.name.toLowerCase());
+    for (const link of output.links) {
+      const matched: string[] = [];
+      for (const file of link.sharedFiles) {
+        const fileLower = file.toLowerCase();
+        for (const name of entityNames) {
+          if (name.length >= 3 && fileLower.includes(name)) {
+            matched.push(name);
+          }
+        }
+      }
+      if (matched.length > 0) {
+        link.linkedEntities = [...new Set(matched)].slice(0, 10);
+      }
+    }
+  } catch { /* non-fatal */ }
+}
 
 // ---------------------------------------------------------------------------
 // Computation

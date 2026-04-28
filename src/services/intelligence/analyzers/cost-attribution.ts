@@ -1,8 +1,11 @@
-// FILE: src/services/intelligence/analyzers/cost-attribution.ts
-// UF-102: Cost Attribution Engine — converts event counts × pricing to USD estimates.
+// UF-102 + IP-3.3: Cost Attribution Engine — converts event counts × pricing to USD estimates.
 // Groups by model, domain, branch, feature. Computes waste ratio and context overhead proxy.
 // All outputs labeled "estimated / proxy" per §0.3 trust requirement.
+//
+// IP-3.3 enrichment: _meta freshness, per-dimension evidenceEventIds, diagnostics.
+// All artificial LIMIT caps removed — full data flows through.
 
+import type { AnalyzerOutputMeta, DiagnosticMessage } from "../../../schemas/intelligence-presentation.js";
 import type { CostAttribution, CostDimension } from "../../../schemas/intelligence/costs.js";
 import type {
   IncrementalAnalyzer,
@@ -15,17 +18,13 @@ import type { AnalyzerContext } from "./index.js";
 const DISCLAIMER =
   "These costs are estimates based on AI event counts × configurable pricing. They are not invoices. Compare with your provider bills for calibration.";
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
+// ─── State ──────────────────────────────────────────────────────────────────
 
 interface CostAttributionState {
   output: CostAttribution;
 }
 
-// ---------------------------------------------------------------------------
-// Compute helpers — all take db (analytics) only
-// ---------------------------------------------------------------------------
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function findPrice(model: string, table: Record<string, number>): number {
   const lower = model.toLowerCase();
@@ -35,6 +34,26 @@ function findPrice(model: string, table: Record<string, number>): number {
   }
   return 0;
 }
+
+async function collectIdsForDimension(
+  db: AnalyzerContext["analytics"],
+  dimensionKey: string,
+  dimensionColumn: string,
+): Promise<string[]> {
+  try {
+    const result = await db.exec(
+      `SELECT id FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+         AND ${dimensionColumn} = $1`,
+      [dimensionKey],
+    );
+    return (result[0]?.values ?? []).map((r) => String(r[0]));
+  } catch {
+    return [];
+  }
+}
+
+// ─── Compute Dimensions ─────────────────────────────────────────────────────
 
 async function computeByModel(
   db: AnalyzerContext["analytics"],
@@ -52,17 +71,26 @@ async function computeByModel(
     if (!result[0]?.values.length) return [];
 
     const total = result[0].values.reduce((s, r) => s + Number(r[1] ?? 0), 0);
-    return result[0].values.map((row) => {
+    const dimensions: CostDimension[] = [];
+
+    for (const row of result[0].values) {
       const model = (row[0] as string) ?? "unknown";
       const count = Number(row[1] ?? 0);
       const price = findPrice(model, pricing);
-      return {
+      const eventIds = await collectIdsForDimension(
+        db, model, "COALESCE(model_id, ai_tool, 'unknown')",
+      );
+
+      dimensions.push({
         key: model,
         eventCount: count,
         estimatedCost: Math.round(count * price * 100) / 100,
         percentage: total > 0 ? Math.round((count / total) * 100) : 0,
-      };
-    });
+        evidenceEventIds: eventIds,
+      });
+    }
+
+    return dimensions;
   } catch {
     return [];
   }
@@ -70,14 +98,35 @@ async function computeByModel(
 
 async function computeByDomain(db: AnalyzerContext["analytics"]): Promise<CostDimension[]> {
   try {
-    await db.exec(
-      `SELECT content_summary, COUNT(*) as cnt
+    const result = await db.exec(
+      `SELECT COALESCE(intent_summary, 'uncategorized') as domain,
+             COUNT(*) as cnt
        FROM events
        WHERE source IN ('ai-session', 'mcp-active')
-       GROUP BY substr(content_summary, 1, 50)
-       LIMIT 20`,
+         AND intent_summary IS NOT NULL AND intent_summary != ''
+       GROUP BY domain
+       ORDER BY cnt DESC`,
     );
-    return [];
+    if (!result[0]?.values.length) return [];
+
+    const total = result[0].values.reduce((s, r) => s + Number(r[1] ?? 0), 0);
+    const dimensions: CostDimension[] = [];
+
+    for (const row of result[0].values) {
+      const domain = (row[0] as string) ?? "uncategorized";
+      const count = Number(row[1] ?? 0);
+      const eventIds = await collectIdsForDimension(db, domain, "intent_summary");
+
+      dimensions.push({
+        key: domain,
+        eventCount: count,
+        estimatedCost: 0,
+        percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+        evidenceEventIds: eventIds,
+      });
+    }
+
+    return dimensions;
   } catch {
     return [];
   }
@@ -91,18 +140,28 @@ async function computeByBranch(db: AnalyzerContext["analytics"]): Promise<CostDi
        WHERE source IN ('ai-session', 'mcp-active')
          AND git_branch IS NOT NULL AND git_branch != ''
        GROUP BY branch
-       ORDER BY cnt DESC
-       LIMIT 10`,
+       ORDER BY cnt DESC`,
     );
     if (!result[0]?.values.length) return [];
 
     const total = result[0].values.reduce((s, r) => s + Number(r[1] ?? 0), 0);
-    return result[0].values.map((row) => ({
-      key: (row[0] as string) ?? "unknown",
-      eventCount: Number(row[1] ?? 0),
-      estimatedCost: 0,
-      percentage: total > 0 ? Math.round((Number(row[1] ?? 0) / total) * 100) : 0,
-    }));
+    const dimensions: CostDimension[] = [];
+
+    for (const row of result[0].values) {
+      const branch = (row[0] as string) ?? "unknown";
+      const count = Number(row[1] ?? 0);
+      const eventIds = await collectIdsForDimension(db, branch, "git_branch");
+
+      dimensions.push({
+        key: branch,
+        eventCount: count,
+        estimatedCost: 0,
+        percentage: total > 0 ? Math.round((count / total) * 100) : 0,
+        evidenceEventIds: eventIds,
+      });
+    }
+
+    return dimensions;
   } catch {
     return [];
   }
@@ -117,8 +176,7 @@ async function computeByFeature(db: AnalyzerContext["analytics"]): Promise<CostD
        JOIN features f ON f.id = ef.feature_id
        WHERE e.source IN ('ai-session', 'mcp-active')
        GROUP BY f.name
-       ORDER BY cnt DESC
-       LIMIT 10`,
+       ORDER BY cnt DESC`,
     );
     if (!result[0]?.values.length) return [];
 
@@ -128,11 +186,14 @@ async function computeByFeature(db: AnalyzerContext["analytics"]): Promise<CostD
       eventCount: Number(row[1] ?? 0),
       estimatedCost: 0,
       percentage: total > 0 ? Math.round((Number(row[1] ?? 0) / total) * 100) : 0,
+      evidenceEventIds: [],
     }));
   } catch {
     return [];
   }
 }
+
+// ─── Efficiency Metrics ─────────────────────────────────────────────────────
 
 async function computeWasteRatio(db: AnalyzerContext["analytics"]): Promise<number | null> {
   try {
@@ -233,9 +294,81 @@ async function computeAbandonedWaste(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Full computation — assembles a CostAttribution output
-// ---------------------------------------------------------------------------
+// ─── Meta + Diagnostics ─────────────────────────────────────────────────────
+
+async function buildMeta(
+  db: AnalyzerContext["analytics"],
+  totalEvents: number,
+  updatedAt: string,
+): Promise<AnalyzerOutputMeta> {
+  const confidence: "high" | "medium" | "low" =
+    totalEvents >= 50 ? "high" : totalEvents >= 20 ? "medium" : "low";
+
+  let watermark = updatedAt;
+  let stalenessMs = 0;
+
+  try {
+    const result = await db.exec(
+      "SELECT MAX(ts) FROM events WHERE source IN ('ai-session', 'mcp-active')",
+    );
+    const maxTs = result[0]?.values[0]?.[0] as string | null;
+    if (maxTs) {
+      watermark = maxTs;
+      stalenessMs = Math.max(0, Date.now() - new Date(maxTs).getTime());
+    }
+  } catch { /* non-fatal */ }
+
+  return { updatedAt, dataPoints: totalEvents, confidence, watermark, stalenessMs };
+}
+
+function buildDiagnostics(
+  totalCost: number,
+  wasteRatio: number | null,
+  byModel: CostDimension[],
+  abandonedWaste: { eventCount: number; estimatedCost: number },
+): DiagnosticMessage[] {
+  const diagnostics: DiagnosticMessage[] = [];
+
+  if (wasteRatio !== null && wasteRatio > 0.3) {
+    diagnostics.push({
+      severity: "warning",
+      message: `High waste ratio (${Math.round(wasteRatio * 100)}%) — significant portion of AI interactions have low direction scores`,
+      evidence: `${Math.round(wasteRatio * 100)}% of sessions had human_direction_score < 0.2`,
+      actionable: "Review low-direction sessions — consider adding more context to prompts or breaking down complex tasks",
+      relatedAnalyzers: ["efficiency", "loop-detector"],
+      evidenceEventIds: [],
+    });
+  }
+
+  if (abandonedWaste.estimatedCost > 0) {
+    diagnostics.push({
+      severity: abandonedWaste.estimatedCost > totalCost * 0.2 ? "warning" : "info",
+      message: `$${abandonedWaste.estimatedCost.toFixed(2)} estimated waste from ${abandonedWaste.eventCount} abandoned sessions`,
+      evidence: `${abandonedWaste.eventCount} sessions marked as abandoned with estimated cost`,
+      actionable: "Investigate abandoned sessions — recurring patterns suggest workflow friction",
+      relatedAnalyzers: ["loop-detector"],
+      evidenceEventIds: [],
+    });
+  }
+
+  if (byModel.length > 0) {
+    const dominant = byModel[0];
+    if (dominant.percentage >= 80) {
+      diagnostics.push({
+        severity: "info",
+        message: `Cost concentrated in ${dominant.key} — ${dominant.percentage}% of total sessions`,
+        evidence: `${dominant.eventCount} sessions using ${dominant.key} out of total`,
+        actionable: "Consider if a smaller/cheaper model would suffice for simpler tasks",
+        relatedAnalyzers: [],
+        evidenceEventIds: dominant.evidenceEventIds,
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
+// ─── Full Computation ───────────────────────────────────────────────────────
 
 async function computeCosts(
   db: AnalyzerContext["analytics"],
@@ -249,6 +382,7 @@ async function computeCosts(
   const byFeature = await computeByFeature(db);
 
   const totalCost = byModel.reduce((s, m) => s + m.estimatedCost, 0);
+  const totalEvents = byModel.reduce((s, m) => s + m.eventCount, 0);
   const wasteRatio = await computeWasteRatio(db);
   const contextOverhead = await computeContextOverhead(db);
   const costPerDirected = await computeCostPerDirected(db, totalCost);
@@ -257,6 +391,9 @@ async function computeCosts(
   const daysInPeriod = await computeDaysInPeriod(db);
   const projectedMonthlyCost =
     daysInPeriod > 0 ? Math.round((totalCost / daysInPeriod) * 30 * 100) / 100 : null;
+
+  const _meta = await buildMeta(db, totalEvents, now);
+  const diagnostics = buildDiagnostics(totalCost, wasteRatio, byModel, abandonedWaste);
 
   return {
     totalEstimatedCost: Math.round(totalCost * 100) / 100,
@@ -273,12 +410,12 @@ async function computeCosts(
     costPerDirectedDecision: costPerDirected,
     updatedAt: now,
     disclaimer: DISCLAIMER,
+    _meta,
+    diagnostics,
   };
 }
 
-// ---------------------------------------------------------------------------
-// IncrementalAnalyzer export
-// ---------------------------------------------------------------------------
+// ─── IncrementalAnalyzer Export ──────────────────────────────────────────────
 
 export const costAttributionAnalyzer: IncrementalAnalyzer<CostAttributionState, CostAttribution> = {
   name: "cost-attribution",

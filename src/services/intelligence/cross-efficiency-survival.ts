@@ -19,6 +19,8 @@ export interface EfficiencySurvivalOutput {
     codeSurvival: number;
     decisionDurability: number;
   };
+  /** KGI-12.3: Fact-based durability — proportion of decisions not superseded. */
+  factDurability?: number;
   interpretation: string;
   quadrant:
     | "effective-durable"
@@ -64,6 +66,7 @@ export const efficiencySurvivalAnalyzer: IncrementalAnalyzer<
 
   async update(state, batch, ctx): Promise<UpdateResult<EfficiencySurvivalState>> {
     const output = computeFromDependencies(ctx);
+    await enrichFactDurability(output, ctx);
     const prevScore = state.value.output.compositeScore;
     const changed = Math.abs(output.compositeScore - prevScore) > 0.02;
 
@@ -88,6 +91,22 @@ export const efficiencySurvivalAnalyzer: IncrementalAnalyzer<
 // ---------------------------------------------------------------------------
 // Computation
 // ---------------------------------------------------------------------------
+
+// KGI-12.3: Fact durability enrichment
+async function enrichFactDurability(output: EfficiencySurvivalOutput, ctx: AnalyzerContext): Promise<void> {
+  if (!ctx.knowledge) return;
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return;
+    const decisions = await ctx.knowledge.getDecisions({});
+    const allDecisionFacts = await ctx.knowledge.getFacts({ activeOnly: false });
+    const decisionPredicates = new Set(["DECIDED", "CHOSEN_OVER", "REPLACED_BY", "SWITCHED_FROM", "ADOPTED", "DEPRECATED"]);
+    const allDecisions = allDecisionFacts.filter((f) => decisionPredicates.has(f.predicate));
+    const superseded = allDecisions.filter((f) => f.invalidAt !== "").length;
+    const total = allDecisions.length;
+    output.factDurability = total > 0 ? Math.round((1 - superseded / total) * 1000) / 1000 : 1.0;
+  } catch { /* non-fatal */ }
+}
 
 function computeFromDependencies(ctx: AnalyzerContext): EfficiencySurvivalOutput {
   const now = new Date().toISOString();

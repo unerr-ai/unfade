@@ -172,7 +172,7 @@ export function saveState<T>(
 export async function buildEventBatch(
   db: DbLike,
   watermark: string,
-  limit = 500,
+  limit = 2000,
 ): Promise<NewEventBatch> {
   const events: AnalyzerEvent[] = [];
   const sessionSet = new Set<string>();

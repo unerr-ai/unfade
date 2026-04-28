@@ -81,15 +81,15 @@ export const api = {
   },
 
   intelligence: {
-    efficiency: () => get<Efficiency>("/api/intelligence/efficiency"),
-    costs: () => get<Costs>("/api/intelligence/costs"),
-    comprehension: () => get<Comprehension>("/api/intelligence/comprehension"),
-    promptPatterns: () => get<PromptPatterns>("/api/intelligence/prompt-patterns"),
-    velocity: () => get<Velocity>("/api/intelligence/velocity"),
-    alerts: () => get<{ alerts: unknown[] }>("/api/intelligence/alerts"),
-    replays: () => get<{ replays: unknown[] }>("/api/intelligence/replays"),
+    efficiency: () => get<{ data: Efficiency; _meta: unknown }>("/api/intelligence/efficiency"),
+    costs: () => get<{ data: Costs; _meta: unknown }>("/api/intelligence/costs"),
+    comprehension: () => get<{ data: Comprehension; _meta: unknown }>("/api/intelligence/comprehension"),
+    promptPatterns: () => get<{ data: PromptPatterns; _meta: unknown }>("/api/intelligence/prompt-patterns"),
+    velocity: () => get<{ data: Velocity; _meta: unknown }>("/api/intelligence/velocity"),
+    alerts: () => get<{ data: unknown; _meta: unknown }>("/api/intelligence/alerts"),
+    replays: () => get<{ data: unknown; _meta: unknown }>("/api/intelligence/replays"),
     decisionDurability: () => get<unknown>("/api/intelligence/decision-durability"),
-    autonomy: () => get<Autonomy>("/api/intelligence/autonomy"),
+    autonomy: () => get<{ data: Autonomy; _meta: unknown }>("/api/intelligence/autonomy"),
     maturityAssessment: () => get<MaturityAssessment>("/api/intelligence/maturity-assessment"),
     commitAnalysis: () => get<unknown>("/api/intelligence/commit-analysis"),
     expertiseMap: () => get<unknown>("/api/intelligence/expertise-map"),
@@ -104,7 +104,18 @@ export const api = {
     crossProject: () => get<unknown>("/api/intelligence/cross-project"),
     narratives: () =>
       get<{ narratives: Narrative[]; count: number }>("/api/intelligence/narratives"),
-    correlations: () => get<unknown>("/api/intelligence/correlations"),
+    correlations: () =>
+      get<{ data: Array<import("@/types/intelligence").Correlation>; _meta: unknown }>("/api/intelligence/correlations"),
+    evidence: (analyzerName: string, metric?: string) => {
+      const path = metric
+        ? `/api/intelligence/evidence/${analyzerName}/${metric}`
+        : `/api/intelligence/evidence/${analyzerName}`;
+      return get<{ data: Array<import("@/types/intelligence").EvidenceChain>; _meta: unknown }>(path);
+    },
+    explain: (insightId: string) =>
+      get<{ data: { explanation: string; evidenceEventIds: string[]; actionable?: string }; _meta: unknown }>(
+        `/api/intelligence/explain/${insightId}`,
+      ),
   },
 
   insights: {
@@ -115,6 +126,10 @@ export const api = {
     topology: () => get<unknown>("/api/substrate/topology"),
     trajectories: () => get<unknown>("/api/substrate/trajectories"),
     entityNeighborhood: (id: string) => get<unknown>(`/api/substrate/entity/${id}/neighborhood`),
+    explore: (entityId: string) =>
+      get<{ data: import("@/types/intelligence").EntityExploreResult; _meta: unknown }>(
+        `/api/substrate/explore/${entityId}`,
+      ),
   },
 
   decisions: {

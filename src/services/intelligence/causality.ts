@@ -69,6 +69,7 @@ export const causalityChainAnalyzer: IncrementalAnalyzer<CausalityState, Causali
     if (batch.events.length === 0) return { state, changed: false };
 
     const chains = await buildChainsFromDb(ctx);
+    await enrichWithFactChains(chains, ctx);
     const prevCount = state.value.chains.length;
 
     const newState: IncrementalState<CausalityState> = {
@@ -100,6 +101,43 @@ export const causalityChainAnalyzer: IncrementalAnalyzer<CausalityState, Causali
     };
   },
 };
+
+// ---------------------------------------------------------------------------
+// KGI-8.2: Fact supersession chains from knowledge graph
+// ---------------------------------------------------------------------------
+
+async function enrichWithFactChains(chains: CausalityChain[], ctx: AnalyzerContext): Promise<void> {
+  if (!ctx.knowledge) return;
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return;
+
+    const allFacts = await ctx.knowledge.getFacts({ activeOnly: false });
+    const invalidated = allFacts.filter((f) => f.invalidAt !== "");
+    const active = allFacts.filter((f) => f.invalidAt === "");
+
+    for (const old of invalidated) {
+      const replacement = active.find(
+        (a) => a.subjectId === old.subjectId && a.predicate === old.predicate && a.validAt > old.validAt,
+      );
+      if (!replacement) continue;
+
+      chains.push({
+        id: `fact-chain-${old.id}-${replacement.id}`,
+        events: [old.id, replacement.id],
+        chainType: "decision-revision",
+        startedAt: old.validAt,
+        lastEventAt: replacement.validAt,
+        outcome: "resolved",
+        decisions: [old.context.slice(0, 100), replacement.context.slice(0, 100)],
+        featureId: null,
+        turnCount: 2,
+      });
+    }
+  } catch {
+    // Non-fatal
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Chain construction from DB

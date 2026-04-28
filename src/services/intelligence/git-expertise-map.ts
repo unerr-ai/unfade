@@ -19,6 +19,8 @@ export interface FileExpertise {
   expertiseScore: number;
   expertiseLevel: "deep" | "familiar" | "surface" | "ai-dependent";
   lastActivity: string;
+  /** KGI-12.2: Comprehension-qualified expertise assessment. */
+  comprehensionQuality?: "genuine-expertise" | "ownership-risk" | "assisted-expertise" | "dangerous-dependency" | "unknown";
 }
 
 export interface ExpertiseMapOutput {
@@ -63,6 +65,7 @@ export const expertiseMapAnalyzer: IncrementalAnalyzer<ExpertiseMapState, Expert
     if (batch.events.length === 0) return { state, changed: false };
 
     const output = await computeExpertise(ctx);
+    await enrichComprehensionOverlay(output, ctx);
     const prevOverall = state.value.output.overallExpertise;
     const changed = Math.abs(output.overallExpertise - prevOverall) > 0.02;
 
@@ -82,6 +85,32 @@ export const expertiseMapAnalyzer: IncrementalAnalyzer<ExpertiseMapState, Expert
     return state.value.output;
   },
 };
+
+// ---------------------------------------------------------------------------
+// KGI-12.2: Comprehension overlay enrichment
+// ---------------------------------------------------------------------------
+
+async function enrichComprehensionOverlay(output: ExpertiseMapOutput, ctx: AnalyzerContext): Promise<void> {
+  if (!ctx.knowledge) return;
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return;
+    const assessments = await ctx.knowledge.getComprehension({});
+    const avgComprehension = assessments.length > 0
+      ? assessments.reduce((s, a) => s + a.overallScore, 0) / assessments.length
+      : 50;
+    const highComprehension = avgComprehension > 50;
+    for (const file of output.files) {
+      const isDeep = file.expertiseLevel === "deep" || file.expertiseLevel === "familiar";
+      const isAiDependent = file.expertiseLevel === "ai-dependent";
+      if (isDeep && highComprehension) file.comprehensionQuality = "genuine-expertise";
+      else if (isDeep && !highComprehension) file.comprehensionQuality = "ownership-risk";
+      else if (isAiDependent && highComprehension) file.comprehensionQuality = "assisted-expertise";
+      else if (isAiDependent && !highComprehension) file.comprehensionQuality = "dangerous-dependency";
+      else file.comprehensionQuality = "unknown";
+    }
+  } catch { /* non-fatal */ }
+}
 
 // ---------------------------------------------------------------------------
 // Computation

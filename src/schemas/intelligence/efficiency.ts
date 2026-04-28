@@ -1,13 +1,12 @@
-// FILE: src/schemas/intelligence/efficiency.ts
-// UF-101: Zod schema for efficiency.json — the AI Efficiency Score (AES).
-
 import { z } from "zod";
+import { AnalyzerOutputMetaSchema, DiagnosticMessageSchema } from "../intelligence-presentation.js";
 
 export const EfficiencySubMetricSchema = z.object({
   value: z.number().min(0).max(100),
   weight: z.number().min(0).max(1),
   confidence: z.enum(["high", "medium", "low"]),
   dataPoints: z.number().int().min(0),
+  evidenceEventIds: z.array(z.string()).default([]),
 });
 
 export const EfficiencySchema = z.object({
@@ -19,6 +18,7 @@ export const EfficiencySchema = z.object({
     iterationRatio: EfficiencySubMetricSchema,
     contextLeverage: EfficiencySubMetricSchema,
     modificationDepth: EfficiencySubMetricSchema,
+    comprehensionEfficiency: EfficiencySubMetricSchema.optional(),
   }),
   trend: z.enum(["improving", "stable", "declining"]).nullable(),
   history: z.array(
@@ -30,6 +30,8 @@ export const EfficiencySchema = z.object({
   topInsight: z.string().nullable(),
   updatedAt: z.string(),
   period: z.string(),
+  _meta: AnalyzerOutputMetaSchema,
+  diagnostics: z.array(DiagnosticMessageSchema).default([]),
 });
 
 export type Efficiency = z.infer<typeof EfficiencySchema>;

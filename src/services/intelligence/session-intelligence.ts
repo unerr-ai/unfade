@@ -1,14 +1,24 @@
 // FILE: src/services/intelligence/session-intelligence.ts
-// Per-session real-time intelligence. Tracks active sessions with phase
-// history, loop risk, direction trend, and suggested actions. Emits
-// diagnostics when loopRisk > 0.7 or direction falls for > 5 events.
+// KGI-7: Per-session real-time intelligence with knowledge progress tracking.
+// Tracks active sessions with phase history, loop risk, direction trend, and
+// knowledge progress (facts extracted, entities engaged, decisions recorded).
+//
+// Knowledge-grounded suggested actions: when no facts are extracted after 5+
+// turns, suggests asking deeper questions. When comprehension is declining
+// within the session, suggests reviewing AI output more critically.
 
+import type { AnalyzerContext } from "./analyzers/index.js";
 import { diagnosticStream } from "./diagnostic-stream.js";
 import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+export interface KnowledgeProgress {
+  factsExtracted: number;
+  entitiesEngaged: number;
+  decisionsRecorded: number;
+  comprehensionDelta: number;
+}
 
 export interface SessionIntelligence {
   sessionId: string;
@@ -20,6 +30,7 @@ export interface SessionIntelligence {
   turnCount: number;
   suggestedAction: string | null;
   lastUpdated: string;
+  knowledgeProgress: KnowledgeProgress | null;
 }
 
 interface SessionIntelligenceState {
@@ -33,18 +44,15 @@ type SessionIntelligenceOutput = {
   updatedAt: string;
 };
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+// ─── Constants ──────────────────────────────────────────────────────────────
 
 const MAX_TRACKED_SESSIONS = 50;
 const LOOP_RISK_THRESHOLD = 0.7;
 const FALLING_DIRECTION_WINDOW = 5;
 const SESSION_STALE_MS = 4 * 3600 * 1000;
+const NO_FACTS_TURN_THRESHOLD = 5;
 
-// ---------------------------------------------------------------------------
-// IncrementalAnalyzer
-// ---------------------------------------------------------------------------
+// ─── IncrementalAnalyzer ────────────────────────────────────────────────────
 
 export const sessionIntelligenceAnalyzer: IncrementalAnalyzer<
   SessionIntelligenceState,
@@ -64,7 +72,7 @@ export const sessionIntelligenceAnalyzer: IncrementalAnalyzer<
     };
   },
 
-  async update(state, batch, _ctx): Promise<UpdateResult<SessionIntelligenceState>> {
+  async update(state, batch, ctx): Promise<UpdateResult<SessionIntelligenceState>> {
     if (batch.events.length === 0) return { state, changed: false };
 
     const sessions = { ...state.value.sessions };
@@ -90,6 +98,7 @@ export const sessionIntelligenceAnalyzer: IncrementalAnalyzer<
           turnCount: 1,
           suggestedAction: null,
           lastUpdated: evt.ts,
+          knowledgeProgress: null,
         };
         anyChanged = true;
         continue;
@@ -113,7 +122,6 @@ export const sessionIntelligenceAnalyzer: IncrementalAnalyzer<
 
       existing.loopRisk = computeLoopRisk(existing);
       existing.directionTrend = computeDirectionTrend(existing.directionHistory);
-      existing.suggestedAction = deriveSuggestedAction(existing);
 
       if (existing.loopRisk > LOOP_RISK_THRESHOLD) {
         diagnosticStream.emit({
@@ -149,6 +157,14 @@ export const sessionIntelligenceAnalyzer: IncrementalAnalyzer<
       anyChanged = true;
     }
 
+    // Knowledge progress enrichment (after all events processed)
+    await enrichKnowledgeProgress(sessions, ctx);
+
+    // Update suggested actions with knowledge context
+    for (const session of Object.values(sessions)) {
+      session.suggestedAction = deriveSuggestedAction(session);
+    }
+
     pruneStale(sessions, now);
 
     return {
@@ -179,9 +195,49 @@ export const sessionIntelligenceAnalyzer: IncrementalAnalyzer<
   },
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// ─── Knowledge Progress Enrichment (KGI-7) ──────────────────────────────────
+
+async function enrichKnowledgeProgress(
+  sessions: Record<string, SessionIntelligence>,
+  ctx: AnalyzerContext,
+): Promise<void> {
+  if (!ctx.knowledge) return;
+
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return;
+
+    const facts = await ctx.knowledge.getFacts({});
+    const decisions = await ctx.knowledge.getDecisions({});
+    const entities = await ctx.knowledge.getEntityEngagement({});
+    const assessments = await ctx.knowledge.getComprehension({});
+
+    for (const session of Object.values(sessions)) {
+      const sessionStart = session.phaseHistory[0]?.startedAt ?? session.lastUpdated;
+
+      const sessionFacts = facts.filter((f) => f.validAt >= sessionStart);
+      const sessionDecisions = decisions.filter((d) => d.validAt >= sessionStart);
+
+      const sessionAssessments = assessments.filter((a) => a.timestamp >= sessionStart);
+      let comprehensionDelta = 0;
+      if (sessionAssessments.length >= 2) {
+        const sorted = [...sessionAssessments].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        comprehensionDelta = sorted[sorted.length - 1].overallScore - sorted[0].overallScore;
+      }
+
+      session.knowledgeProgress = {
+        factsExtracted: sessionFacts.length,
+        entitiesEngaged: entities.length,
+        decisionsRecorded: sessionDecisions.length,
+        comprehensionDelta,
+      };
+    }
+  } catch {
+    // Non-fatal — knowledge enrichment is optional
+  }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function computeLoopRisk(session: SessionIntelligence): number {
   let risk = 0;
@@ -221,6 +277,20 @@ function computeDirectionTrend(history: number[]): "rising" | "stable" | "fallin
 }
 
 function deriveSuggestedAction(session: SessionIntelligence): string | null {
+  // Knowledge-grounded suggestions take priority
+  if (session.knowledgeProgress) {
+    const kp = session.knowledgeProgress;
+
+    if (kp.factsExtracted === 0 && session.turnCount >= NO_FACTS_TURN_THRESHOLD) {
+      return "This session has produced no new knowledge after multiple turns. Consider asking deeper, more specific questions about the topic, or requesting the AI to explain its reasoning.";
+    }
+
+    if (kp.comprehensionDelta < -10 && session.turnCount >= 5) {
+      return "Your comprehension appears to be declining in this session. Try reviewing the AI's output more critically before accepting, or step back to confirm your understanding.";
+    }
+  }
+
+  // Existing phase/loop-based suggestions
   if (session.loopRisk > 0.8) {
     return "This session shows strong loop patterns. Try writing a test case first, or step back to plan the approach before continuing.";
   }

@@ -1,11 +1,19 @@
+// Narrative Engine — dual-path narrative generation with correlation awareness.
+//
+// IP-6.1: LLM path (daily) + template fallback (per-tick).
+// KGI-10: Knowledge-grounded templates.
+//
+// Narratives are grouped by type: diagnostic, prescription, progress, correlation.
+// Every narrative carries evidenceEventIds for drill-through in the UI.
+
+import type { Correlation } from "../../schemas/intelligence-presentation.js";
+import type { AnalyzerContext } from "./analyzers/index.js";
 import type { IncrementalAnalyzer, IncrementalState, UpdateResult } from "./incremental-state.js";
 import type { MaturityAssessment, MaturityDimension } from "./maturity-model.js";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+// ─── Types ──────────────────────────────────────────────────────────────────
 
-export type NarrativeType = "diagnostic" | "prescription" | "progress";
+export type NarrativeType = "diagnostic" | "prescription" | "progress" | "correlation";
 
 export interface Narrative {
   id: string;
@@ -14,6 +22,8 @@ export interface Narrative {
   body: string;
   importance: number;
   dimension?: string;
+  evidenceEventIds: string[];
+  relatedAnalyzers: string[];
   createdAt: string;
 }
 
@@ -21,6 +31,7 @@ interface NarrativeState {
   narratives: Narrative[];
   executiveSummary: string;
   updatedAt: string;
+  lastLlmRunAt: string;
 }
 
 type NarrativeOutput = {
@@ -29,9 +40,22 @@ type NarrativeOutput = {
   updatedAt: string;
 };
 
-// ---------------------------------------------------------------------------
-// Narrative template
-// ---------------------------------------------------------------------------
+// ─── LLM Config ─────────────────────────────────────────────────────────────
+
+export interface LLMConfig {
+  provider: "openai" | "anthropic" | "ollama";
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+export interface NarrativeEngineConfig {
+  llmConfig: LLMConfig | null;
+  correlations: Correlation[];
+  intelligenceDir: string;
+}
+
+// ─── Narrative Template ─────────────────────────────────────────────────────
 
 interface NarrativeTemplate {
   id: string;
@@ -44,13 +68,192 @@ interface NarrativeContext {
   maturity: MaturityAssessment | null;
   dimensions: MaturityDimension[];
   eventCount: number;
+  recentDecisions?: Array<{ predicate: string; objectText: string; context: string; validAt: string }>;
+  contradictions?: Array<{ predicate: string; objectText: string; context: string; invalidAt: string }>;
+  comprehensionTrends?: Array<{ domain: string; delta: number; direction: "improving" | "declining" | "stable" }>;
+  stuckEntities?: Array<{ name: string; sessions: number; factsGained: number }>;
+  knowledgeGrounded: boolean;
+  correlations: Correlation[];
+  analyzerOutputs: Map<string, unknown>;
 }
 
-// ---------------------------------------------------------------------------
-// Templates
-// ---------------------------------------------------------------------------
-
 const pct = (n: number) => `${Math.round(n * 100)}%`;
+
+// ─── Knowledge-Grounded Templates (KGI-10) ─────────────────────────────────
+
+const KNOWLEDGE_TEMPLATES: NarrativeTemplate[] = [
+  {
+    id: "decision-insight",
+    type: "diagnostic",
+    condition: (ctx) => (ctx.recentDecisions?.length ?? 0) > 0,
+    generate: (ctx) => {
+      const decisions = ctx.recentDecisions!;
+      const contradictions = ctx.contradictions ?? [];
+      const domains = [...new Set(decisions.map((d) => d.objectText || "general"))].slice(0, 3);
+      return {
+        id: "kg-decision-insight",
+        type: "diagnostic",
+        headline: `${decisions.length} decisions this week${contradictions.length > 0 ? ` — ${contradictions.length} contradicted earlier choices` : ""}`,
+        body: contradictions.length > 0
+          ? `You made ${decisions.length} decisions across ${domains.join(", ")}. ${contradictions.length} of these contradicted earlier decisions — your thinking is evolving. Review the contradictions to ensure they're intentional improvements, not regressions.`
+          : `You made ${decisions.length} decisions across ${domains.join(", ")}. All decisions are consistent with your prior reasoning — a sign of stable, intentional architecture.`,
+        importance: contradictions.length > 0 ? 0.9 : 0.6,
+        evidenceEventIds: [],
+        relatedAnalyzers: ["decision-replay"],
+        createdAt: new Date().toISOString(),
+      };
+    },
+  },
+  {
+    id: "comprehension-trajectory",
+    type: "diagnostic",
+    condition: (ctx) => (ctx.comprehensionTrends?.length ?? 0) > 0 && ctx.comprehensionTrends!.some((t) => t.direction !== "stable"),
+    generate: (ctx) => {
+      const trends = ctx.comprehensionTrends!;
+      const improving = trends.filter((t) => t.direction === "improving");
+      const declining = trends.filter((t) => t.direction === "declining");
+      const headline = declining.length > 0
+        ? `Comprehension declining in ${declining.map((t) => t.domain).join(", ")}`
+        : `Comprehension improving in ${improving.map((t) => t.domain).join(", ")}`;
+      const body = [
+        ...improving.map((t) => `${t.domain}: +${t.delta.toFixed(0)} (improving)`),
+        ...declining.map((t) => `${t.domain}: ${t.delta.toFixed(0)} (declining — consider reviewing this area)`),
+      ].join(". ");
+      return {
+        id: "kg-comprehension-trajectory",
+        type: "diagnostic",
+        headline,
+        body: body || "Comprehension is shifting across domains.",
+        importance: declining.length > 0 ? 0.85 : 0.55,
+        evidenceEventIds: [],
+        relatedAnalyzers: ["comprehension-radar"],
+        createdAt: new Date().toISOString(),
+      };
+    },
+  },
+  {
+    id: "stuck-loop-narrative",
+    type: "diagnostic",
+    condition: (ctx) => (ctx.stuckEntities?.length ?? 0) > 0,
+    generate: (ctx) => {
+      const stuck = ctx.stuckEntities!;
+      const worst = stuck.sort((a, b) => a.factsGained - b.factsGained)[0];
+      return {
+        id: "kg-stuck-loop",
+        type: "diagnostic",
+        headline: `Stuck on "${worst.name}" — ${worst.sessions} sessions, ${worst.factsGained} facts gained`,
+        body: `You've discussed "${worst.name}" in ${worst.sessions} sessions without extracting new knowledge. This indicates a stuck pattern — try a fundamentally different approach, or ask the AI to explain the problem from first principles.`,
+        importance: 0.8,
+        evidenceEventIds: [],
+        relatedAnalyzers: ["loop-detector"],
+        createdAt: new Date().toISOString(),
+      };
+    },
+  },
+  {
+    id: "knowledge-velocity",
+    type: "progress",
+    condition: (ctx) => (ctx.recentDecisions?.length ?? 0) > 0 && ctx.knowledgeGrounded,
+    generate: (ctx) => {
+      const decisions = ctx.recentDecisions?.length ?? 0;
+      const domains = new Set((ctx.comprehensionTrends ?? []).map((t) => t.domain));
+      return {
+        id: "kg-knowledge-velocity",
+        type: "progress",
+        headline: `Knowledge growing: ${decisions} decisions across ${domains.size} domains`,
+        body: `Your knowledge graph is expanding. ${decisions} new decisions were extracted from conversations this week, spanning ${domains.size} domains. This knowledge feeds into comprehension tracking, contradiction detection, and maturity assessment.`,
+        importance: 0.5,
+        evidenceEventIds: [],
+        relatedAnalyzers: [],
+        createdAt: new Date().toISOString(),
+      };
+    },
+  },
+];
+
+// ─── Correlation-Aware Templates (IP-6) ─────────────────────────────────────
+
+const CORRELATION_TEMPLATES: NarrativeTemplate[] = [
+  {
+    id: "correlation-critical",
+    type: "correlation",
+    condition: (ctx) => ctx.correlations.some((c) => c.severity === "critical"),
+    generate: (ctx) => {
+      const criticals = ctx.correlations.filter((c) => c.severity === "critical");
+      const top = criticals[0];
+      return {
+        id: `corr-narrative-critical-${top.type}`,
+        type: "correlation",
+        headline: top.title,
+        body: `${top.explanation} ${top.actionable}`,
+        importance: 0.95,
+        evidenceEventIds: top.evidenceEventIds,
+        relatedAnalyzers: top.analyzers,
+        createdAt: new Date().toISOString(),
+      };
+    },
+  },
+  {
+    id: "correlation-warning",
+    type: "correlation",
+    condition: (ctx) => ctx.correlations.some((c) => c.severity === "warning") && !ctx.correlations.some((c) => c.severity === "critical"),
+    generate: (ctx) => {
+      const warnings = ctx.correlations.filter((c) => c.severity === "warning");
+      const top = warnings[0];
+      return {
+        id: `corr-narrative-warning-${top.type}`,
+        type: "correlation",
+        headline: top.title,
+        body: `${top.explanation} ${top.actionable}`,
+        importance: 0.75,
+        evidenceEventIds: top.evidenceEventIds,
+        relatedAnalyzers: top.analyzers,
+        createdAt: new Date().toISOString(),
+      };
+    },
+  },
+  {
+    id: "correlation-positive",
+    type: "correlation",
+    condition: (ctx) => ctx.correlations.some((c) => c.severity === "info"),
+    generate: (ctx) => {
+      const infos = ctx.correlations.filter((c) => c.severity === "info");
+      const top = infos[0];
+      return {
+        id: `corr-narrative-info-${top.type}`,
+        type: "correlation",
+        headline: top.title,
+        body: `${top.explanation} ${top.actionable}`,
+        importance: 0.45,
+        evidenceEventIds: top.evidenceEventIds,
+        relatedAnalyzers: top.analyzers,
+        createdAt: new Date().toISOString(),
+      };
+    },
+  },
+  {
+    id: "correlation-summary",
+    type: "correlation",
+    condition: (ctx) => ctx.correlations.length >= 2,
+    generate: (ctx) => {
+      const types = [...new Set(ctx.correlations.map((c) => c.type))];
+      const criticals = ctx.correlations.filter((c) => c.severity === "critical").length;
+      const warnings = ctx.correlations.filter((c) => c.severity === "warning").length;
+      return {
+        id: "corr-narrative-summary",
+        type: "correlation",
+        headline: `${ctx.correlations.length} cross-analyzer patterns detected`,
+        body: `The correlation engine found ${ctx.correlations.length} patterns across ${types.length} categories: ${criticals > 0 ? `${criticals} critical` : ""}${criticals > 0 && warnings > 0 ? ", " : ""}${warnings > 0 ? `${warnings} warning` : ""}${(criticals > 0 || warnings > 0) && ctx.correlations.length > criticals + warnings ? ` and ${ctx.correlations.length - criticals - warnings} informational` : ""}. These patterns connect insights from ${[...new Set(ctx.correlations.flatMap((c) => c.analyzers))].length} analyzers.`,
+        importance: 0.65,
+        evidenceEventIds: ctx.correlations.flatMap((c) => c.evidenceEventIds.slice(0, 2)),
+        relatedAnalyzers: [...new Set(ctx.correlations.flatMap((c) => c.analyzers))],
+        createdAt: new Date().toISOString(),
+      };
+    },
+  },
+];
+
+// ─── Diagnostic Templates ───────────────────────────────────────────────────
 
 const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
   {
@@ -66,13 +269,12 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       return {
         id: "diag-loose-steering",
         type: "diagnostic",
-        headline: "Your steering is loose",
-        body:
-          `You accept ${pct(1 - dir.score)} of AI output without significant modification. ` +
-          `The vehicle pulls where the engine wants — you're not driving, you're riding. ` +
-          `Try adding explicit constraints and modifying AI output before accepting.`,
+        headline: "Low direction + low modification depth",
+        body: `You accept ${pct(1 - dir.score)} of AI output without significant modification. Try adding explicit constraints and modifying AI output before accepting.`,
         importance: 0.85,
         dimension: "direction",
+        evidenceEventIds: [],
+        relatedAnalyzers: ["efficiency"],
         createdAt: new Date().toISOString(),
       };
     },
@@ -80,60 +282,48 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
   {
     id: "no-mirrors",
     type: "diagnostic",
-    condition: (ctx) => {
-      const cl = ctx.dimensions.find((d) => d.name === "context-leverage");
-      return (cl?.score ?? 1) < 0.2;
-    },
-    generate: (_ctx) => ({
+    condition: (ctx) => (ctx.dimensions.find((d) => d.name === "context-leverage")?.score ?? 1) < 0.2,
+    generate: () => ({
       id: "diag-no-mirrors",
       type: "diagnostic",
-      headline: "You're not using your mirrors",
-      body:
-        `Context reuse is low. Each session starts from zero when it could build on prior reasoning. ` +
-        `Your rear-view mirror — your reasoning history — exists but you're not looking at it. ` +
-        `Consider using MCP context injection or maintaining a CLAUDE.md.`,
+      headline: "Context reuse is critically low",
+      body: "Each session starts from zero when it could build on prior reasoning. Consider using MCP context injection or maintaining a CLAUDE.md.",
       importance: 0.75,
       dimension: "context-leverage",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["efficiency"],
       createdAt: new Date().toISOString(),
     }),
   },
   {
     id: "loop-prone",
     type: "diagnostic",
-    condition: (ctx) => {
-      const lr = ctx.dimensions.find((d) => d.name === "loop-resilience");
-      return (lr?.score ?? 1) < 0.3;
-    },
-    generate: (_ctx) => ({
+    condition: (ctx) => (ctx.dimensions.find((d) => d.name === "loop-resilience")?.score ?? 1) < 0.3,
+    generate: () => ({
       id: "diag-loop-prone",
       type: "diagnostic",
-      headline: "Your suspension bottoms out on complex problems",
-      body:
-        `You're entering unproductive loops frequently. The vehicle can't absorb complexity — ` +
-        `try decomposition: break complex tasks into smaller, sequential steps. ` +
-        `Writing a test case first has been shown to reduce loop rates.`,
+      headline: "Entering unproductive loops frequently",
+      body: "Try decomposition: break complex tasks into smaller, sequential steps. Writing a test case first has been shown to reduce loop rates.",
       importance: 0.7,
       dimension: "loop-resilience",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["loop-detector"],
       createdAt: new Date().toISOString(),
     }),
   },
   {
     id: "decision-churn",
     type: "diagnostic",
-    condition: (ctx) => {
-      const dd = ctx.dimensions.find((d) => d.name === "decision-durability");
-      return (dd?.score ?? 1) < 0.35;
-    },
-    generate: (_ctx) => ({
+    condition: (ctx) => (ctx.dimensions.find((d) => d.name === "decision-durability")?.score ?? 1) < 0.35,
+    generate: () => ({
       id: "diag-decision-churn",
       type: "diagnostic",
-      headline: "Your decisions don't stick",
-      body:
-        `Decisions are being frequently revised. This suggests either premature commitment or ` +
-        `insufficient exploration of alternatives. Consider evaluating more options before deciding, ` +
-        `and documenting the rationale so future-you understands why.`,
+      headline: "Decisions being frequently revised",
+      body: "This suggests either premature commitment or insufficient exploration. Consider evaluating more options before deciding, and documenting the rationale.",
       importance: 0.65,
       dimension: "decision-durability",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["decision-replay"],
       createdAt: new Date().toISOString(),
     }),
   },
@@ -145,60 +335,15 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const dir = ctx.dimensions.find((d) => d.name === "direction");
       return (pe?.score ?? 1) < 0.35 && (dir?.score ?? 0) > 0.4;
     },
-    generate: (_ctx) => ({
+    generate: () => ({
       id: "diag-rough-gear-shifts",
       type: "diagnostic",
-      headline: "Your gear shifts are rough",
-      body:
-        `You steer well overall, but your prompt effectiveness is low. ` +
-        `The transition between planning and implementing lacks a clutch — ` +
-        `your direction is strong but the output quality doesn't match. ` +
-        `Try front-loading more constraints and examples in your prompts.`,
+      headline: "Strong direction but low prompt effectiveness",
+      body: "Your direction is strong but output quality doesn't match. Try front-loading more constraints and examples in your prompts.",
       importance: 0.6,
       dimension: "prompt-effectiveness",
-      createdAt: new Date().toISOString(),
-    }),
-  },
-  {
-    id: "redlining",
-    type: "diagnostic",
-    condition: (ctx) => {
-      const pe = ctx.dimensions.find((d) => d.name === "prompt-effectiveness");
-      const lr = ctx.dimensions.find((d) => d.name === "loop-resilience");
-      return (pe?.score ?? 1) < 0.3 && (lr?.score ?? 1) < 0.4;
-    },
-    generate: (_ctx) => ({
-      id: "diag-redlining",
-      type: "diagnostic",
-      headline: "You're redlining in second gear",
-      body:
-        `High effort with low return. Your prompts are detailed but acceptance rates are low, ` +
-        `and you're hitting loops. You're working hard at steering but the gearing is wrong. ` +
-        `Consider a different prompting strategy — what works elsewhere may not fit here.`,
-      importance: 0.7,
-      dimension: "prompt-effectiveness",
-      createdAt: new Date().toISOString(),
-    }),
-  },
-  {
-    id: "drafting",
-    type: "diagnostic",
-    condition: (ctx) => {
-      const mod = ctx.dimensions.find((d) => d.name === "modification-depth");
-      const dir = ctx.dimensions.find((d) => d.name === "direction");
-      return (mod?.score ?? 1) < 0.2 && (dir?.score ?? 1) < 0.25;
-    },
-    generate: (_ctx) => ({
-      id: "diag-drafting",
-      type: "diagnostic",
-      headline: "You're drafting without knowing it",
-      body:
-        `Low modification depth + low direction. You follow the AI's default path. ` +
-        `You think you're driving but you're drafting — the air resistance is low because ` +
-        `you're going exactly where the engine wants to go. ` +
-        `Try questioning assumptions and evaluating alternatives before accepting.`,
-      importance: 0.8,
-      dimension: "modification-depth",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["prompt-patterns"],
       createdAt: new Date().toISOString(),
     }),
   },
@@ -209,16 +354,15 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       const dc = ctx.dimensions.find((d) => d.name === "domain-consistency");
       return dc?.trend === "declining" && (dc?.score ?? 1) < 0.4;
     },
-    generate: (_ctx) => ({
+    generate: () => ({
       id: "diag-declining-velocity",
       type: "diagnostic",
       headline: "Velocity dropping across domains",
-      body:
-        `Your effectiveness is declining and inconsistent across feature areas. ` +
-        `This may indicate spreading too thin or encountering unfamiliar territory. ` +
-        `Consider focusing on one domain at a time to rebuild momentum.`,
+      body: "Effectiveness is declining and inconsistent across areas. Consider focusing on one domain at a time to rebuild momentum.",
       importance: 0.55,
       dimension: "domain-consistency",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["velocity-tracker"],
       createdAt: new Date().toISOString(),
     }),
   },
@@ -230,139 +374,85 @@ const DIAGNOSTIC_TEMPLATES: NarrativeTemplate[] = [
       id: "diag-low-confidence",
       type: "diagnostic",
       headline: "Assessment based on limited data",
-      body:
-        `Your maturity assessment has ${pct(ctx.maturity?.confidence ?? 0)} confidence. ` +
-        `More events will improve accuracy. Current phase: ${ctx.maturity?.phaseLabel ?? "unknown"} ` +
-        `(Phase ${ctx.maturity?.phase.toFixed(1) ?? "?"}).`,
+      body: `Your maturity assessment has ${pct(ctx.maturity?.confidence ?? 0)} confidence. More events will improve accuracy. Current phase: ${ctx.maturity?.phaseLabel ?? "unknown"} (Phase ${ctx.maturity?.phase.toFixed(1) ?? "?"}).`,
       importance: 0.3,
+      evidenceEventIds: [],
+      relatedAnalyzers: [],
       createdAt: new Date().toISOString(),
     }),
   },
 ];
 
+// ─── Prescription Templates ─────────────────────────────────────────────────
+
 const PRESCRIPTION_TEMPLATES: NarrativeTemplate[] = [
   {
     id: "build-context-files",
     type: "prescription",
-    condition: (ctx) => {
-      const cl = ctx.dimensions.find((d) => d.name === "context-leverage");
-      return (cl?.score ?? 1) < 0.3 && (ctx.maturity?.phase ?? 0) < 3;
-    },
-    generate: (_ctx) => ({
+    condition: (ctx) => (ctx.dimensions.find((d) => d.name === "context-leverage")?.score ?? 1) < 0.3 && (ctx.maturity?.phase ?? 0) < 3,
+    generate: () => ({
       id: "rx-context-files",
       type: "prescription",
-      headline: "Add mirrors to your vehicle — create a CLAUDE.md",
-      body:
-        `A CLAUDE.md with your top decisions and project conventions would dramatically improve ` +
-        `context leverage. This is like adding rear-view and side mirrors — every session starts ` +
-        `with knowledge of where you've been.`,
+      headline: "Create a CLAUDE.md for context leverage",
+      body: "A CLAUDE.md with your top decisions and project conventions would dramatically improve context leverage. Every session starts with knowledge of where you've been.",
       importance: 0.9,
       dimension: "context-leverage",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["efficiency"],
       createdAt: new Date().toISOString(),
     }),
   },
   {
     id: "improve-constraints",
     type: "prescription",
-    condition: (ctx) => {
-      const pe = ctx.dimensions.find((d) => d.name === "prompt-effectiveness");
-      return (pe?.score ?? 1) < 0.4;
-    },
-    generate: (_ctx) => ({
+    condition: (ctx) => (ctx.dimensions.find((d) => d.name === "prompt-effectiveness")?.score ?? 1) < 0.4,
+    generate: () => ({
       id: "rx-constraints",
       type: "prescription",
-      headline: "Tighten your steering with explicit constraints",
-      body:
-        `Prompts with explicit constraints (must/should/never) produce significantly better ` +
-        `direction. Front-load boundaries and requirements before asking the model to generate. ` +
-        `Include file paths, function names, and expected behavior.`,
+      headline: "Tighten prompts with explicit constraints",
+      body: "Prompts with explicit constraints (must/should/never) produce significantly better direction. Front-load boundaries and requirements before asking the model to generate.",
       importance: 0.75,
       dimension: "prompt-effectiveness",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["prompt-patterns"],
       createdAt: new Date().toISOString(),
     }),
   },
   {
     id: "decompose-complex-work",
     type: "prescription",
-    condition: (ctx) => {
-      const lr = ctx.dimensions.find((d) => d.name === "loop-resilience");
-      return (lr?.score ?? 1) < 0.35;
-    },
-    generate: (_ctx) => ({
+    condition: (ctx) => (ctx.dimensions.find((d) => d.name === "loop-resilience")?.score ?? 1) < 0.35,
+    generate: () => ({
       id: "rx-decompose",
       type: "prescription",
-      headline: "Break the road into sections — decompose before coding",
-      body:
-        `Loop-prone sessions often tackle too much at once. Before starting a complex task, ` +
-        `break it into 3-5 sequential sub-tasks. Ask the AI to plan the approach first, ` +
-        `then implement each step separately. This reduces iteration count by 40-60%.`,
+      headline: "Decompose before coding — break complex tasks into 3-5 steps",
+      body: "Loop-prone sessions often tackle too much at once. Break it into sequential sub-tasks. Ask the AI to plan first, then implement each step separately.",
       importance: 0.8,
       dimension: "loop-resilience",
-      createdAt: new Date().toISOString(),
-    }),
-  },
-  {
-    id: "test-first-debugging",
-    type: "prescription",
-    condition: (ctx) => {
-      const lr = ctx.dimensions.find((d) => d.name === "loop-resilience");
-      const pe = ctx.dimensions.find((d) => d.name === "prompt-effectiveness");
-      return (lr?.score ?? 1) < 0.4 && (pe?.score ?? 0) > 0.3;
-    },
-    generate: (_ctx) => ({
-      id: "rx-test-first",
-      type: "prescription",
-      headline: "Write the test before the fix — let the road show the way",
-      body:
-        `When debugging, write a failing test case BEFORE attempting the fix. ` +
-        `This technique reduces debugging loop rates significantly. ` +
-        `The test defines success criteria upfront — the AI has a clear target.`,
-      importance: 0.7,
-      dimension: "loop-resilience",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["loop-detector"],
       createdAt: new Date().toISOString(),
     }),
   },
   {
     id: "document-decisions",
     type: "prescription",
-    condition: (ctx) => {
-      const dd = ctx.dimensions.find((d) => d.name === "decision-durability");
-      return (dd?.score ?? 1) < 0.4;
-    },
-    generate: (_ctx) => ({
+    condition: (ctx) => (ctx.dimensions.find((d) => d.name === "decision-durability")?.score ?? 1) < 0.4,
+    generate: () => ({
       id: "rx-document-decisions",
       type: "prescription",
-      headline: "Keep a decision log — future-you will thank you",
-      body:
-        `Decisions that get revised often lack documented rationale. ` +
-        `When making architectural choices, write a 2-line "why" comment. ` +
-        `This prevents future sessions from overturning good decisions.`,
+      headline: "Keep a decision log — document the 'why'",
+      body: "Decisions that get revised often lack documented rationale. When making choices, write a 2-line 'why' comment. This prevents future sessions from overturning good decisions.",
       importance: 0.65,
       dimension: "decision-durability",
-      createdAt: new Date().toISOString(),
-    }),
-  },
-  {
-    id: "invest-in-domain-breadth",
-    type: "prescription",
-    condition: (ctx) => {
-      const dc = ctx.dimensions.find((d) => d.name === "domain-consistency");
-      return (dc?.score ?? 1) < 0.35 && (ctx.maturity?.phase ?? 0) >= 2;
-    },
-    generate: (_ctx) => ({
-      id: "rx-domain-breadth",
-      type: "prescription",
-      headline: "Broaden your drivetrain — apply your best techniques elsewhere",
-      body:
-        `Your effectiveness varies significantly across domains. ` +
-        `Identify what works in your strongest domain and apply those patterns ` +
-        `(constraint structure, decomposition style) to weaker areas.`,
-      importance: 0.6,
-      dimension: "domain-consistency",
+      evidenceEventIds: [],
+      relatedAnalyzers: ["decision-replay"],
       createdAt: new Date().toISOString(),
     }),
   },
 ];
+
+// ─── Progress Templates ─────────────────────────────────────────────────────
 
 const PROGRESS_TEMPLATES: NarrativeTemplate[] = [
   {
@@ -382,16 +472,10 @@ const PROGRESS_TEMPLATES: NarrativeTemplate[] = [
         id: `progress-phase-${Math.floor(curr.phase)}`,
         type: "progress",
         headline: `Phase transition: ${ctx.maturity?.phaseLabel}`,
-        body:
-          `You've moved from Phase ${prev.phase.toFixed(1)} to Phase ${curr.phase.toFixed(1)}. ` +
-          `Your vehicle now has ${describePhase(ctx.maturity?.phaseLabel ?? "unknown")}. ` +
-          `Key improvements: ${
-            ctx.dimensions
-              .filter((d) => d.trend === "improving")
-              .map((d) => d.name)
-              .join(", ") || "incremental gains across all dimensions"
-          }.`,
+        body: `You've moved from Phase ${prev.phase.toFixed(1)} to Phase ${curr.phase.toFixed(1)}. Key improvements: ${ctx.dimensions.filter((d) => d.trend === "improving").map((d) => d.name).join(", ") || "incremental gains across all dimensions"}.`,
         importance: 1.0,
+        evidenceEventIds: [],
+        relatedAnalyzers: [],
         createdAt: new Date().toISOString(),
       };
     },
@@ -407,41 +491,11 @@ const PROGRESS_TEMPLATES: NarrativeTemplate[] = [
         id: `progress-dim-${best.name}`,
         type: "progress",
         headline: `Strong ${best.name}: ${pct(best.score)}`,
-        body:
-          `Your ${best.name} is improving and now at ${pct(best.score)}. ` +
-          `This is a core strength in your AI collaboration workflow.`,
+        body: `Your ${best.name} is improving and now at ${pct(best.score)}. This is a core strength in your AI collaboration workflow.`,
         importance: 0.55,
         dimension: best.name,
-        createdAt: new Date().toISOString(),
-      };
-    },
-  },
-  {
-    id: "sub-phase-progress",
-    type: "progress",
-    condition: (ctx) => {
-      if (!ctx.maturity || ctx.maturity.trajectory.length < 7) return false;
-      const weekAgo = ctx.maturity.trajectory[ctx.maturity.trajectory.length - 7];
-      const now = ctx.maturity.trajectory[ctx.maturity.trajectory.length - 1];
-      return Math.abs(now.phase - weekAgo.phase) > 0.3;
-    },
-    generate: (ctx) => {
-      const trajectory = ctx.maturity!.trajectory;
-      const weekAgo = trajectory[trajectory.length - 7]!;
-      const now = trajectory[trajectory.length - 1]!;
-      const direction = now.phase > weekAgo.phase ? "improved" : "declined";
-      const improving = ctx.dimensions.filter((d) => d.trend === "improving").map((d) => d.name);
-      const declining = ctx.dimensions.filter((d) => d.trend === "declining").map((d) => d.name);
-      return {
-        id: `progress-weekly-${new Date().toISOString().slice(0, 10)}`,
-        type: "progress",
-        headline: `Weekly: ${weekAgo.phase.toFixed(1)} → ${now.phase.toFixed(1)}`,
-        body:
-          `Your maturity ${direction} by ${Math.abs(now.phase - weekAgo.phase).toFixed(1)} points this week. ` +
-          (direction === "improved"
-            ? `Strong gains in: ${improving.join(", ") || "incremental across all dimensions"}.`
-            : `Areas that declined: ${declining.join(", ") || "minor regression"}. This may be temporary.`),
-        importance: 0.5,
+        evidenceEventIds: [],
+        relatedAnalyzers: [],
         createdAt: new Date().toISOString(),
       };
     },
@@ -449,39 +503,225 @@ const PROGRESS_TEMPLATES: NarrativeTemplate[] = [
   {
     id: "milestone-events",
     type: "progress",
-    condition: (ctx) => {
-      const milestones = [50, 100, 250, 500, 1000];
-      return milestones.some((m) => ctx.eventCount >= m && ctx.eventCount < m + 10);
-    },
+    condition: (ctx) => [50, 100, 250, 500, 1000].some((m) => ctx.eventCount >= m && ctx.eventCount < m + 10),
     generate: (ctx) => ({
       id: `progress-milestone-${ctx.eventCount}`,
       type: "progress",
       headline: `${ctx.eventCount} events captured`,
-      body:
-        `Your intelligence profile is based on ${ctx.eventCount} events. ` +
-        `Assessment confidence: ${pct(ctx.maturity?.confidence ?? 0)}. ` +
-        `More events → more accurate insights.`,
+      body: `Your intelligence profile is based on ${ctx.eventCount} events. Assessment confidence: ${pct(ctx.maturity?.confidence ?? 0)}. More events → more accurate insights.`,
       importance: 0.35,
+      evidenceEventIds: [],
+      relatedAnalyzers: [],
       createdAt: new Date().toISOString(),
     }),
   },
 ];
 
-function describePhase(label: string): string {
-  const descriptions: Record<string, string> = {
-    "bare-engine": "a running engine — but no transmission yet",
-    "first-gear": "basic steering — you're starting to direct the AI",
-    "multi-gear": "a functional drivetrain — effective across most terrain",
-    "tuned-vehicle": "an optimized system — precise, efficient, and controlled",
-  };
-  return descriptions[label] ?? "evolving capabilities";
+// ─── LLM Narrative Synthesis (IP-6.1) ───────────────────────────────────────
+
+async function synthesizeWithLLM(
+  ctx: NarrativeContext,
+  config: NarrativeEngineConfig,
+): Promise<Narrative[] | null> {
+  if (!config.llmConfig) return null;
+
+  try {
+    const prompt = buildLLMPrompt(ctx, config.correlations);
+
+    const response = await callLLM(config.llmConfig, prompt);
+    if (!response) return null;
+
+    return parseLLMNarratives(response, ctx);
+  } catch {
+    return null;
+  }
 }
 
-// ---------------------------------------------------------------------------
-// IncrementalAnalyzer
-// ---------------------------------------------------------------------------
+function buildLLMPrompt(ctx: NarrativeContext, correlations: Correlation[]): string {
+  const sections: string[] = [];
 
-const ALL_TEMPLATES = [...DIAGNOSTIC_TEMPLATES, ...PRESCRIPTION_TEMPLATES, ...PROGRESS_TEMPLATES];
+  sections.push("You are an intelligence narrative engine for a developer tool. Generate concise, actionable narratives about the developer's AI collaboration patterns.");
+
+  if (ctx.maturity) {
+    sections.push(`Maturity: Phase ${ctx.maturity.phase.toFixed(1)} (${ctx.maturity.phaseLabel}), confidence ${pct(ctx.maturity.confidence)}.`);
+  }
+
+  if (ctx.dimensions.length > 0) {
+    const dimSummary = ctx.dimensions
+      .map((d) => `${d.name}: ${pct(d.score)} (${d.trend})`)
+      .join(", ");
+    sections.push(`Dimensions: ${dimSummary}`);
+  }
+
+  if (correlations.length > 0) {
+    const corrSummary = correlations
+      .map((c) => `[${c.severity}] ${c.title}: ${c.explanation}`)
+      .join("\n");
+    sections.push(`Cross-analyzer correlations:\n${corrSummary}`);
+  }
+
+  if (ctx.recentDecisions && ctx.recentDecisions.length > 0) {
+    sections.push(`${ctx.recentDecisions.length} decisions this week.`);
+  }
+
+  if (ctx.stuckEntities && ctx.stuckEntities.length > 0) {
+    sections.push(`Stuck on: ${ctx.stuckEntities.map((e) => e.name).join(", ")}`);
+  }
+
+  sections.push("Generate 3-5 narratives as JSON array: [{type, headline, body, importance}]. Types: diagnostic, prescription, progress, correlation. Importance: 0-1.");
+
+  return sections.join("\n\n");
+}
+
+async function callLLM(config: LLMConfig, prompt: string): Promise<string | null> {
+  try {
+    const baseUrl = config.baseUrl ?? (config.provider === "openai" ? "https://api.openai.com/v1" : "https://api.anthropic.com/v1");
+
+    if (config.provider === "openai" || config.provider === "ollama") {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: config.model,
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 2000,
+          temperature: 0.7,
+        }),
+      });
+
+      if (!response.ok) return null;
+      const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      return data.choices?.[0]?.message?.content ?? null;
+    }
+
+    if (config.provider === "anthropic") {
+      const response = await fetch(`${baseUrl}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": config.apiKey ?? "",
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: config.model,
+          max_tokens: 2000,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      if (!response.ok) return null;
+      const data = (await response.json()) as { content?: Array<{ text?: string }> };
+      return data.content?.[0]?.text ?? null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function parseLLMNarratives(response: string, ctx: NarrativeContext): Narrative[] {
+  try {
+    const jsonMatch = response.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return [];
+
+    const parsed = JSON.parse(jsonMatch[0]) as Array<{
+      type?: string;
+      headline?: string;
+      body?: string;
+      importance?: number;
+    }>;
+
+    return parsed
+      .filter((n) => n.headline && n.body)
+      .map((n, i) => ({
+        id: `llm-narrative-${i}`,
+        type: (n.type as NarrativeType) ?? "diagnostic",
+        headline: n.headline!,
+        body: n.body!,
+        importance: n.importance ?? 0.5,
+        evidenceEventIds: ctx.correlations.flatMap((c) => c.evidenceEventIds.slice(0, 2)),
+        relatedAnalyzers: [...new Set(ctx.correlations.flatMap((c) => c.analyzers))],
+        createdAt: new Date().toISOString(),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+// ─── Public Generation Function (IP-6.1) ────────────────────────────────────
+
+export async function generateNarratives(
+  analyzerOutputs: Map<string, unknown>,
+  config: NarrativeEngineConfig,
+  ctx: AnalyzerContext,
+  maturityState: IncrementalState<unknown> | undefined,
+  eventCount: number,
+  lastLlmRunAt: string,
+): Promise<{ narratives: Narrative[]; executiveSummary: string; lastLlmRunAt: string }> {
+  const maturity = maturityState ? deriveMaturityFromState(maturityState) : null;
+  const knowledgeData = await gatherKnowledgeContext(ctx);
+
+  const narrativeCtx: NarrativeContext = {
+    maturity,
+    dimensions: maturity?.dimensions ?? [],
+    eventCount,
+    knowledgeGrounded: knowledgeData.knowledgeGrounded,
+    recentDecisions: knowledgeData.recentDecisions,
+    contradictions: knowledgeData.contradictions,
+    comprehensionTrends: knowledgeData.comprehensionTrends,
+    stuckEntities: knowledgeData.stuckEntities,
+    correlations: config.correlations,
+    analyzerOutputs,
+  };
+
+  let narratives: Narrative[] = [];
+  let newLlmRunAt = lastLlmRunAt;
+
+  const hoursSinceLastLlm = lastLlmRunAt
+    ? (Date.now() - new Date(lastLlmRunAt).getTime()) / 3_600_000
+    : Infinity;
+
+  if (config.llmConfig && hoursSinceLastLlm >= 24) {
+    const llmNarratives = await synthesizeWithLLM(narrativeCtx, config);
+    if (llmNarratives && llmNarratives.length > 0) {
+      narratives = llmNarratives;
+      newLlmRunAt = new Date().toISOString();
+    }
+  }
+
+  if (narratives.length === 0) {
+    for (const template of ALL_TEMPLATES) {
+      try {
+        if (template.condition(narrativeCtx)) {
+          narratives.push(template.generate(narrativeCtx));
+        }
+      } catch {
+        // template evaluation failed — skip
+      }
+    }
+  }
+
+  narratives.sort((a, b) => b.importance - a.importance);
+  const summary = generateExecutiveSummary(maturity, narrativeCtx);
+
+  return { narratives, executiveSummary: summary, lastLlmRunAt: newLlmRunAt };
+}
+
+// ─── All Templates ──────────────────────────────────────────────────────────
+
+const ALL_TEMPLATES = [
+  ...KNOWLEDGE_TEMPLATES,
+  ...CORRELATION_TEMPLATES,
+  ...DIAGNOSTIC_TEMPLATES,
+  ...PRESCRIPTION_TEMPLATES,
+  ...PROGRESS_TEMPLATES,
+];
+
+// ─── IncrementalAnalyzer ────────────────────────────────────────────────────
 
 export const narrativeEngineAnalyzer: IncrementalAnalyzer<NarrativeState, NarrativeOutput> = {
   name: "narrative-engine",
@@ -492,7 +732,7 @@ export const narrativeEngineAnalyzer: IncrementalAnalyzer<NarrativeState, Narrat
 
   async initialize(_ctx): Promise<IncrementalState<NarrativeState>> {
     return {
-      value: { narratives: [], executiveSummary: "", updatedAt: new Date().toISOString() },
+      value: { narratives: [], executiveSummary: "", updatedAt: new Date().toISOString(), lastLlmRunAt: "" },
       watermark: "",
       eventCount: 0,
       updatedAt: new Date().toISOString(),
@@ -504,10 +744,18 @@ export const narrativeEngineAnalyzer: IncrementalAnalyzer<NarrativeState, Narrat
     if (!maturityState) return { state, changed: false };
 
     const maturity = deriveMaturityFromState(maturityState);
+    const knowledgeData = await gatherKnowledgeContext(ctx);
     const narrativeCtx: NarrativeContext = {
       maturity,
       dimensions: maturity?.dimensions ?? [],
       eventCount: state.eventCount + batch.events.length,
+      knowledgeGrounded: knowledgeData.knowledgeGrounded,
+      recentDecisions: knowledgeData.recentDecisions,
+      contradictions: knowledgeData.contradictions,
+      comprehensionTrends: knowledgeData.comprehensionTrends,
+      stuckEntities: knowledgeData.stuckEntities,
+      correlations: [],
+      analyzerOutputs: new Map(),
     };
 
     const narratives: Narrative[] = [];
@@ -531,7 +779,7 @@ export const narrativeEngineAnalyzer: IncrementalAnalyzer<NarrativeState, Narrat
 
     return {
       state: {
-        value: { narratives: top, executiveSummary: summary, updatedAt: new Date().toISOString() },
+        value: { narratives: top, executiveSummary: summary, updatedAt: new Date().toISOString(), lastLlmRunAt: state.value.lastLlmRunAt },
         watermark:
           batch.events.length > 0 ? batch.events[batch.events.length - 1].ts : state.watermark,
         eventCount: state.eventCount + batch.events.length,
@@ -551,9 +799,77 @@ export const narrativeEngineAnalyzer: IncrementalAnalyzer<NarrativeState, Narrat
   },
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+async function gatherKnowledgeContext(ctx: AnalyzerContext): Promise<{
+  knowledgeGrounded: boolean;
+  recentDecisions?: NarrativeContext["recentDecisions"];
+  contradictions?: NarrativeContext["contradictions"];
+  comprehensionTrends?: NarrativeContext["comprehensionTrends"];
+  stuckEntities?: NarrativeContext["stuckEntities"];
+}> {
+  if (!ctx.knowledge) return { knowledgeGrounded: false };
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return { knowledgeGrounded: false };
+
+    const oneWeekAgo = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+
+    const decisions = await ctx.knowledge.getDecisions({ since: oneWeekAgo });
+    const recentDecisions = decisions.map((d) => ({
+      predicate: d.predicate, objectText: d.objectText, context: d.context, validAt: d.validAt,
+    }));
+
+    const allFacts = await ctx.knowledge.getFacts({ activeOnly: false });
+    const contradictions = allFacts
+      .filter((f) => f.invalidAt !== "" && f.invalidAt >= oneWeekAgo)
+      .map((f) => ({
+        predicate: f.predicate, objectText: f.objectText, context: f.context, invalidAt: f.invalidAt,
+      }));
+
+    const assessments = await ctx.knowledge.getComprehension({});
+    const comprehensionTrends: NarrativeContext["comprehensionTrends"] = [];
+    if (assessments.length >= 2) {
+      const sorted = [...assessments].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      const mid = Math.floor(sorted.length / 2);
+      const earlier = sorted.slice(0, mid);
+      const later = sorted.slice(mid);
+      const earlyAvg = earlier.reduce((s, a) => s + a.overallScore, 0) / earlier.length;
+      const lateAvg = later.reduce((s, a) => s + a.overallScore, 0) / later.length;
+      const delta = lateAvg - earlyAvg;
+      comprehensionTrends.push({
+        domain: "overall",
+        delta,
+        direction: delta > 5 ? "improving" : delta < -5 ? "declining" : "stable",
+      });
+    }
+
+    const entities = await ctx.knowledge.getEntityEngagement({ minOccurrences: 3 });
+    const stuckEntities: NarrativeContext["stuckEntities"] = [];
+    for (const entity of entities) {
+      const entityFacts = allFacts.filter(
+        (f) => f.subjectId === entity.entityId && f.invalidAt === "" && f.validAt >= oneWeekAgo,
+      );
+      if (entityFacts.length < entity.mentionCount * 0.3) {
+        stuckEntities.push({
+          name: entity.name,
+          sessions: entity.mentionCount,
+          factsGained: entityFacts.length,
+        });
+      }
+    }
+
+    return {
+      knowledgeGrounded: true,
+      recentDecisions: recentDecisions.length > 0 ? recentDecisions : undefined,
+      contradictions: contradictions.length > 0 ? contradictions : undefined,
+      comprehensionTrends: comprehensionTrends.length > 0 ? comprehensionTrends : undefined,
+      stuckEntities: stuckEntities.length > 0 ? stuckEntities : undefined,
+    };
+  } catch {
+    return { knowledgeGrounded: false };
+  }
+}
 
 function deriveMaturityFromState(
   maturityState: IncrementalState<unknown>,
@@ -568,13 +884,10 @@ function deriveMaturityFromState(
 
     const phase = val.currentPhase;
     const phaseLabel =
-      phase < 2
-        ? ("bare-engine" as const)
-        : phase < 3
-          ? ("first-gear" as const)
-          : phase < 4
-            ? ("multi-gear" as const)
-            : ("tuned-vehicle" as const);
+      phase < 2 ? ("bare-engine" as const)
+        : phase < 3 ? ("first-gear" as const)
+        : phase < 4 ? ("multi-gear" as const)
+        : ("tuned-vehicle" as const);
 
     return {
       phase,
@@ -585,6 +898,7 @@ function deriveMaturityFromState(
       trajectory: val.trajectory ?? [],
       bottlenecks: [],
       nextPhaseRequirements: [],
+      knowledgeGrounded: (val as { knowledgeGrounded?: boolean }).knowledgeGrounded ?? false,
       assessedAt: maturityState.updatedAt,
       projectId: "",
     };
@@ -600,22 +914,21 @@ function generateExecutiveSummary(
   if (!maturity)
     return "Insufficient data for maturity assessment. Continue using AI tools to build your profile.";
 
-  const phaseDesc: Record<string, string> = {
-    "bare-engine": "running an engine without a transmission",
-    "first-gear": "driving in first gear — basic steering but limited control",
-    "multi-gear": "operating a functional drivetrain — effective across most terrain",
-    "tuned-vehicle": "driving a tuned vehicle — precise, efficient, and controlled",
-  };
-
   const improving = maturity.dimensions.filter((d) => d.trend === "improving").map((d) => d.name);
   const declining = maturity.dimensions.filter((d) => d.trend === "declining").map((d) => d.name);
 
   let summary = `AI Collaboration Maturity: Phase ${maturity.phase.toFixed(1)} — ${maturity.phaseLabel.replace(/-/g, " ")}. `;
-  summary += `Currently ${phaseDesc[maturity.phaseLabel] ?? "evolving"}. `;
   summary += `Confidence: ${pct(maturity.confidence)} (based on ${ctx.eventCount} events). `;
 
   if (improving.length > 0) summary += `Improving: ${improving.join(", ")}. `;
   if (declining.length > 0) summary += `Declining: ${declining.join(", ")}. `;
+
+  if (ctx.correlations.length > 0) {
+    const criticals = ctx.correlations.filter((c) => c.severity === "critical");
+    if (criticals.length > 0) {
+      summary += `${criticals.length} critical cross-analyzer pattern${criticals.length > 1 ? "s" : ""} detected. `;
+    }
+  }
 
   if (maturity.bottlenecks.length > 0) {
     summary += `Primary bottleneck: ${maturity.bottlenecks[0].dimension}.`;

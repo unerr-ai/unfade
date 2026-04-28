@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState } from "react";
+import { CorrelationPanel } from "@/components/shared/CorrelationPanel";
 import { IntelligenceCard } from "@/components/shared/IntelligenceCard";
 import {
   useAutonomy,
@@ -34,6 +35,12 @@ const GitExpertiseTab = lazy(() =>
 const NarrativesTab = lazy(() =>
   import("./intelligence/NarrativesTab").then((m) => ({ default: m.NarrativesTab })),
 );
+const EfficiencyTab = lazy(() =>
+  import("./intelligence/EfficiencyTab").then((m) => ({ default: m.EfficiencyTab })),
+);
+const SubstrateExplorerTab = lazy(() =>
+  import("./intelligence/SubstrateExplorerTab").then((m) => ({ default: m.SubstrateExplorerTab })),
+);
 
 interface CardDef {
   id: string;
@@ -53,10 +60,7 @@ const CARDS: CardDef[] = [
     useData: useMaturity,
     extract: (d: any) => {
       const phase = getPhaseInfo(d?.phase ?? 1);
-      return {
-        value: phase?.label ?? "—",
-        interpretation: phase?.diagnostic ?? "Assessing maturity",
-      };
+      return { value: phase?.label ?? "—", interpretation: phase?.diagnostic ?? "Assessing maturity" };
     },
     detail: MaturityTab,
   },
@@ -69,14 +73,7 @@ const CARDS: CardDef[] = [
       value: d?.aes ?? 0,
       interpretation: d?.interpretation ?? "—",
     }),
-    detail: lazy(() =>
-      Promise.resolve({
-        default: ({ enabled }: { enabled?: boolean }) => {
-          void enabled;
-          return null;
-        },
-      }),
-    ),
+    detail: EfficiencyTab,
   },
   {
     id: "comprehension",
@@ -97,11 +94,9 @@ const CARDS: CardDef[] = [
     extract: (d: any) => ({
       value: d?.independenceIndex ?? 0,
       interpretation:
-        (d?.independenceIndex ?? 0) > 75
-          ? "Steering with precision"
-          : (d?.independenceIndex ?? 0) > 40
-            ? "Transmission engaging"
-            : "Engine running without steering",
+        (d?.independenceIndex ?? 0) > 75 ? "Steering with precision"
+        : (d?.independenceIndex ?? 0) > 40 ? "Transmission engaging"
+        : "Engine running without steering",
     }),
     detail: AutonomyTab,
   },
@@ -111,8 +106,8 @@ const CARDS: CardDef[] = [
     icon: "🚀",
     useData: useVelocity,
     extract: (d: any) => ({
-      value: `${(d?.overallMagnitude ?? 0).toFixed(1)}`,
-      interpretation: `decisions/day · ${d?.overallTrend === "up" ? "↑ Accelerating" : d?.overallTrend === "down" ? "↓ Decelerating" : "→ Cruising"}`,
+      value: `${Math.abs((d?.overallMagnitude as number) ?? 0)}%`,
+      interpretation: `${(d?.overallTrend as string) === "accelerating" ? "↑ Accelerating" : (d?.overallTrend as string) === "decelerating" ? "↓ Decelerating" : "→ Stable"}`,
     }),
     detail: VelocityTab,
   },
@@ -122,13 +117,11 @@ const CARDS: CardDef[] = [
     icon: "💰",
     useData: useCosts,
     extract: (d: any) => ({
-      value: `$${(d?.costPerDirectedDecision ?? 0).toFixed(2)}`,
+      value: `$${((d?.costPerDirectedDecision as number) ?? 0).toFixed(2)}`,
       interpretation:
-        (d?.costPerDirectedDecision ?? 0) < 0.3
-          ? "Running lean"
-          : (d?.costPerDirectedDecision ?? 0) <= 1.0
-            ? "Nominal fuel consumption"
-            : "Running rich",
+        ((d?.costPerDirectedDecision as number) ?? 0) < 0.3 ? "Running lean"
+        : ((d?.costPerDirectedDecision as number) ?? 0) <= 1.0 ? "Nominal fuel consumption"
+        : "Running rich",
     }),
     detail: CostTab,
   },
@@ -141,9 +134,7 @@ const CARDS: CardDef[] = [
       const top = (d?.effectivePatterns ?? [])[0];
       return {
         value: top?.pattern ?? "—",
-        interpretation: top
-          ? `${Math.round(top.avgDirectionScore * 100)}% effectiveness`
-          : "No patterns detected yet",
+        interpretation: top ? `${Math.round((top.acceptanceRate ?? top.avgDirectionScore ?? 0) * 100)}% effectiveness` : "No patterns detected yet",
       };
     },
     detail: PatternsTab,
@@ -153,10 +144,7 @@ const CARDS: CardDef[] = [
     title: "Git & Expertise",
     icon: "📂",
     useData: useEfficiency,
-    extract: () => ({
-      value: "—",
-      interpretation: "Expand for file ownership details",
-    }),
+    extract: () => ({ value: "—", interpretation: "Expand for file ownership details" }),
     detail: GitExpertiseTab,
   },
   {
@@ -168,12 +156,19 @@ const CARDS: CardDef[] = [
       const count = (d?.narratives ?? []).length;
       return {
         value: count,
-        interpretation:
-          count > 5 ? "Clear signal path" : count > 0 ? "Threads emerging" : "Signal building",
+        interpretation: count > 5 ? "Rich intelligence" : count > 0 ? "Threads emerging" : "Signal building",
       };
     },
     detail: NarrativesTab,
     span: "2",
+  },
+  {
+    id: "substrate",
+    title: "Knowledge Graph",
+    icon: "🕸",
+    useData: useEfficiency,
+    extract: () => ({ value: "Explore", interpretation: "Browse entities, paths, and evidence" }),
+    detail: SubstrateExplorerTab,
   },
 ];
 
@@ -194,14 +189,15 @@ export default function IntelligencePage() {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const toggle = (id: string) => setExpanded((prev) => (prev === id ? null : id));
-
   const expandedCard = expanded ? CARDS.find((c) => c.id === expanded) : null;
 
   return (
     <div>
       <h1 className="mb-6 font-heading text-2xl font-semibold">Intelligence Hub</h1>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+      <CorrelationPanel maxVisible={3} />
+
+      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-3">
         {CARDS.map((card) => (
           <IntelligenceCard
             key={card.id}

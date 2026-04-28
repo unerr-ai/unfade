@@ -1,13 +1,16 @@
 // FILE: src/services/personalization/profile-accumulator.ts
-// Continuous profile accumulator — updates the developer reasoning profile
-// sub-daily from analyzer outputs. The daily distill still produces the
-// highest-quality profile update via LLM synthesis, but the profile is
-// no longer stale between distills. Debounced: writes at most once per minute.
+// KGI-11: Knowledge-enriched profile accumulator.
+// Builds the developer reasoning profile from both behavioral signals (DuckDB events)
+// and extracted knowledge (CozoDB entities, facts, decisions, comprehension).
+//
+// Behavioral profile: decisionStyle, domainDistribution, patterns (existing)
+// Knowledge profile: domainExpertise, knowledgeVelocity, decisionPatterns, topEntities (new)
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getProfileDir } from "../../utils/paths.js";
+import type { AnalyzerContext } from "../intelligence/analyzers/index.js";
 import type {
   IncrementalAnalyzer,
   IncrementalState,
@@ -15,9 +18,7 @@ import type {
   UpdateResult,
 } from "../intelligence/incremental-state.js";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+// ─── Types ──────────────────────────────────────────────────────────────────
 
 interface ProfileAccumulatorState {
   decisionStyle: {
@@ -31,6 +32,30 @@ interface ProfileAccumulatorState {
   maturityPhase: number | null;
   lastWriteMs: number;
   updatedAt: string;
+  knowledgeProfile: KnowledgeProfileData | null;
+}
+
+interface KnowledgeProfileData {
+  domainExpertise: Array<{
+    domain: string;
+    comprehensionScore: number;
+    factCount: number;
+    decisionCount: number;
+    trend: "improving" | "declining" | "stable";
+  }>;
+  knowledgeVelocity: number;
+  decisionPatterns: {
+    totalDecisions: number;
+    superseded: number;
+    contradicted: number;
+    durable: number;
+  };
+  topEntities: Array<{
+    name: string;
+    type: string;
+    mentionCount: number;
+    confidence: number;
+  }>;
 }
 
 interface ProfileAccumulatorOutput {
@@ -39,17 +64,17 @@ interface ProfileAccumulatorOutput {
   topPatterns: Array<{ pattern: string; confidence: number }>;
   maturityPhase: number | null;
   updatedAt: string;
+  domainExpertise?: KnowledgeProfileData["domainExpertise"];
+  knowledgeVelocity?: number;
+  decisionPatterns?: KnowledgeProfileData["decisionPatterns"];
+  topEntities?: KnowledgeProfileData["topEntities"];
 }
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+// ─── Constants ──────────────────────────────────────────────────────────────
 
 const MIN_WRITE_INTERVAL_MS = 60_000;
 
-// ---------------------------------------------------------------------------
-// IncrementalAnalyzer
-// ---------------------------------------------------------------------------
+// ─── IncrementalAnalyzer ────────────────────────────────────────────────────
 
 export const profileAccumulatorAnalyzer: IncrementalAnalyzer<
   ProfileAccumulatorState,
@@ -76,6 +101,7 @@ export const profileAccumulatorAnalyzer: IncrementalAnalyzer<
         maturityPhase: null,
         lastWriteMs: 0,
         updatedAt: new Date().toISOString(),
+        knowledgeProfile: null,
       },
       watermark: "",
       eventCount: 0,
@@ -83,7 +109,7 @@ export const profileAccumulatorAnalyzer: IncrementalAnalyzer<
     };
   },
 
-  async update(state, batch, _ctx): Promise<UpdateResult<ProfileAccumulatorState>> {
+  async update(state, batch, ctx): Promise<UpdateResult<ProfileAccumulatorState>> {
     if (batch.events.length === 0) return { state, changed: false };
 
     const style = { ...state.value.decisionStyle };
@@ -95,25 +121,23 @@ export const profileAccumulatorAnalyzer: IncrementalAnalyzer<
         style.avgHds = runningAvg(style.avgHds, evt.humanDirectionScore, style.totalEvents);
       }
       if (evt.promptSpecificity != null) {
-        style.avgSpecificity = runningAvg(
-          style.avgSpecificity,
-          evt.promptSpecificity,
-          style.totalEvents,
-        );
+        style.avgSpecificity = runningAvg(style.avgSpecificity, evt.promptSpecificity, style.totalEvents);
       }
-
       const domain = evt.domain ?? "general";
       domains[domain] = (domains[domain] ?? 0) + 1;
     }
 
-    const patterns = detectPatterns(style, domains, batch);
+    const patterns = detectPatterns(style, domains);
+
+    // KGI-11: Knowledge-enriched profile
+    const knowledgeProfile = await gatherKnowledgeProfile(ctx);
 
     const now = Date.now();
     const shouldWrite = now - state.value.lastWriteMs >= MIN_WRITE_INTERVAL_MS;
     const lastWriteMs = shouldWrite ? now : state.value.lastWriteMs;
 
     if (shouldWrite) {
-      writeProfileUpdate(style, domains, patterns);
+      writeProfileUpdate(style, domains, patterns, knowledgeProfile);
     }
 
     return {
@@ -125,6 +149,7 @@ export const profileAccumulatorAnalyzer: IncrementalAnalyzer<
           maturityPhase: state.value.maturityPhase,
           lastWriteMs,
           updatedAt: new Date().toISOString(),
+          knowledgeProfile,
         },
         watermark: batch.events[batch.events.length - 1].ts,
         eventCount: state.eventCount + batch.events.length,
@@ -140,19 +165,92 @@ export const profileAccumulatorAnalyzer: IncrementalAnalyzer<
       .map(([domain, count]) => ({ domain, eventCount: count }))
       .sort((a, b) => b.eventCount - a.eventCount);
 
+    const kp = state.value.knowledgeProfile;
+
     return {
       decisionStyle: state.value.decisionStyle,
       domainDistribution: domainEntries,
       topPatterns: state.value.patterns.slice(0, 10),
       maturityPhase: state.value.maturityPhase,
       updatedAt: state.value.updatedAt,
+      ...(kp ? {
+        domainExpertise: kp.domainExpertise,
+        knowledgeVelocity: kp.knowledgeVelocity,
+        decisionPatterns: kp.decisionPatterns,
+        topEntities: kp.topEntities,
+      } : {}),
     };
   },
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// ─── KGI-11: Knowledge Profile Gathering ────────────────────────────────────
+
+async function gatherKnowledgeProfile(ctx: AnalyzerContext): Promise<KnowledgeProfileData | null> {
+  if (!ctx.knowledge) return null;
+
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return null;
+
+    const assessments = await ctx.knowledge.getComprehension({});
+    const allFacts = await ctx.knowledge.getFacts({ activeOnly: false });
+    const decisions = await ctx.knowledge.getDecisions({});
+    const entities = await ctx.knowledge.getEntityEngagement({});
+
+    // Domain expertise from comprehension assessments
+    const domainExpertise: KnowledgeProfileData["domainExpertise"] = [];
+    if (assessments.length >= 2) {
+      const sorted = [...assessments].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      const mid = Math.floor(sorted.length / 2);
+      const earlyAvg = sorted.slice(0, mid).reduce((s, a) => s + a.overallScore, 0) / mid;
+      const lateAvg = sorted.slice(mid).reduce((s, a) => s + a.overallScore, 0) / (sorted.length - mid);
+      const delta = lateAvg - earlyAvg;
+
+      domainExpertise.push({
+        domain: "overall",
+        comprehensionScore: Math.round(lateAvg),
+        factCount: allFacts.filter((f) => f.invalidAt === "").length,
+        decisionCount: decisions.length,
+        trend: delta > 5 ? "improving" : delta < -5 ? "declining" : "stable",
+      });
+    }
+
+    // Knowledge velocity: facts extracted per day (last 30 days)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+    const recentFacts = allFacts.filter((f) => f.validAt >= thirtyDaysAgo);
+    const knowledgeVelocity = Math.round((recentFacts.length / 30) * 100) / 100;
+
+    // Decision patterns
+    const decisionPredicates = new Set(["DECIDED", "CHOSEN_OVER", "REPLACED_BY", "SWITCHED_FROM", "ADOPTED", "DEPRECATED"]);
+    const allDecisionFacts = allFacts.filter((f) => decisionPredicates.has(f.predicate));
+    const superseded = allDecisionFacts.filter((f) => f.invalidAt !== "").length;
+    const durable = allDecisionFacts.length - superseded;
+
+    const decisionPatterns: KnowledgeProfileData["decisionPatterns"] = {
+      totalDecisions: allDecisionFacts.length,
+      superseded,
+      contradicted: superseded,
+      durable,
+    };
+
+    // Top entities
+    const topEntities = entities
+      .sort((a, b) => b.mentionCount - a.mentionCount)
+      .slice(0, 10)
+      .map((e) => ({
+        name: e.name,
+        type: e.type,
+        mentionCount: e.mentionCount,
+        confidence: e.confidence,
+      }));
+
+    return { domainExpertise, knowledgeVelocity, decisionPatterns, topEntities };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function runningAvg(current: number, newValue: number, count: number): number {
   return current + (newValue - current) / count;
@@ -161,7 +259,6 @@ function runningAvg(current: number, newValue: number, count: number): number {
 function detectPatterns(
   style: ProfileAccumulatorState["decisionStyle"],
   domains: Record<string, number>,
-  _batch: NewEventBatch,
 ): ProfileAccumulatorState["patterns"] {
   const patterns: ProfileAccumulatorState["patterns"] = [];
   const now = new Date().toISOString();
@@ -221,6 +318,7 @@ function writeProfileUpdate(
   style: ProfileAccumulatorState["decisionStyle"],
   domains: Record<string, number>,
   patterns: ProfileAccumulatorState["patterns"],
+  knowledgeProfile: KnowledgeProfileData | null,
 ): void {
   try {
     const profileDir = getProfileDir();
@@ -236,7 +334,7 @@ function writeProfileUpdate(
       }
     }
 
-    const updated = {
+    const updated: Record<string, unknown> = {
       ...existing,
       version: 2,
       decisionStyle: style,
@@ -251,6 +349,13 @@ function writeProfileUpdate(
       })),
       lastAccumulatorUpdate: new Date().toISOString(),
     };
+
+    if (knowledgeProfile) {
+      updated.domainExpertise = knowledgeProfile.domainExpertise;
+      updated.knowledgeVelocity = knowledgeProfile.knowledgeVelocity;
+      updated.decisionPatterns = knowledgeProfile.decisionPatterns;
+      updated.topEntities = knowledgeProfile.topEntities;
+    }
 
     const tmp = `${path}.tmp.${process.pid}`;
     writeFileSync(tmp, JSON.stringify(updated, null, 2), "utf-8");

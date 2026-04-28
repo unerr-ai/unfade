@@ -1,8 +1,8 @@
-// FILE: src/services/substrate/substrate-engine.ts
-// SubstrateEngine — hardened bridge between Phase 16 analyzers and CozoDB.
+// SubstrateEngine — CozoDB semantic substrate with evidence-linked entity exploration.
+//
+// IP-7.1: SubstrateQueries interface — entitiesByDomain, findPath, hubEntities, crossValidatedEntities
+// IP-7.2: evidenceEventIds in EntityContribution flow
 // Sprint SUB-H: Datalog injection prevention, batch ingestion, error recovery.
-// All string interpolation uses escCozo(). Batch upserts reduce round trips.
-// PropagationEngine is reused across calls. Failed entities don't block others.
 
 import type { CozoDb } from "cozo-node";
 import { logger } from "../../utils/logger.js";
@@ -10,9 +10,7 @@ import { mergeIntoExisting, resolveContributions } from "./entity-resolver.js";
 import { PropagationEngine } from "./propagation-rules.js";
 import type { EntityLifecycle, EntityType, RelationshipType } from "./schema.js";
 
-// ---------------------------------------------------------------------------
-// Public interfaces
-// ---------------------------------------------------------------------------
+// ─── Public Interfaces ──────────────────────────────────────────────────────
 
 export interface EntityContribution {
   entityId: string;
@@ -26,6 +24,7 @@ export interface EntityContribution {
     weight: number;
     evidence?: string;
   }>;
+  evidenceEventIds?: string[];
 }
 
 export interface PropagationResult {
@@ -46,9 +45,31 @@ export interface IngestionReport {
   errors: number;
 }
 
-// ---------------------------------------------------------------------------
-// Datalog string escaping
-// ---------------------------------------------------------------------------
+// ─── IP-7.1: Entity With Evidence ───────────────────────────────────────────
+
+export interface EntityWithEvidence {
+  id: string;
+  name: string;
+  type: string;
+  domain: string;
+  evidenceEventIds: string[];
+  engagement: number;
+}
+
+export interface GraphPath {
+  nodes: string[];
+  edges: Array<{ src: string; dst: string; type: string; weight: number }>;
+  length: number;
+}
+
+export interface SubstrateQueries {
+  entitiesByDomain(domain: string, limit?: number): Promise<EntityWithEvidence[]>;
+  findPath(fromEntity: string, toEntity: string): Promise<GraphPath | null>;
+  hubEntities(limit?: number): Promise<EntityWithEvidence[]>;
+  crossValidatedEntities(limit?: number): Promise<EntityWithEvidence[]>;
+}
+
+// ─── Datalog String Escaping ────────────────────────────────────────────────
 
 function escCozo(s: string): string {
   return s
@@ -64,24 +85,239 @@ function safeJsonForDatalog(obj: Record<string, unknown>): string {
   return json.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-// ---------------------------------------------------------------------------
-// SubstrateEngine
-// ---------------------------------------------------------------------------
+// ─── SubstrateEngine ────────────────────────────────────────────────────────
 
 const CONFIDENCE_PER_SOURCE = 0.15;
 
-export class SubstrateEngine {
+export class SubstrateEngine implements SubstrateQueries {
   private propagationEngine: PropagationEngine;
 
   constructor(private readonly db: CozoDb) {
     this.propagationEngine = new PropagationEngine();
   }
 
-  /**
-   * Ingest entity contributions from analyzers.
-   * Groups by entityId, merges state fragments, batch-upserts entities + edges.
-   * Returns detailed ingestion report.
-   */
+  // ─── IP-7.1: SubstrateQueries Implementation ─────────────────────────────
+
+  async entitiesByDomain(domain: string, limit = 20): Promise<EntityWithEvidence[]> {
+    const escaped = escCozo(domain);
+
+    const result = await this.query(`
+      ?[id, type, state, confidence] :=
+        *entity{id, type, state, confidence, lifecycle},
+        lifecycle != 'archived',
+        is_in(state, name_key),
+        name_key = 'name'
+      :limit ${limit}
+    `);
+
+    if (result.rows.length === 0) {
+      const fallback = await this.query(`
+        ?[id, type, state, confidence] :=
+          *entity{id, type, state, confidence, lifecycle},
+          lifecycle != 'archived'
+        :limit ${limit * 2}
+      `);
+      return this.rowsToEntitiesWithEvidence(fallback.rows, domain);
+    }
+
+    return this.rowsToEntitiesWithEvidence(result.rows, domain);
+  }
+
+  async findPath(fromEntity: string, toEntity: string): Promise<GraphPath | null> {
+    const from = escCozo(fromEntity);
+    const to = escCozo(toEntity);
+
+    const result = await this.query(`
+      path[node, dist, prev] :=
+        node = '${from}', dist = 0, prev = ''
+      path[node, dist, prev] :=
+        path[mid, d, _], d < 10,
+        *edge{src: mid, dst: node},
+        dist = d + 1, prev = mid,
+        not path[node, _, _]
+
+      ?[node, dist, prev] := path[node, dist, prev], node = '${to}'
+      :limit 1
+    `);
+
+    if (result.rows.length === 0) return null;
+
+    const pathResult = await this.query(`
+      path[node, dist] :=
+        node = '${from}', dist = 0
+      path[node, dist] :=
+        path[mid, d], d < 10,
+        *edge{src: mid, dst: node},
+        dist = d + 1,
+        not path[node, _]
+
+      ?[src, dst, type, weight] :=
+        path[src, d1], path[dst, d2], d2 = d1 + 1,
+        *edge{src, dst, type, weight}
+      :order d1
+      :limit 20
+    `);
+
+    const nodes = new Set<string>();
+    const edges: GraphPath["edges"] = [];
+
+    for (const row of pathResult.rows) {
+      const src = row[0] as string;
+      const dst = row[1] as string;
+      nodes.add(src);
+      nodes.add(dst);
+      edges.push({
+        src,
+        dst,
+        type: row[2] as string,
+        weight: row[3] as number,
+      });
+    }
+
+    if (edges.length === 0) return null;
+
+    return {
+      nodes: Array.from(nodes),
+      edges,
+      length: edges.length,
+    };
+  }
+
+  async hubEntities(limit = 10): Promise<EntityWithEvidence[]> {
+    const result = await this.query(`
+      degree[id, cnt] := *edge{src: id}, cnt = count(id)
+      degree[id, cnt] := *edge{dst: id}, cnt = count(id)
+
+      ?[id, type, state, confidence, deg] :=
+        degree[id, deg],
+        *entity{id, type, state, confidence, lifecycle},
+        lifecycle != 'archived'
+      :order -deg
+      :limit ${limit}
+    `);
+
+    return result.rows.map((row) => {
+      const state = this.parseState(row[2]);
+      return {
+        id: row[0] as string,
+        name: (state.name as string) ?? (row[0] as string),
+        type: row[1] as string,
+        domain: (state.domain as string) ?? "general",
+        evidenceEventIds: this.extractEvidenceFromState(state),
+        engagement: row[4] as number,
+      };
+    });
+  }
+
+  async crossValidatedEntities(limit = 10): Promise<EntityWithEvidence[]> {
+    const result = await this.query(`
+      multi_source[eid, cnt] :=
+        *entity_source{entity_id: eid, analyzer},
+        cnt = count(analyzer)
+
+      ?[id, type, state, confidence, source_count] :=
+        multi_source[id, source_count],
+        source_count >= 2,
+        *entity{id, type, state, confidence, lifecycle},
+        lifecycle != 'archived'
+      :order -source_count
+      :limit ${limit}
+    `);
+
+    return result.rows.map((row) => {
+      const state = this.parseState(row[2]);
+      return {
+        id: row[0] as string,
+        name: (state.name as string) ?? (row[0] as string),
+        type: row[1] as string,
+        domain: (state.domain as string) ?? "general",
+        evidenceEventIds: this.extractEvidenceFromState(state),
+        engagement: row[4] as number,
+      };
+    });
+  }
+
+  // ─── Evidence Extraction Helpers ──────────────────────────────────────────
+
+  private async rowsToEntitiesWithEvidence(
+    rows: unknown[][],
+    domainFilter: string,
+  ): Promise<EntityWithEvidence[]> {
+    const results: EntityWithEvidence[] = [];
+    const lowerDomain = domainFilter.toLowerCase();
+
+    for (const row of rows) {
+      const id = row[0] as string;
+      const state = this.parseState(row[2]);
+      const name = (state.name as string) ?? id;
+      const domain = (state.domain as string) ?? "general";
+
+      const matches =
+        id.toLowerCase().includes(lowerDomain) ||
+        name.toLowerCase().includes(lowerDomain) ||
+        domain.toLowerCase().includes(lowerDomain);
+
+      if (!matches) continue;
+
+      const evidenceEventIds = await this.collectEntityEvidence(id);
+
+      results.push({
+        id,
+        name,
+        type: row[1] as string,
+        domain,
+        evidenceEventIds,
+        engagement: (state.mentionCount as number) ?? (state.evidenceCount as number) ?? 1,
+      });
+    }
+
+    results.sort((a, b) => b.engagement - a.engagement);
+    return results;
+  }
+
+  private async collectEntityEvidence(entityId: string): Promise<string[]> {
+    const eventIds = new Set<string>();
+
+    try {
+      const factResult = await this.query(
+        `?[episode] := *fact{subject_id: '${escCozo(entityId)}', source_episode: episode}, episode != ''`,
+      );
+      for (const row of factResult.rows) {
+        eventIds.add(row[0] as string);
+      }
+    } catch { /* fact relation may be empty */ }
+
+    try {
+      const objFactResult = await this.query(
+        `?[episode] := *fact{object_id: '${escCozo(entityId)}', source_episode: episode}, episode != ''`,
+      );
+      for (const row of objFactResult.rows) {
+        eventIds.add(row[0] as string);
+      }
+    } catch { /* non-fatal */ }
+
+    return Array.from(eventIds);
+  }
+
+  private parseState(raw: unknown): Record<string, unknown> {
+    if (typeof raw === "string") {
+      try { return JSON.parse(raw); } catch { return {}; }
+    }
+    return (raw as Record<string, unknown>) ?? {};
+  }
+
+  private extractEvidenceFromState(state: Record<string, unknown>): string[] {
+    const ids: string[] = [];
+    if (Array.isArray(state.evidenceEventIds)) {
+      for (const id of state.evidenceEventIds) {
+        if (typeof id === "string") ids.push(id);
+      }
+    }
+    return ids;
+  }
+
+  // ─── Core: Ingest + Propagate ─────────────────────────────────────────────
+
   async ingest(contributions: EntityContribution[]): Promise<number> {
     if (contributions.length === 0) return 0;
 
@@ -96,13 +332,25 @@ export class SubstrateEngine {
 
     for (const entity of resolved) {
       try {
+        const mergedState = { ...entity.mergedState };
+
+        const allEvidenceIds = new Set<string>();
+        for (const contrib of contributions) {
+          if (contrib.entityId === entity.entityId && contrib.evidenceEventIds) {
+            for (const id of contrib.evidenceEventIds) allEvidenceIds.add(id);
+          }
+        }
+        if (allEvidenceIds.size > 0) {
+          mergedState.evidenceEventIds = Array.from(allEvidenceIds);
+        }
+
         const confidence = Math.min(1, 0.3 + entity.sources.length * CONFIDENCE_PER_SOURCE);
 
         await this.upsertEntity(
           entity.entityId,
           entity.entityType,
           entity.projectId,
-          entity.mergedState,
+          mergedState,
           confidence,
           now,
         );
@@ -134,9 +382,6 @@ export class SubstrateEngine {
     return report.entitiesUpserted;
   }
 
-  /**
-   * Run backward propagation rules. Reuses the PropagationEngine instance.
-   */
   async propagate(): Promise<PropagationResult> {
     try {
       const result = await this.propagationEngine.runAll(this.db);
@@ -155,9 +400,8 @@ export class SubstrateEngine {
     }
   }
 
-  /**
-   * Execute a Datalog query against the graph.
-   */
+  // ─── Core: Query ──────────────────────────────────────────────────────────
+
   async query(datalog: string): Promise<GraphQueryResult> {
     try {
       const result = await this.db.run(datalog);
@@ -174,9 +418,6 @@ export class SubstrateEngine {
     }
   }
 
-  /**
-   * Get all active entities of a given type.
-   */
   async getEntitiesByType(
     type: EntityType,
     projectId?: string,
@@ -190,14 +431,11 @@ export class SubstrateEngine {
 
     return result.rows.map((row) => ({
       id: row[0] as string,
-      state: typeof row[1] === "string" ? JSON.parse(row[1]) : (row[1] as Record<string, unknown>),
+      state: this.parseState(row[1]),
       confidence: row[2] as number,
     }));
   }
 
-  /**
-   * Get all edges from or to an entity.
-   */
   async getEdgesFor(entityId: string): Promise<
     Array<{
       src: string;
@@ -219,9 +457,6 @@ export class SubstrateEngine {
     }));
   }
 
-  /**
-   * Count entities by type (for health/debug).
-   */
   async entityCounts(): Promise<Record<string, number>> {
     const result = await this.query(
       "?[type, count(id)] := *entity{id, type, lifecycle}, lifecycle != 'archived'",
@@ -233,9 +468,7 @@ export class SubstrateEngine {
     return counts;
   }
 
-  // ---------------------------------------------------------------------------
-  // Private: entity upsert with safe escaping
-  // ---------------------------------------------------------------------------
+  // ─── Private: Entity Upsert ───────────────────────────────────────────────
 
   private async upsertEntity(
     id: string,
@@ -256,10 +489,7 @@ export class SubstrateEngine {
 
     if (existingResult.rows.length > 0) {
       const existing = existingResult.rows[0];
-      const existingState =
-        typeof existing[0] === "string"
-          ? JSON.parse(existing[0])
-          : (existing[0] as Record<string, unknown>);
+      const existingState = this.parseState(existing[0]);
       mergedState = mergeIntoExisting(existingState, state);
       createdAt = existing[1] as number;
       lifecycle = existing[2] as EntityLifecycle;
@@ -278,9 +508,7 @@ export class SubstrateEngine {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Private: batch source tracking
-  // ---------------------------------------------------------------------------
+  // ─── Private: Source Tracking ─────────────────────────────────────────────
 
   private async batchUpsertSources(
     entityId: string,
@@ -312,9 +540,7 @@ export class SubstrateEngine {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Private: batch edge upserts
-  // ---------------------------------------------------------------------------
+  // ─── Private: Edge Upserts ────────────────────────────────────────────────
 
   private async batchUpsertEdges(
     entityId: string,

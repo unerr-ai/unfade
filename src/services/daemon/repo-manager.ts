@@ -841,11 +841,21 @@ function createMaterializerForRepo(
             engine.register(analyzer);
           }
         }
+        let knowledgeReader: import("../intelligence/knowledge-reader.js").KnowledgeReader | null = null;
+        try {
+          const { CozoManager } = await import("../substrate/cozo-manager.js");
+          const { createKnowledgeReader } = await import("../intelligence/knowledge-reader.js");
+          const cozo = await CozoManager.getInstance();
+          knowledgeReader = createKnowledgeReader(cozo);
+        } catch {
+          // CozoDB not available — analyzers degrade gracefully
+        }
         const schedulerCtx = {
           repoRoot: "",
           analytics: analyticsDb,
           operational: db,
           config: config as unknown as Record<string, unknown>,
+          knowledge: knowledgeReader,
         };
         const schedulerResult = await engine.processEvents(schedulerCtx, (info) => {
           try {

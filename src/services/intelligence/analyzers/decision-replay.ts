@@ -1,182 +1,307 @@
-// FILE: src/services/intelligence/analyzers/decision-replay.ts
-// UF-112: Decision Replay Engine — monitors current signals against past decisions.
-// Triggers replay when: domain drift, alternative validated elsewhere, or echoed dead end.
-// Confidence threshold > 0.7. Max 2 replays per week. User-dismissable with feedback.
+// KGI-4 + IP-4.4: Decision Replay Engine — knowledge-grounded decision contradiction/supersession detection.
+//
+// Primary path (knowledge-grounded):
+//   1. Query CozoDB for active decisions via knowledge.getDecisions()
+//   2. Query for invalidated decisions (superseded/contradicted by Layer 2.5)
+//   3. For each invalidated decision that has a corresponding active replacement → replay
+//   4. Replay includes: original decision, new fact, confidence, time elapsed
+//
+// Fallback path: DuckDB decisions table + string similarity (preserved for pre-extraction state).
+//
+// Rate limit: max 2 replays per week. Dismissed replays expire after 30 days.
+//
+// IP-4.4 enrichment: _meta freshness, per-replay evidenceEventIds, diagnostics.
+// Removed .slice(-10) — full replay history accessible.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AnalyzerOutputMeta, DiagnosticMessage } from "../../../schemas/intelligence-presentation.js";
 import type { DecisionReplay, ReplaysFile } from "../../../schemas/intelligence/replays.js";
+import { getIntelligenceDir } from "../../../utils/paths.js";
 import type {
   IncrementalAnalyzer,
   IncrementalState,
   NewEventBatch,
   UpdateResult,
 } from "../incremental-state.js";
-import { cosineSimilarity } from "../utils/text-similarity.js";
+import type { FactEntry } from "../knowledge-reader.js";
 import type { AnalyzerContext } from "./index.js";
 
 const MAX_REPLAYS_PER_WEEK = 2;
-const CONFIDENCE_THRESHOLD = 0.7;
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
+// ─── State ──────────────────────────────────────────────────────────────────
 
 interface DecisionReplayState {
   output: ReplaysFile;
+  source: "knowledge" | "hds-fallback";
 }
 
-// ---------------------------------------------------------------------------
-// Compute helpers — all take db (analytics) only
-// ---------------------------------------------------------------------------
+// ─── Evidence Helpers ───────────────────────────────────────────────────────
 
-async function detectDomainDrift(
-  db: AnalyzerContext["analytics"],
-  existing: ReplaysFile,
-): Promise<DecisionReplay[]> {
-  const replays: DecisionReplay[] = [];
+async function collectDecisionEventIds(
+  ctx: AnalyzerContext,
+  domain: string,
+  decisionText: string,
+): Promise<string[]> {
+  try {
+    const searchTerm = domain || decisionText.slice(0, 50);
+    const result = await ctx.analytics.exec(
+      `SELECT id FROM events
+       WHERE source IN ('ai-session', 'mcp-active')
+         AND (content_summary LIKE '%${searchTerm.replace(/'/g, "''")}%'
+              OR intent_summary LIKE '%${searchTerm.replace(/'/g, "''")}%')
+       ORDER BY ts DESC`,
+    );
+    return (result[0]?.values ?? []).map((r) => String(r[0]));
+  } catch {
+    return [];
+  }
+}
+
+// ─── Primary Path: Knowledge-Grounded ───────────────────────────────────────
+
+async function detectReplaysFromKnowledge(ctx: AnalyzerContext): Promise<ReplaysFile> {
+  const now = new Date().toISOString();
+  const existing = loadExistingReplays();
+  const activeCount = countReplaysThisWeek(existing);
+
+  if (activeCount >= MAX_REPLAYS_PER_WEEK) return preserveExisting(existing, now, ctx);
+
+  const activeDecisions = await ctx.knowledge!.getDecisions({});
+  const allDecisionFacts = await ctx.knowledge!.getFacts({ activeOnly: false });
+
+  const decisionPredicates = new Set([
+    "DECIDED", "CHOSEN_OVER", "REPLACED_BY", "SWITCHED_FROM", "ADOPTED", "DEPRECATED",
+  ]);
+  const allDecisions = allDecisionFacts.filter((f) => decisionPredicates.has(f.predicate));
+
+  const invalidatedDecisions = allDecisions.filter((f) => f.invalidAt !== "");
+  const activeDecisionsBySubject = groupBySubject(activeDecisions);
+
+  const newReplays: DecisionReplay[] = [];
+
+  for (const invalidated of invalidatedDecisions) {
+    if (activeCount + newReplays.length >= MAX_REPLAYS_PER_WEEK) break;
+
+    const replacements = activeDecisionsBySubject.get(invalidated.subjectId) ?? [];
+    if (replacements.length === 0) continue;
+
+    const replacement = replacements[0];
+    const replayId = makeReplayId(invalidated.id, replacement.id);
+    if (existing.replays.some((r) => r.id === replayId)) continue;
+
+    const isSupersession = replacement.predicate === "REPLACED_BY" ||
+      replacement.predicate === "SWITCHED_FROM";
+
+    const daysElapsed = computeDaysElapsed(invalidated.validAt, replacement.validAt);
+    const domain = extractDomain(invalidated);
+    const eventIds = await collectDecisionEventIds(ctx, domain, formatDecisionText(invalidated));
+
+    newReplays.push({
+      id: replayId,
+      originalDecision: {
+        date: invalidated.validAt,
+        decision: formatDecisionText(invalidated),
+        domain,
+        rationale: invalidated.context || null,
+      },
+      triggerReason: isSupersession ? "supersession" : "contradiction",
+      triggerDetail: buildTriggerDetail(invalidated, replacement, daysElapsed, isSupersession),
+      confidence: Math.max(invalidated.confidence, replacement.confidence),
+      createdAt: now,
+      dismissed: false,
+      dismissedReason: null,
+      evidenceEventIds: eventIds,
+    });
+  }
+
+  const allReplays = [...existing.replays.filter((r) => !isExpired(r)), ...newReplays];
+  const _meta = await buildMeta(ctx, allReplays.length, now);
+  const diagnostics = buildDiagnostics(allReplays);
+
+  return {
+    replays: allReplays,
+    maxPerWeek: MAX_REPLAYS_PER_WEEK,
+    updatedAt: now,
+    _meta,
+    diagnostics,
+  };
+}
+
+function buildTriggerDetail(
+  old: FactEntry,
+  replacement: FactEntry,
+  daysElapsed: number,
+  isSupersession: boolean,
+): string {
+  const oldText = formatDecisionText(old);
+  const newText = formatDecisionText(replacement);
+
+  if (isSupersession) {
+    return `You originally decided "${oldText}" (${old.validAt.slice(0, 10)}). After ${daysElapsed} days, this was explicitly replaced: "${newText}". The original rationale was: "${old.context.slice(0, 120)}".`;
+  }
+
+  return `Your decision "${oldText}" (${old.validAt.slice(0, 10)}) was contradicted ${daysElapsed} days later by "${newText}". Consider whether the original reasoning still applies or if circumstances changed.`;
+}
+
+// ─── Fallback Path: DuckDB String Similarity ────────────────────────────────
+
+async function detectReplaysFromHDS(ctx: AnalyzerContext): Promise<ReplaysFile> {
+  const now = new Date().toISOString();
+  const existing = loadExistingReplays();
+  const activeCount = countReplaysThisWeek(existing);
+
+  if (activeCount >= MAX_REPLAYS_PER_WEEK) return preserveExisting(existing, now, ctx);
+
+  const newReplays: DecisionReplay[] = [];
 
   try {
-    const decisions = await db.exec(
-      `SELECT date, description, domain, rationale, hds
+    const decisions = await ctx.analytics.exec(
+      `SELECT date, description, domain, rationale
        FROM decisions
        WHERE date <= current_date - INTERVAL '7 days'
-       ORDER BY date DESC
-       LIMIT 50`,
+       ORDER BY date DESC`,
     );
 
-    if (!decisions[0]?.values.length) return [];
+    if (decisions[0]?.values.length) {
+      const recentResult = await ctx.analytics.exec(
+        `SELECT content_summary FROM events
+         WHERE ts >= now() - INTERVAL '7 days'
+           AND source IN ('ai-session', 'mcp-active')
+         ORDER BY ts DESC`,
+      );
 
-    const recentEvents = await db.exec(
-      `SELECT content_summary FROM events
-       WHERE ts >= now() - INTERVAL '7 days'
-         AND source IN ('ai-session', 'mcp-active')
-       ORDER BY ts DESC
-       LIMIT 30`,
-    );
+      if (recentResult[0]?.values.length) {
+        const recentKeywords = new Set(
+          recentResult[0].values
+            .map((r) => (r[0] as string) ?? "")
+            .join(" ")
+            .toLowerCase()
+            .split(/\s+/)
+            .filter((w) => w.length > 4),
+        );
 
-    if (!recentEvents[0]?.values.length) return [];
+        for (const row of decisions[0].values) {
+          if (activeCount + newReplays.length >= MAX_REPLAYS_PER_WEEK) break;
 
-    const recentContext = recentEvents[0].values.map((r) => (r[0] as string) ?? "").join(" ");
+          const date = (row[0] as string) ?? "";
+          const decision = (row[1] as string) ?? "";
+          const domain = (row[2] as string) ?? "";
+          const rationale = (row[3] as string) ?? null;
 
-    for (const row of decisions[0].values) {
-      const decisionDate = (row[0] as string) ?? "";
-      const decisionText = (row[1] as string) ?? "";
-      const domain = (row[2] as string) ?? "";
-      const rationale = (row[3] as string) ?? null;
-      const hds = Number(row[4] ?? 0);
+          const decisionWords = decision.toLowerCase().split(/\s+/).filter((w) => w.length > 4);
+          const overlap = decisionWords.filter((w) => recentKeywords.has(w)).length;
+          const similarity = decisionWords.length > 0 ? overlap / decisionWords.length : 0;
 
-      if (hds < 0.5) continue;
+          if (similarity < 0.3) continue;
 
-      const similarity = cosineSimilarity(decisionText, recentContext);
-      if (similarity < 0.3) continue;
+          const replayId = makeReplayId("drift", date + decision.slice(0, 30));
+          if (existing.replays.some((r) => r.id === replayId)) continue;
 
-      const replayId = makeReplayId("domain-drift", decisionDate, decisionText);
-      if (existing.replays.some((r) => r.id === replayId)) continue;
+          const eventIds = await collectDecisionEventIds(ctx, domain, decision);
 
-      const driftConfidence = Math.min(similarity + 0.3, 1.0);
-      if (driftConfidence < CONFIDENCE_THRESHOLD) continue;
-
-      replays.push({
-        id: replayId,
-        originalDecision: {
-          date: decisionDate,
-          decision: decisionText,
-          domain,
-          rationale,
-        },
-        triggerReason: "domain-drift",
-        triggerDetail: `You're working in the same area as a decision from ${decisionDate}. The context may have changed — worth revisiting whether "${decisionText.slice(0, 80)}" still holds.`,
-        confidence: Math.round(driftConfidence * 100) / 100,
-        createdAt: new Date().toISOString(),
-        dismissed: false,
-        dismissedReason: null,
-      });
-
-      if (replays.length >= MAX_REPLAYS_PER_WEEK) break;
+          newReplays.push({
+            id: replayId,
+            originalDecision: { date, decision, domain, rationale },
+            triggerReason: "domain-drift",
+            triggerDetail: `You're working in an area related to a decision from ${date}: "${decision.slice(0, 80)}". Context may have changed — worth revisiting.`,
+            confidence: Math.min(similarity + 0.3, 1.0),
+            createdAt: now,
+            dismissed: false,
+            dismissedReason: null,
+            evidenceEventIds: eventIds,
+          });
+        }
+      }
     }
   } catch {
-    // non-fatal
+    // Non-fatal
   }
 
-  return replays;
+  const allReplays = [...existing.replays.filter((r) => !isExpired(r)), ...newReplays];
+  const _meta = await buildMeta(ctx, allReplays.length, now);
+  const diagnostics = buildDiagnostics(allReplays);
+
+  return {
+    replays: allReplays,
+    maxPerWeek: MAX_REPLAYS_PER_WEEK,
+    updatedAt: now,
+    _meta,
+    diagnostics,
+  };
 }
 
-async function detectEchoedDeadEnds(
-  db: AnalyzerContext["analytics"],
-  existing: ReplaysFile,
-): Promise<DecisionReplay[]> {
-  const replays: DecisionReplay[] = [];
+// ─── Shared Helpers ─────────────────────────────────────────────────────────
 
-  try {
-    const recentLowDir = await db.exec(
-      `SELECT content_summary FROM events
-       WHERE source IN ('ai-session', 'mcp-active')
-         AND human_direction_score < 0.3
-         AND ts >= now() - INTERVAL '3 days'
-       ORDER BY ts DESC
-       LIMIT 10`,
-    );
-
-    if (!recentLowDir[0]?.values.length) return [];
-
-    const recentDeadEndContext = recentLowDir[0].values
-      .map((r) => (r[0] as string) ?? "")
-      .join(" ");
-
-    const pastDecisions = await db.exec(
-      `SELECT date, description, domain, rationale FROM decisions
-       WHERE date <= current_date - INTERVAL '7 days'
-       ORDER BY date DESC
-       LIMIT 50`,
-    );
-
-    if (!pastDecisions[0]?.values.length) return [];
-
-    for (const row of pastDecisions[0].values) {
-      const date = (row[0] as string) ?? "";
-      const decision = (row[1] as string) ?? "";
-      const domain = (row[2] as string) ?? "";
-      const rationale = (row[3] as string) ?? null;
-
-      const similarity = cosineSimilarity(recentDeadEndContext, `${decision} ${rationale ?? ""}`);
-      if (similarity < 0.5) continue;
-
-      const replayId = makeReplayId("echoed-dead-end", date, decision);
-      if (existing.replays.some((r) => r.id === replayId)) continue;
-
-      const confidence = Math.min(similarity + 0.2, 1.0);
-      if (confidence < CONFIDENCE_THRESHOLD) continue;
-
-      replays.push({
-        id: replayId,
-        originalDecision: { date, decision, domain, rationale },
-        triggerReason: "echoed-dead-end",
-        triggerDetail: `Your recent low-direction sessions echo a decision from ${date}: "${decision.slice(0, 80)}". The earlier rationale may help resolve the current stuck loop.`,
-        confidence: Math.round(confidence * 100) / 100,
-        createdAt: new Date().toISOString(),
-        dismissed: false,
-        dismissedReason: null,
-      });
-
-      if (replays.length >= 1) break;
-    }
-  } catch {
-    // non-fatal
+function groupBySubject(facts: FactEntry[]): Map<string, FactEntry[]> {
+  const map = new Map<string, FactEntry[]>();
+  for (const f of facts) {
+    const existing = map.get(f.subjectId);
+    if (existing) existing.push(f);
+    else map.set(f.subjectId, [f]);
   }
-
-  return replays;
+  return map;
 }
 
-function loadExistingReplays(repoRoot: string): ReplaysFile {
+function formatDecisionText(fact: FactEntry): string {
+  const object = fact.objectText || fact.objectId;
+  return object
+    ? `${fact.predicate} ${object}`
+    : fact.context.slice(0, 100);
+}
+
+function extractDomain(fact: FactEntry): string {
+  return fact.subjectId.replace(/^ke-|^ent-/, "").split("-")[0] || "general";
+}
+
+function computeDaysElapsed(oldDate: string, newDate: string): number {
+  const oldMs = new Date(oldDate).getTime();
+  const newMs = new Date(newDate).getTime();
+  return Math.max(0, Math.round((newMs - oldMs) / 86400000));
+}
+
+function loadExistingReplays(): ReplaysFile {
   try {
-    const path = join(repoRoot, ".unfade", "intelligence", "replays.json");
-    if (!existsSync(path)) return { replays: [], maxPerWeek: MAX_REPLAYS_PER_WEEK, updatedAt: "" };
+    const dir = getIntelligenceDir();
+    const path = join(dir, "decision-replay.json");
+    if (!existsSync(path)) return emptyReplays("");
     return JSON.parse(readFileSync(path, "utf-8")) as ReplaysFile;
   } catch {
-    return { replays: [], maxPerWeek: MAX_REPLAYS_PER_WEEK, updatedAt: "" };
+    return emptyReplays("");
   }
+}
+
+function emptyReplays(now: string): ReplaysFile {
+  return {
+    replays: [],
+    maxPerWeek: MAX_REPLAYS_PER_WEEK,
+    updatedAt: now,
+    _meta: {
+      updatedAt: now,
+      dataPoints: 0,
+      confidence: "low",
+      watermark: now,
+      stalenessMs: 0,
+    },
+    diagnostics: [],
+  };
+}
+
+async function preserveExisting(
+  existing: ReplaysFile,
+  now: string,
+  ctx: AnalyzerContext,
+): Promise<ReplaysFile> {
+  const replays = existing.replays.filter((r) => !isExpired(r));
+  const _meta = await buildMeta(ctx, replays.length, now);
+  return {
+    replays,
+    maxPerWeek: MAX_REPLAYS_PER_WEEK,
+    updatedAt: now,
+    _meta,
+    diagnostics: buildDiagnostics(replays),
+  };
 }
 
 function countReplaysThisWeek(file: ReplaysFile): number {
@@ -189,65 +314,113 @@ function isExpired(replay: DecisionReplay): boolean {
   return replay.dismissed && replay.createdAt < thirtyDaysAgo;
 }
 
-function makeReplayId(type: string, date: string, decision: string): string {
-  return createHash("sha256")
-    .update(`${type}:${date}:${decision.slice(0, 50)}`)
-    .digest("hex")
-    .slice(0, 12);
+function makeReplayId(...parts: string[]): string {
+  return createHash("sha256").update(parts.join(":")).digest("hex").slice(0, 12);
 }
 
-// ---------------------------------------------------------------------------
-// Full computation — assembles a ReplaysFile output
-// ---------------------------------------------------------------------------
+// ─── Meta + Diagnostics ─────────────────────────────────────────────────────
 
-async function computeReplays(
-  db: AnalyzerContext["analytics"],
-  repoRoot: string,
-): Promise<ReplaysFile> {
-  const now = new Date().toISOString();
+async function buildMeta(
+  ctx: AnalyzerContext,
+  totalReplays: number,
+  updatedAt: string,
+): Promise<AnalyzerOutputMeta> {
+  const confidence: "high" | "medium" | "low" =
+    totalReplays >= 5 ? "high" : totalReplays >= 2 ? "medium" : "low";
 
-  const existing = loadExistingReplays(repoRoot);
-  const activeCount = countReplaysThisWeek(existing);
+  let watermark = updatedAt;
+  let stalenessMs = 0;
 
-  const newReplays: DecisionReplay[] = [];
-
-  if (activeCount < MAX_REPLAYS_PER_WEEK) {
-    const driftReplays = await detectDomainDrift(db, existing);
-    for (const r of driftReplays) {
-      if (activeCount + newReplays.length >= MAX_REPLAYS_PER_WEEK) break;
-      newReplays.push(r);
+  try {
+    const result = await ctx.analytics.exec(
+      "SELECT MAX(ts) FROM events WHERE source IN ('ai-session', 'mcp-active')",
+    );
+    const maxTs = result[0]?.values[0]?.[0] as string | null;
+    if (maxTs) {
+      watermark = maxTs;
+      stalenessMs = Math.max(0, Date.now() - new Date(maxTs).getTime());
     }
+  } catch { /* non-fatal */ }
 
-    const echoReplays = await detectEchoedDeadEnds(db, existing);
-    for (const r of echoReplays) {
-      if (activeCount + newReplays.length >= MAX_REPLAYS_PER_WEEK) break;
-      newReplays.push(r);
+  return { updatedAt, dataPoints: totalReplays, confidence, watermark, stalenessMs };
+}
+
+function buildDiagnostics(replays: DecisionReplay[]): DiagnosticMessage[] {
+  const diagnostics: DiagnosticMessage[] = [];
+
+  const activeReplays = replays.filter((r) => !r.dismissed);
+  const contradictions = activeReplays.filter((r) => r.triggerReason === "contradiction");
+  const supersessions = activeReplays.filter((r) => r.triggerReason === "supersession");
+
+  if (contradictions.length > 0) {
+    diagnostics.push({
+      severity: contradictions.length >= 3 ? "critical" : "warning",
+      message: `${contradictions.length} decision contradiction(s) detected — past decisions conflict with current practice`,
+      evidence: `Contradicted decisions: ${contradictions.map((r) => r.originalDecision.decision.slice(0, 40)).join("; ")}`,
+      actionable: "Review contradicted decisions — either update the original rationale or revert to the previous approach",
+      relatedAnalyzers: ["efficiency", "loop-detector"],
+      evidenceEventIds: contradictions.flatMap((r) => r.evidenceEventIds.slice(0, 3)),
+    });
+  }
+
+  if (supersessions.length > 0) {
+    diagnostics.push({
+      severity: "info",
+      message: `${supersessions.length} decision supersession(s) — explicit technology/approach replacements tracked`,
+      evidence: `Superseded decisions: ${supersessions.map((r) => r.originalDecision.decision.slice(0, 40)).join("; ")}`,
+      actionable: "Document why previous approaches were replaced to build institutional knowledge",
+      relatedAnalyzers: [],
+      evidenceEventIds: supersessions.flatMap((r) => r.evidenceEventIds.slice(0, 3)),
+    });
+  }
+
+  if (activeReplays.length === 0) {
+    diagnostics.push({
+      severity: "info",
+      message: "No active decision replays — your decisions are consistent",
+      evidence: "No contradictions or supersessions detected in the current analysis window",
+      actionable: "Continue documenting decisions for future replay value",
+      relatedAnalyzers: [],
+      evidenceEventIds: [],
+    });
+  }
+
+  return diagnostics;
+}
+
+// ─── Router ─────────────────────────────────────────────────────────────────
+
+async function computeReplaysWithFallback(
+  ctx: AnalyzerContext,
+): Promise<{ output: ReplaysFile; source: "knowledge" | "hds-fallback" }> {
+  if (ctx.knowledge) {
+    try {
+      const hasData = await ctx.knowledge.hasKnowledgeData();
+      if (hasData) {
+        const output = await detectReplaysFromKnowledge(ctx);
+        return { output, source: "knowledge" };
+      }
+    } catch {
+      // Fall through
     }
   }
 
-  const allReplays = [...existing.replays.filter((r) => !isExpired(r)), ...newReplays];
-
-  return {
-    replays: allReplays.slice(-10),
-    maxPerWeek: MAX_REPLAYS_PER_WEEK,
-    updatedAt: now,
-  };
+  const output = await detectReplaysFromHDS(ctx);
+  return { output, source: "hds-fallback" };
 }
 
-// ---------------------------------------------------------------------------
-// IncrementalAnalyzer export
-// ---------------------------------------------------------------------------
+// ─── IncrementalAnalyzer Export ──────────────────────────────────────────────
 
 export const decisionReplayAnalyzer: IncrementalAnalyzer<DecisionReplayState, ReplaysFile> = {
   name: "decision-replay",
   outputFile: "decision-replay.json",
   eventFilter: { sources: ["ai-session", "mcp-active"] },
-  minDataPoints: 10,
+  minDataPoints: 5,
 
   async initialize(ctx: AnalyzerContext): Promise<IncrementalState<DecisionReplayState>> {
-    const output = await computeReplays(ctx.analytics, ctx.repoRoot);
+    const { output, source } = await computeReplaysWithFallback(ctx);
     return {
-      value: { output },
+      value: { output, source },
       watermark: output.updatedAt,
       eventCount: 0,
       updatedAt: output.updatedAt,
@@ -263,14 +436,14 @@ export const decisionReplayAnalyzer: IncrementalAnalyzer<DecisionReplayState, Re
       return { state, changed: false };
     }
 
-    const output = await computeReplays(ctx.analytics, ctx.repoRoot);
+    const { output, source } = await computeReplaysWithFallback(ctx);
     const oldCount = state.value.output.replays.length;
     const newCount = output.replays.length;
-    const changed = newCount !== oldCount;
+    const changed = newCount !== oldCount || source !== state.value.source;
 
     return {
       state: {
-        value: { output },
+        value: { output, source },
         watermark: output.updatedAt,
         eventCount: state.eventCount + newEvents.events.length,
         updatedAt: output.updatedAt,
@@ -284,47 +457,23 @@ export const decisionReplayAnalyzer: IncrementalAnalyzer<DecisionReplayState, Re
     return state.value.output;
   },
 
-  contributeEntities(state, _batch) {
+  contributeEntities(state) {
     const contributions: import("../../substrate/substrate-engine.js").EntityContribution[] = [];
-    const output = state.value.output;
-    const replays = output.replays ?? [];
 
-    if (!Array.isArray(replays)) return contributions;
-
-    for (const replay of replays as Array<{
-      decisionId?: string;
-      summary?: string;
-      domain?: string;
-      durability?: number;
-      triggerReason?: string;
-      revisedBy?: string;
-    }>) {
-      if (!replay.decisionId) continue;
-
-      const relationships: import("../../substrate/substrate-engine.js").EntityContribution["relationships"] =
-        [];
-
-      if (replay.revisedBy) {
-        relationships.push({
-          targetEntityId: `dec-${replay.revisedBy}`,
-          type: "revises",
-          weight: 0.8,
-          evidence: replay.triggerReason ?? "decision-replay",
-        });
-      }
-
+    for (const replay of state.value.output.replays) {
       contributions.push({
-        entityId: `dec-${replay.decisionId}`,
+        entityId: `dec-${replay.id}`,
         entityType: "decision",
         projectId: "",
         analyzerName: "decision-replay",
         stateFragment: {
-          summary: replay.summary ?? "",
-          domain: replay.domain ?? "general",
-          durability: replay.durability ?? 0.5,
-          triggerReason: replay.triggerReason ?? "",
+          decision: replay.originalDecision.decision,
+          domain: replay.originalDecision.domain,
+          triggerReason: replay.triggerReason,
+          confidence: replay.confidence,
+          source: state.value.source,
         },
-        relationships,
+        relationships: [],
       });
     }
 

@@ -62,6 +62,7 @@ export const maturityOwnershipAnalyzer: IncrementalAnalyzer<
 
   async update(state, batch, ctx): Promise<UpdateResult<MaturityOwnershipState>> {
     const output = computeFromDependencies(ctx);
+    await enrichComprehensionGenuineness(output, ctx);
     const prevPhase = state.value.output.adjustedPhase;
     const changed = Math.abs(output.adjustedPhase - prevPhase) > 0.1;
 
@@ -82,6 +83,26 @@ export const maturityOwnershipAnalyzer: IncrementalAnalyzer<
     return state.value.output;
   },
 };
+
+// ---------------------------------------------------------------------------
+// KGI-12.4: Comprehension genuineness enrichment
+// ---------------------------------------------------------------------------
+
+async function enrichComprehensionGenuineness(output: MaturityOwnershipOutput, ctx: AnalyzerContext): Promise<void> {
+  if (!ctx.knowledge) return;
+  try {
+    const hasData = await ctx.knowledge.hasKnowledgeData();
+    if (!hasData) return;
+    const assessments = await ctx.knowledge.getComprehension({});
+    if (assessments.length === 0) return;
+    const avgComprehension = assessments.reduce((s, a) => s + a.overallScore, 0) / assessments.length;
+    const highMaturity = output.rawPhase >= 3;
+    const highComprehension = avgComprehension > 50;
+    if (highMaturity && highComprehension) output.genuineness = "genuine";
+    else if (highMaturity && !highComprehension) output.genuineness = "hollow";
+    else output.genuineness = "mixed";
+  } catch { /* non-fatal */ }
+}
 
 // ---------------------------------------------------------------------------
 // Computation

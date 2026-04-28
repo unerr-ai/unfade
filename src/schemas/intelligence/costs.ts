@@ -1,13 +1,12 @@
-// FILE: src/schemas/intelligence/costs.ts
-// UF-102: Zod schema for costs.json — Cost Attribution Engine output.
-
 import { z } from "zod";
+import { AnalyzerOutputMetaSchema, DiagnosticMessageSchema } from "../intelligence-presentation.js";
 
 export const CostDimensionSchema = z.object({
   key: z.string(),
   eventCount: z.number().int(),
   estimatedCost: z.number(),
   percentage: z.number(),
+  evidenceEventIds: z.array(z.string()).default([]),
 });
 
 export const CostAttributionSchema = z.object({
@@ -30,6 +29,8 @@ export const CostAttributionSchema = z.object({
   costPerDirectedDecision: z.number().nullable(),
   updatedAt: z.string(),
   disclaimer: z.string(),
+  _meta: AnalyzerOutputMetaSchema,
+  diagnostics: z.array(DiagnosticMessageSchema).default([]),
 });
 
 export type CostAttribution = z.infer<typeof CostAttributionSchema>;

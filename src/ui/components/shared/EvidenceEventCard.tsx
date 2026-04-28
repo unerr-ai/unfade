@@ -3,18 +3,57 @@ import type { EvidenceEvent } from "@/lib/api";
 import { sourceBadgeClass, sourceLabel, typeLabel } from "@/lib/event-labels";
 import { cn } from "@/lib/utils";
 
-/** Render a single evidence event card — reusable across Decisions, Distill, and evidence drawers. */
-export function EvidenceEventCard({ event }: { event: EvidenceEvent }) {
+interface EvidenceEventCardProps {
+  event: EvidenceEvent;
+  contribution?: number;
+  role?: "primary" | "corroborating" | "context";
+}
+
+const ROLE_STYLES = {
+  primary: "border-l-accent",
+  corroborating: "border-l-warning",
+  context: "border-l-muted",
+} as const;
+
+export function EvidenceEventCard({ event, contribution, role }: EvidenceEventCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded-md border border-border p-3">
-      <div className="flex items-center gap-2 text-xs text-muted">
-        <span>{new Date(event.timestamp).toLocaleString()}</span>
-        <span className={cn("rounded px-1.5 py-0.5", sourceBadgeClass(event.source))}>
-          {sourceLabel(event.source)}
-        </span>
-        <span className="rounded bg-raised px-1.5 py-0.5">{typeLabel(event.type)}</span>
+    <div
+      className={cn(
+        "rounded-md border border-border p-3",
+        role && "border-l-2",
+        role && ROLE_STYLES[role],
+      )}
+    >
+        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs text-muted min-w-0">
+          <span className="whitespace-nowrap">{new Date(event.timestamp).toLocaleString()}</span>
+          <span className={cn("rounded px-1.5 py-0.5 shrink-0", sourceBadgeClass(event.source))}>
+            {sourceLabel(event.source)}
+          </span>
+          <span className="rounded bg-raised px-1.5 py-0.5 shrink-0">{typeLabel(event.type)}</span>
+        </div>
+
+        {(contribution !== undefined || role) && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            {role && (
+              <span className={cn(
+                "rounded px-1 py-0.5 text-[10px]",
+                role === "primary" ? "bg-accent/20 text-accent" :
+                role === "corroborating" ? "bg-warning/20 text-warning" :
+                "bg-muted/20 text-muted",
+              )}>
+                {role}
+              </span>
+            )}
+            {contribution !== undefined && (
+              <span className="text-[10px] tabular-nums text-muted">
+                {Math.round(contribution * 100)}%
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {event.conversationTitle && (

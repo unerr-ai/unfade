@@ -1,6 +1,4 @@
-// FILE: src/server/routes/substrate.ts
-// Sprint 15G UF-450: Substrate query endpoints (graph neighborhood, trajectories, topology).
-// Reads from ~/.unfade/intelligence/substrate-*.json files written by substrate engine.
+// Substrate API routes — IP-9.3: entity exploration + existing topology/trajectory endpoints.
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -28,6 +26,71 @@ function jsonOr202(c: { json: (data: unknown, status?: number) => Response }, da
     );
   return c.json(data);
 }
+
+// ─── IP-9.3: Entity Exploration ─────────────────────────────────────────────
+
+substrateRoutes.get("/api/substrate/explore/:entityId", async (c) => {
+  const entityId = c.req.param("entityId");
+
+  const topology = await readSubstrateFile("substrate-topology.json");
+  if (!topology || typeof topology !== "object") {
+    return c.json({
+      data: {
+        entityId,
+        entity: null,
+        neighbors: [],
+        evidenceEventIds: [],
+      },
+      _meta: { tool: "substrate-explore", source: "file", found: false },
+    });
+  }
+
+  const entities = (topology as Record<string, unknown>).entities as
+    | Array<{
+        id: string;
+        type?: string;
+        state?: Record<string, unknown>;
+        confidence?: number;
+        neighbors?: Array<{ id: string; type: string; weight: number }>;
+      }>
+    | undefined;
+
+  if (!entities) {
+    return c.json({
+      data: { entityId, entity: null, neighbors: [], evidenceEventIds: [] },
+      _meta: { tool: "substrate-explore", source: "file", found: false },
+    });
+  }
+
+  const entity = entities.find((e) => e.id === entityId);
+  if (!entity) {
+    return c.json({ error: `Entity "${entityId}" not found` }, 404);
+  }
+
+  const state = entity.state ?? {};
+  const evidenceEventIds = Array.isArray(state.evidenceEventIds)
+    ? (state.evidenceEventIds as string[])
+    : [];
+
+  return c.json({
+    data: {
+      entityId,
+      entity: {
+        id: entity.id,
+        type: entity.type ?? "unknown",
+        name: (state.name as string) ?? entity.id,
+        domain: (state.domain as string) ?? "general",
+        confidence: entity.confidence ?? 0.5,
+        state,
+      },
+      neighbors: entity.neighbors ?? [],
+      evidenceEventIds,
+    },
+    _meta: { tool: "substrate-explore", source: "file", found: true },
+  });
+});
+
+// ─── Existing Topology/Trajectory Endpoints ─────────────────────────────────
 
 substrateRoutes.get("/api/substrate/entity/:id/neighborhood", async (c) => {
   const id = c.req.param("id");
