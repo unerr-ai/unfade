@@ -7,9 +7,14 @@ import { queryClient } from "./query-client";
 type SSECallback = (type: string, data: unknown) => void;
 let eventSource: EventSource | null = null;
 let listeners: SSECallback[] = [];
+let reconnectAttempt = 0;
+let dead = false;
+const MAX_RECONNECT_DELAY = 30_000;
+const MAX_RECONNECT_ATTEMPTS = 10;
 
 export function connectSSE() {
   if (eventSource) return;
+  dead = false;
   eventSource = new EventSource("/api/stream");
 
   eventSource.addEventListener("summary", (e) => {
@@ -72,17 +77,44 @@ export function connectSSE() {
     }
   });
 
+  eventSource.onopen = () => {
+    reconnectAttempt = 0;
+  };
+
   eventSource.onerror = () => {
-    toast.error("SSE disconnected — reconnecting…");
     eventSource?.close();
     eventSource = null;
-    setTimeout(connectSSE, 3000);
+
+    if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+      dead = true;
+      toast.error("Live updates disconnected. Click to reconnect.", {
+        duration: Infinity,
+        action: {
+          label: "Reconnect",
+          onClick: () => reconnectSSE(),
+        },
+      });
+      return;
+    }
+
+    const delay = Math.min(1000 * 2 ** reconnectAttempt, MAX_RECONNECT_DELAY);
+    reconnectAttempt++;
+    toast.error(`SSE disconnected — reconnecting in ${Math.round(delay / 1000)}s…`);
+    setTimeout(connectSSE, delay);
   };
 }
 
 export function disconnectSSE() {
   eventSource?.close();
   eventSource = null;
+}
+
+/** Reset retry counter and reconnect — used after max retries exhausted. */
+export function reconnectSSE() {
+  disconnectSSE();
+  reconnectAttempt = 0;
+  dead = false;
+  connectSSE();
 }
 
 export function onSSE(cb: SSECallback) {
@@ -98,4 +130,8 @@ function notify(type: string, data: unknown) {
 
 export function isSSEConnected(): boolean {
   return eventSource?.readyState === EventSource.OPEN;
+}
+
+export function isSSEDead(): boolean {
+  return dead;
 }

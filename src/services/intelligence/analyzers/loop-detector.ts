@@ -9,6 +9,7 @@ import type {
   StuckLoop,
 } from "../../../schemas/intelligence/rejections.js";
 import { logger } from "../../../utils/logger.js";
+import { getWorkerPool } from "../../workers/pool.js";
 import { classifyDomainFast } from "../domain-classifier.js";
 import type {
   IncrementalAnalyzer,
@@ -75,64 +76,6 @@ async function indexLowDirectionSessions(
   }
 }
 
-function detectStuckLoops(entries: RejectionEntry[]): StuckLoop[] {
-  const approachGroups = new Map<string, RejectionEntry[]>();
-
-  for (const entry of entries) {
-    const key = `${entry.domain}::${entry.approach}`;
-    const group = approachGroups.get(key) ?? [];
-    group.push(entry);
-    approachGroups.set(key, group);
-  }
-
-  const loops: StuckLoop[] = [];
-
-  for (const [, group] of approachGroups) {
-    if (group.length < STUCK_LOOP_MIN) continue;
-
-    const similar = findSimilarCluster(group);
-    if (similar.length >= STUCK_LOOP_MIN) {
-      const dates = similar.map((e) => e.date).sort();
-      loops.push({
-        domain: similar[0].domain,
-        approach: similar[0].approach,
-        occurrences: similar.length,
-        firstSeen: dates[0],
-        lastSeen: dates[dates.length - 1],
-        resolution: null,
-      });
-    }
-  }
-
-  return loops.sort((a, b) => b.occurrences - a.occurrences);
-}
-
-function findSimilarCluster(entries: RejectionEntry[]): RejectionEntry[] {
-  if (entries.length < 2) return entries;
-
-  const clusters: RejectionEntry[][] = [];
-  const visited = new Set<number>();
-
-  for (let i = 0; i < entries.length; i++) {
-    if (visited.has(i)) continue;
-    const cluster = [entries[i]];
-    visited.add(i);
-
-    for (let j = i + 1; j < entries.length; j++) {
-      if (visited.has(j)) continue;
-      const sim = cosineSimilarity(entries[i].summary, entries[j].summary);
-      if (sim >= SIMILARITY_THRESHOLD) {
-        cluster.push(entries[j]);
-        visited.add(j);
-      }
-    }
-
-    clusters.push(cluster);
-  }
-
-  return clusters.reduce((max, c) => (c.length > max.length ? c : max), []);
-}
-
 /**
  * Check if a new session text is similar to any indexed rejection.
  * Used for MCP context injection — warn before the developer gets stuck again.
@@ -195,7 +138,7 @@ async function detectIntentRecurrence(db: AnalyzerContext["analytics"]): Promise
       return {
         domain,
         approach: intent.slice(0, 100),
-        occurrences: (row[1] as number) ?? 0,
+        occurrences: Number(row[1] ?? 0),
         firstSeen: ((row[2] as string) ?? "").slice(0, 10),
         lastSeen: ((row[3] as string) ?? "").slice(0, 10),
         resolution: null,
@@ -215,7 +158,22 @@ async function computeLoopIndex(db: AnalyzerContext["analytics"]): Promise<Rejec
 
   const entries = await indexLowDirectionSessions(db);
   const intentLoops = await detectIntentRecurrence(db);
-  const stuckLoops = [...detectStuckLoops(entries), ...intentLoops];
+
+  // Offload O(n²) cosine similarity clustering to CPU worker thread
+  const cosineLoops = await getWorkerPool().computeCosineClusters({
+    entries: entries.map((e) => ({
+      summary: e.summary,
+      domain: e.domain,
+      approach: e.approach,
+      eventId: e.eventId,
+      date: e.date,
+      contentHash: e.contentHash,
+      resolution: e.resolution,
+    })),
+    threshold: SIMILARITY_THRESHOLD,
+    minClusterSize: STUCK_LOOP_MIN,
+  });
+  const stuckLoops = [...cosineLoops, ...intentLoops];
 
   return {
     entries: entries.slice(-200),

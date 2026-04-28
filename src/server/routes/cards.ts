@@ -1,7 +1,7 @@
 // FILE: src/server/routes/cards.ts
 // UF-061: Card API routes.
-// POST /unfade/cards/generate — generate card PNG for a date.
-// GET /unfade/cards/image/:date — serve generated card PNG.
+// POST /api/cards/generate — generate card PNG for a date.
+// GET /api/cards/image/:date — serve generated card PNG.
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";

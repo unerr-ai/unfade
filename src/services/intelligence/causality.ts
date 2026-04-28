@@ -165,7 +165,7 @@ async function findInvestigationChains(ctx: AnalyzerContext): Promise<CausalityC
         outcome: deriveOutcome((row[5] as string) ?? ""),
         decisions: [],
         featureId: (row[6] as string) ?? null,
-        turnCount: (row[3] as number) ?? 0,
+        turnCount: Number(row[3] ?? 0),
       });
     }
   } catch {
@@ -209,7 +209,7 @@ async function findDebuggingChains(ctx: AnalyzerContext): Promise<CausalityChain
         outcome: deriveOutcome((row[4] as string) ?? ""),
         decisions: [],
         featureId: (row[5] as string) ?? null,
-        turnCount: (row[3] as number) ?? 0,
+        turnCount: Number(row[3] ?? 0),
       });
     }
   } catch {
@@ -253,7 +253,7 @@ async function findImplementationChains(ctx: AnalyzerContext): Promise<Causality
         outcome: deriveOutcome((row[4] as string) ?? ""),
         decisions: [],
         featureId: (row[5] as string) ?? null,
-        turnCount: (row[3] as number) ?? 0,
+        turnCount: Number(row[3] ?? 0),
       });
     }
   } catch {

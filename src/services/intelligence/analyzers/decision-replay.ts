@@ -65,7 +65,7 @@ async function detectDomainDrift(
       const decisionText = (row[1] as string) ?? "";
       const domain = (row[2] as string) ?? "";
       const rationale = (row[3] as string) ?? null;
-      const hds = (row[4] as number) ?? 0;
+      const hds = Number(row[4] ?? 0);
 
       if (hds < 0.5) continue;
 

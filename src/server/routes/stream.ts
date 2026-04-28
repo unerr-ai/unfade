@@ -15,6 +15,7 @@ import { getEventsDir, getStateDir } from "../../utils/paths.js";
 export const streamRoutes = new Hono();
 
 const HEALTH_INTERVAL_MS = 30_000;
+const PING_INTERVAL_MS = 25_000;
 const EVENT_BACKFILL_LINES = 20;
 const EVENT_TAIL_CHUNK_MAX = 512 * 1024;
 
@@ -162,6 +163,20 @@ streamRoutes.get("/api/stream", (c) => {
       }
     }, HEALTH_INTERVAL_MS);
 
+    // Lightweight keepalive ping to prevent browser/proxy from killing idle connections
+    const pingInterval = setInterval(async () => {
+      if (aborted) return;
+      try {
+        await stream.writeSSE({
+          data: "",
+          event: "ping",
+          id: String(eventId++),
+        });
+      } catch {
+        aborted = true;
+      }
+    }, PING_INTERVAL_MS);
+
     // Keep connection alive until client disconnects
     while (!aborted) {
       await stream.sleep(1000);
@@ -169,6 +184,7 @@ streamRoutes.get("/api/stream", (c) => {
 
     // Cleanup
     clearInterval(healthInterval);
+    clearInterval(pingInterval);
     eventBus.offBus(busListener);
   });
 });

@@ -37,7 +37,7 @@ async function computeAllWindows(db: DbLike): Promise<WindowState> {
         `SELECT COUNT(*) FROM events WHERE ts >= $1::TIMESTAMP AND ts <= $2::TIMESTAMP`,
         [cutoff, now],
       );
-      const eventCount = (countResult[0]?.values[0]?.[0] as number) ?? 0;
+      const eventCount = Number(countResult[0]?.values[0]?.[0] ?? 0);
       if (eventCount === 0) {
         windows[label] = {
           windowSize: label,
@@ -55,7 +55,7 @@ async function computeAllWindows(db: DbLike): Promise<WindowState> {
            AND source IN ('ai-session', 'mcp-active') AND human_direction_score IS NOT NULL`,
         [cutoff, now],
       );
-      const directionDensity = Math.round(((dirResult[0]?.values[0]?.[0] as number) ?? 0) * 100);
+      const directionDensity = Math.round(Number(dirResult[0]?.values[0]?.[0] ?? 0) * 100);
 
       const toolResult = await db.exec(
         `SELECT ai_tool as tool, COUNT(*) as cnt FROM events
@@ -67,7 +67,7 @@ async function computeAllWindows(db: DbLike): Promise<WindowState> {
       const toolMix: Record<string, number> = {};
       if (toolResult[0]) {
         for (const row of toolResult[0].values) {
-          toolMix[(row[0] as string) ?? "unknown"] = (row[1] as number) ?? 0;
+          toolMix[(row[0] as string) ?? "unknown"] = Number(row[1] ?? 0);
         }
       }
 
@@ -158,8 +158,8 @@ export async function getLatestWindow(
     return {
       windowSize: row[0] as string,
       windowEnd: row[1] as string,
-      directionDensity: row[2] as number,
-      eventCount: row[3] as number,
+      directionDensity: Number(row[2]),
+      eventCount: Number(row[3]),
       toolMix: JSON.parse((row[4] as string) || "{}"),
     };
   } catch {

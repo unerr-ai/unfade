@@ -24,7 +24,14 @@ export function IntelligenceCard({
   const { ref, inView } = useInView({ triggerOnce: true, rootMargin: "100px" });
   const { data, isLoading } = useData({ enabled: inView });
 
-  const display = data ? extract(data) : null;
+  let display: { value: string | number; interpretation: string } | null = null;
+  if (data) {
+    try {
+      display = extract(data);
+    } catch {
+      display = { value: "—", interpretation: "Data format unexpected" };
+    }
+  }
 
   return (
     <button

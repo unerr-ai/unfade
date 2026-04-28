@@ -350,8 +350,8 @@ export async function analyzeUnanalyzedChains(
 
       const sessionEvents: SessionEvent[] = eventsResult[0].values.map((r, i) => ({
         promptText: (r[0] as string) ?? "",
-        turnIndex: (r[1] as number) ?? i,
-        hds: (r[2] as number) ?? 0,
+        turnIndex: Number(r[1] ?? i),
+        hds: Number(r[2] ?? 0),
         filesReferenced: Array.isArray(r[3]) ? (r[3] as string[]) : [],
         filesModified: Array.isArray(r[4]) ? (r[4] as string[]) : [],
         outcome: (r[5] as string) ?? null,

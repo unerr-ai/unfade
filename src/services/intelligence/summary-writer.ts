@@ -189,12 +189,12 @@ async function computeComprehensionAvg(db: DbLike): Promise<number | null> {
   try {
     const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const result = await db.exec(
-      `SELECT AVG(cp.score) FROM comprehension_proxy cp
-       INNER JOIN events e ON cp.event_id = e.id WHERE e.ts >= $1::TIMESTAMP`,
+      `SELECT AVG(ca.overall_score) FROM comprehension_assessment ca
+       WHERE ca.timestamp >= $1::TIMESTAMP`,
       [cutoff],
     );
     const avg = result[0]?.values[0]?.[0] as number | null;
-    return avg != null ? Math.round(avg * 100) : null;
+    return avg != null ? Math.round(avg) : null;
   } catch {
     return null;
   }
@@ -235,7 +235,7 @@ async function computeVelocityProxy(db: DbLike): Promise<number | null> {
   try {
     const result = await db.exec("SELECT rdi FROM metric_snapshots ORDER BY date DESC LIMIT 7");
     if (!result[0]?.values || result[0].values.length < 2) return null;
-    const values = result[0].values.map((r) => r[0] as number).reverse();
+    const values = result[0].values.map((r) => Number(r[0] ?? 0)).reverse();
     const first = values[0];
     const last = values[values.length - 1];
     return first === 0 ? null : Math.round(((last - first) / first) * 100);

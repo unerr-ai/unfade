@@ -6,6 +6,7 @@
 package capture
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -40,9 +41,28 @@ func NewEventWriter(eventsDir string, eventCh <-chan CaptureEvent, logger Captur
 }
 
 // Start begins the writer goroutine. Non-blocking.
+// Seeds the counter from today's existing JSONL file so events_today is accurate.
 func (w *EventWriter) Start() error {
 	if err := os.MkdirAll(w.eventsDir, 0o755); err != nil {
 		return fmt.Errorf("create events directory: %w", err)
+	}
+
+	// Seed counter from pre-existing events in today's file
+	today := time.Now().Format("2006-01-02")
+	todayFile := filepath.Join(w.eventsDir, today+".jsonl")
+	if f, err := os.Open(todayFile); err == nil {
+		scanner := bufio.NewScanner(f)
+		var lines int64
+		for scanner.Scan() {
+			if len(scanner.Bytes()) > 0 {
+				lines++
+			}
+		}
+		f.Close()
+		w.count.Store(lines)
+		w.logger.Debug("seeded events_today from existing file", map[string]any{
+			"file": today + ".jsonl", "count": lines,
+		})
 	}
 
 	w.wg.Add(1)

@@ -71,10 +71,10 @@ export async function materializeSessionMetrics(db: DbLike): Promise<number> {
 
       const startTs = (row[1] as string) ?? "";
       const endTs = (row[2] as string) ?? "";
-      const eventCount = (row[3] as number) ?? 0;
-      const turnCount = (row[4] as number) ?? 0;
+      const eventCount = Number(row[3] ?? 0);
+      const turnCount = Number(row[4] ?? 0);
       const outcome = (row[5] as string) ?? null;
-      const estimatedCost = (row[6] as number) ?? 0;
+      const estimatedCost = Number(row[6] ?? 0);
       const phases = (row[7] as string) ?? "";
       const branch = (row[8] as string) ?? null;
       const domain = (row[9] as string) ?? null;

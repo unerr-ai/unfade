@@ -1,5 +1,5 @@
 // FILE: src/server/routes/context.ts
-// GET /unfade/context — recent context retrieval via Sprint 2A reader.
+// GET /api/context — recent context retrieval via Sprint 2A reader.
 
 import { Hono } from "hono";
 import { ContextInputSchema } from "../../schemas/mcp.js";

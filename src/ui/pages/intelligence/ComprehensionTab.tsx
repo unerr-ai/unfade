@@ -54,7 +54,9 @@ export function ComprehensionTab({ enabled = true }: { enabled?: boolean }) {
         <div className="rounded-lg border border-border bg-surface p-5">
           <h3 className="mb-4 text-sm font-heading font-semibold">Module Comprehension</h3>
           <RadarChart
-            axes={modules.slice(0, 8).map(([name, m]) => ({ label: name, value: m.score }))}
+            axes={modules
+              .slice(0, 8)
+              .map(([name, m]) => ({ label: name, value: (m as any)?.score ?? 0 }))}
           />
         </div>
       )}
@@ -63,16 +65,24 @@ export function ComprehensionTab({ enabled = true }: { enabled?: boolean }) {
         <div className="rounded-lg border border-border bg-surface p-5">
           <h3 className="mb-3 text-sm font-heading font-semibold">Module Detail</h3>
           <div className="divide-y divide-border">
-            {modules.map(([name, m]) => (
-              <div key={name} className="flex items-center gap-4 py-2.5 text-sm">
-                <span className="w-32 truncate font-medium text-foreground">{name}</span>
-                <div className="h-1.5 flex-1 rounded-full bg-raised overflow-hidden">
-                  <div className="h-full rounded-full bg-accent" style={{ width: `${m.score}%` }} />
+            {modules.map(([name, m]) => {
+              const mod = m as any;
+              return (
+                <div key={name} className="flex items-center gap-4 py-2.5 text-sm">
+                  <span className="w-32 truncate font-medium text-foreground">{name}</span>
+                  <div className="h-1.5 flex-1 rounded-full bg-raised overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-accent"
+                      style={{ width: `${mod?.score ?? 0}%` }}
+                    />
+                  </div>
+                  <span className="w-10 text-right font-mono text-muted">{mod?.score ?? 0}</span>
+                  <span className="w-16 text-right text-xs text-muted">
+                    {mod?.sessions ?? 0} sess
+                  </span>
                 </div>
-                <span className="w-10 text-right font-mono text-muted">{m.score}</span>
-                <span className="w-16 text-right text-xs text-muted">{m.sessions} sess</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

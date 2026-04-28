@@ -1,13 +1,15 @@
 // FILE: src/server/http.ts
-// UF-050: Hono HTTP server on localhost:7654 (configurable, fallback 7655–7660).
-// Binds to 127.0.0.1 ONLY. Writes server.json atomically on startup.
-// All JSON responses wrapped in { data, _meta } envelope via middleware.
+// Hono HTTP server on localhost:7654 (configurable, fallback 7655–7660).
+// All API routes mounted under /api/*. React SPA served from Vite-built dist/.
 
-// FILE: src/server/http.ts
-// Phase 17: Hono API server + React SPA serving.
-// Backend API routes only — all HTML UI served from Vite-built dist/ directory.
-
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer as createNodeServer } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -126,7 +128,6 @@ export function createApp(): Hono {
     if (
       path === "/setup" ||
       path.startsWith("/api/") ||
-      path.startsWith("/unfade/") ||
       path.startsWith("/public/") ||
       path.startsWith("/assets/") ||
       path === "/favicon.ico" ||
@@ -163,20 +164,18 @@ export function createApp(): Hono {
   });
 
   // Health check — redirect to unified system health endpoint
-  app.get("/unfade/health", (c) => c.redirect("/api/system/health"));
+  app.get("/api/health", (c) => c.redirect("/api/system/health"));
 
-  // Mount route groups
-  app.route("/unfade", contextRoutes);
-  app.route("/unfade", queryRoutes);
-  app.route("/unfade", decisionsRoutes);
-  app.route("/unfade", profileRoutes);
-  app.route("/unfade", distillRoutes);
-  app.route("/unfade", cardsRoutes);
-  app.route("/unfade", amplifyRoutes);
-  app.route("/unfade", feedbackRoutes);
-  app.route("/unfade", settingsRoutes);
-
-  // Phase 5.6: Living intelligence routes
+  // Mount all API routes under /api/*
+  app.route("/api", contextRoutes);
+  app.route("/api", queryRoutes);
+  app.route("/api", decisionsRoutes);
+  app.route("/api", profileRoutes);
+  app.route("/api", distillRoutes);
+  app.route("/api", cardsRoutes);
+  app.route("/api", amplifyRoutes);
+  app.route("/api", feedbackRoutes);
+  app.route("/api", settingsRoutes);
   app.route("", summaryRoutes);
   app.route("", streamRoutes);
   app.route("", insightsRoutes);
@@ -208,12 +207,7 @@ export function createApp(): Hono {
 
     app.get("*", (c) => {
       const path = c.req.path;
-      if (
-        path.startsWith("/api/") ||
-        path.startsWith("/unfade/") ||
-        path.startsWith("/public/") ||
-        path.startsWith("/mcp")
-      ) {
+      if (path.startsWith("/api/") || path.startsWith("/public/") || path.startsWith("/mcp")) {
         return c.notFound();
       }
       return c.html(spaHtml);
@@ -221,6 +215,20 @@ export function createApp(): Hono {
   }
 
   return app;
+}
+
+/**
+ * Read existing server.json to check for a running server.
+ */
+function readServerJson(cwd?: string): ServerInfo | null {
+  try {
+    const stateDir = getStateDir(cwd);
+    const path = join(stateDir, "server.json");
+    if (!existsSync(path)) return null;
+    return JSON.parse(readFileSync(path, "utf-8")) as ServerInfo;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -282,11 +290,25 @@ export interface RunningServer {
 /**
  * Start the HTTP server on the configured port (with fallback).
  * Writes server.json atomically on startup.
+ * Enforces single-instance: if another server is alive on the preferred port,
+ * we abort instead of silently starting on the next port.
  */
 export async function startServer(options: StartServerOptions): Promise<RunningServer> {
   const { config, cwd } = options;
   const app = createApp();
   const startPort = config.mcp.httpPort;
+
+  // Single-instance is enforced upstream by acquireServerLock() in unfade-server.ts.
+  // If we reach here, we are the only instance. Clean up stale server.json if present.
+  const existingServer = readServerJson(cwd);
+  if (existingServer && existingServer.pid !== process.pid) {
+    logger.debug("Cleaning stale server.json", { stalePid: existingServer.pid });
+    try {
+      unlinkSync(join(getStateDir(cwd), "server.json"));
+    } catch {
+      // already gone
+    }
+  }
 
   const port = await findAvailablePort(startPort);
 

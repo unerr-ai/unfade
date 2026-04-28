@@ -134,7 +134,7 @@ async function loadTrackedDecisions(db: DbLike): Promise<DurabilityRecord[]> {
         date: (row[1] as string) ?? "",
         domain: (row[2] as string) ?? "general",
         description: (row[3] as string) ?? "",
-        alternativesCount: (row[4] as number) ?? 0,
+        alternativesCount: Number(row[4] ?? 0),
         files,
         status: "pending" as const,
         revisionDetectedAt: null,
@@ -169,7 +169,7 @@ async function checkRevised(db: DbLike, decision: DurabilityRecord): Promise<boo
            AND source IN ('git-commit', 'ai-session')`,
         [cutoff, windowEnd, pattern],
       );
-      const count = (result[0]?.values[0]?.[0] as number) ?? 0;
+      const count = Number(result[0]?.values[0]?.[0] ?? 0);
       if (count > 3) return true;
     }
 

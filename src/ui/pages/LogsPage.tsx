@@ -58,7 +58,7 @@ export default function LogsPage() {
     refetchInterval: 10_000,
   });
 
-  const allLogs = data?.logs ?? [];
+  const allLogs = data?.data?.entries ?? [];
 
   // Client-side filtering
   const filtered = allLogs.filter((l) => {

@@ -97,7 +97,9 @@ export async function createLLMProvider(config: UnfadeConfig): Promise<LLMProvid
       };
     }
     case "custom": {
-      // Custom provider uses OpenAI-compatible API with custom base URL
+      // Custom provider uses OpenAI-compatible API with custom base URL.
+      // Force chat completions endpoint — most OpenAI-compatible providers
+      // (Fireworks, vLLM, LM Studio, etc.) don't support the Responses API.
       const { createOpenAI } = await import("@ai-sdk/openai");
       const baseURL =
         normalizeOpenAICompatibleApiBase(config.distill.apiBase) ?? config.distill.apiBase;
@@ -106,7 +108,7 @@ export async function createLLMProvider(config: UnfadeConfig): Promise<LLMProvid
         baseURL,
       });
       return {
-        model: custom(modelName),
+        model: custom.chat(modelName),
         provider: "custom",
         modelName,
       };

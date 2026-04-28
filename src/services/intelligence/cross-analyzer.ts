@@ -65,9 +65,9 @@ const ANALYZER_SERIES: Record<string, string> = {
     GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
 
   "comprehension-radar": `
-    SELECT e.ts::DATE as day, AVG(cp.score) as value
-    FROM comprehension_proxy cp JOIN events e ON cp.event_id = e.id
-    WHERE e.ts >= now() - INTERVAL '30 days'
+    SELECT ca.timestamp::DATE as day, AVG(ca.overall_score) as value
+    FROM comprehension_assessment ca
+    WHERE ca.timestamp >= now() - INTERVAL '30 days'
     GROUP BY day HAVING COUNT(*) >= 2 ORDER BY day`,
 
   "velocity-tracker": `
@@ -150,7 +150,7 @@ export async function discoverCorrelations(
         const series = new Map<string, number>();
         for (const row of result[0].values) {
           const day = String(row[0]);
-          const val = (row[1] as number) ?? 0;
+          const val = Number(row[1] ?? 0);
           series.set(day, val);
         }
         seriesCache.set(name, series);

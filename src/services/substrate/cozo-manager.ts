@@ -1,8 +1,7 @@
 // FILE: src/services/substrate/cozo-manager.ts
-// CozoDB connection manager — singleton with health check + schema migration.
+// CozoDB connection manager — singleton with health check + idempotent schema init.
 // SQLite backend at ~/.unfade/intelligence/graph.db. In-memory fallback.
-// SUB-6.4: health check on cached instance return.
-// SUB-6.5: meta relation with schema_version, auto-migration.
+// Schema v3: unified knowledge graph (entities, facts, comprehension, metacognition).
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +33,6 @@ export class CozoManager {
     try {
       CozoManager.instance = new CozoDb("sqlite", dbPath);
       await CozoManager.ensureSchema(CozoManager.instance);
-      await CozoManager.runMigrations(CozoManager.instance);
       logger.debug("CozoDB graph database initialized", { path: dbPath });
     } catch (err) {
       logger.debug("CozoDB initialization failed — falling back to in-memory", {
@@ -42,7 +40,6 @@ export class CozoManager {
       });
       CozoManager.instance = new CozoDb("mem", "");
       await CozoManager.ensureSchema(CozoManager.instance);
-      await CozoManager.runMigrations(CozoManager.instance);
     }
 
     return CozoManager.instance;
@@ -58,7 +55,6 @@ export class CozoManager {
   static async createTestInstance(): Promise<CozoDb> {
     const db = new CozoDb("mem", "");
     await CozoManager.ensureSchema(db);
-    await CozoManager.runMigrations(db);
     return db;
   }
 
@@ -72,12 +68,20 @@ export class CozoManager {
     }
   }
 
+  /**
+   * Idempotent schema initialization — creates all relations and indexes.
+   * CozoDB's `:create` is a no-op if the relation already exists, so this
+   * is safe to call on every startup.
+   */
   private static async ensureSchema(db: CozoDb): Promise<void> {
+    // Meta relation (stores schema version)
     try {
       await db.run(META_SCHEMA);
     } catch {
       // already exists
     }
+
+    // All stored relations
     for (const stmt of ALL_COZO_SCHEMA) {
       try {
         await db.run(stmt);
@@ -85,6 +89,8 @@ export class CozoManager {
         // relation already exists
       }
     }
+
+    // All HNSW indexes
     for (const stmt of ALL_COZO_INDEXES) {
       try {
         await db.run(stmt);
@@ -92,30 +98,15 @@ export class CozoManager {
         // index already exists
       }
     }
-  }
 
-  private static async runMigrations(db: CozoDb): Promise<void> {
+    // Stamp schema version
     try {
-      const result = await db.run("?[value] := *meta{key: 'schema_version', value}");
-      const rows = (result as { rows?: unknown[][] }).rows ?? [];
-      const currentVersion = rows.length > 0 ? Number.parseInt(rows[0][0] as string, 10) : 0;
-
-      if (currentVersion < SCHEMA_VERSION) {
-        logger.debug(`CozoDB schema migration: ${currentVersion} → ${SCHEMA_VERSION}`);
-        await db.run(
-          `?[key, value] <- [['schema_version', '${SCHEMA_VERSION}']]
-          :put meta {key => value}`,
-        );
-      }
+      await db.run(
+        `?[key, value] <- [['schema_version', '${SCHEMA_VERSION}']]
+        :put meta {key => value}`,
+      );
     } catch {
-      try {
-        await db.run(
-          `?[key, value] <- [['schema_version', '${SCHEMA_VERSION}']]
-          :put meta {key => value}`,
-        );
-      } catch {
-        // non-fatal
-      }
+      // non-fatal — meta write failure doesn't block operation
     }
   }
 }

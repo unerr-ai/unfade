@@ -43,9 +43,9 @@ async function computeByModule(
 
   try {
     const result = await db.exec(
-      `SELECT module, score, event_count, updated_at
-       FROM comprehension_by_module
-       ORDER BY event_count DESC`,
+      `SELECT domain AS module, current_score AS score, interaction_count AS event_count, updated_at
+       FROM domain_comprehension
+       ORDER BY interaction_count DESC`,
     );
     if (!result[0]?.values.length) return modules;
 
@@ -53,8 +53,8 @@ async function computeByModule(
 
     for (const row of result[0].values) {
       const module = row[0] as string;
-      const rawScore = row[1] as number;
-      const count = row[2] as number;
+      const rawScore = Number(row[1] ?? 0);
+      const count = Number(row[2] ?? 0);
       const updated = (row[3] as string) ?? now;
 
       const dominantPhase = modulePhases[module];
@@ -140,7 +140,7 @@ async function computeByDomain(db: AnalyzerContext["analytics"]): Promise<Record
     if (!result[0]?.values.length) return domains;
 
     for (const row of result[0].values) {
-      domains[row[0] as string] = Math.round((row[1] as number) * 100);
+      domains[row[0] as string] = Math.round(Number(row[1] ?? 0) * 100);
     }
   } catch {
     // table may not exist
@@ -224,7 +224,7 @@ export const comprehensionRadarAnalyzer: IncrementalAnalyzer<
   ComprehensionRadar
 > = {
   name: "comprehension-radar",
-  outputFile: "comprehension-radar.json",
+  outputFile: "comprehension.json",
   eventFilter: { sources: ["ai-session", "mcp-active"] },
   minDataPoints: 10,
 

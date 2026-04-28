@@ -5,6 +5,7 @@
 
 import { logger } from "../../utils/logger.js";
 import type { DbLike } from "../cache/manager.js";
+import { getWorkerPool } from "../workers/pool.js";
 
 export type Outcome = "success" | "partial" | "failed" | "abandoned";
 
@@ -23,7 +24,7 @@ interface EventRow {
 export async function classifyOutcomes(db: DbLike, eventIds: string[]): Promise<number> {
   if (eventIds.length === 0) return 0;
 
-  let classified = 0;
+  const classifications: Array<{ eventId: string; metadata: string }> = [];
 
   for (const eventId of eventIds) {
     const rows = await db.exec(
@@ -46,24 +47,26 @@ export async function classifyOutcomes(db: DbLike, eventIds: string[]): Promise<
     const outcome = await deriveOutcome(metadata, db, eventId);
     metadata.outcome = outcome;
 
-    db.run("UPDATE events SET metadata = ? WHERE id = ?", [JSON.stringify(metadata), eventId]);
-    classified++;
+    classifications.push({ eventId, metadata: JSON.stringify(metadata) });
   }
 
-  if (classified > 0) {
-    logger.debug("Outcome classification complete", { classified });
+  // Dispatch batched writes to worker thread
+  if (classifications.length > 0) {
+    await getWorkerPool().classifyOutcomes(classifications);
+    logger.debug("Outcome classification complete", { classified: classifications.length });
   }
 
-  return classified;
+  return classifications.length;
 }
 
 /**
  * Classify all unclassified AI conversation events in the database.
  * Used for backfill after initial deployment.
  */
-export async function classifyAllUnclassified(db: DbLike): Promise<number> {
+export async function classifyAllUnclassified(db: DbLike, limit = 200): Promise<number> {
   const rows = await db.exec(
-    "SELECT id FROM events WHERE type = 'ai-conversation' AND json_extract(metadata, '$.outcome') IS NULL",
+    "SELECT id FROM events WHERE type = 'ai-conversation' AND json_extract(metadata, '$.outcome') IS NULL LIMIT ?",
+    [limit],
   );
 
   if (!rows[0] || rows[0].values.length === 0) return 0;

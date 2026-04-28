@@ -52,8 +52,11 @@ const CARDS: CardDef[] = [
     icon: "🏎",
     useData: useMaturity,
     extract: (d: any) => {
-      const phase = getPhaseInfo(d.phase);
-      return { value: phase.label, interpretation: phase.diagnostic };
+      const phase = getPhaseInfo(d?.phase ?? 1);
+      return {
+        value: phase?.label ?? "—",
+        interpretation: phase?.diagnostic ?? "Assessing maturity",
+      };
     },
     detail: MaturityTab,
   },
@@ -63,8 +66,8 @@ const CARDS: CardDef[] = [
     icon: "⚡",
     useData: useEfficiency,
     extract: (d: any) => ({
-      value: d.aes ?? 0,
-      interpretation: d.interpretation ?? "—",
+      value: d?.aes ?? 0,
+      interpretation: d?.interpretation ?? "—",
     }),
     detail: lazy(() =>
       Promise.resolve({
@@ -81,8 +84,8 @@ const CARDS: CardDef[] = [
     icon: "🧠",
     useData: useComprehension,
     extract: (d: any) => ({
-      value: `${d.overall ?? 0}%`,
-      interpretation: d.interpretation ?? "—",
+      value: `${d?.overall ?? 0}%`,
+      interpretation: d?.interpretation ?? "—",
     }),
     detail: ComprehensionTab,
   },
@@ -92,11 +95,11 @@ const CARDS: CardDef[] = [
     icon: "🎯",
     useData: useAutonomy,
     extract: (d: any) => ({
-      value: d.independenceIndex ?? 0,
+      value: d?.independenceIndex ?? 0,
       interpretation:
-        (d.independenceIndex ?? 0) > 75
+        (d?.independenceIndex ?? 0) > 75
           ? "Steering with precision"
-          : (d.independenceIndex ?? 0) > 40
+          : (d?.independenceIndex ?? 0) > 40
             ? "Transmission engaging"
             : "Engine running without steering",
     }),
@@ -108,8 +111,8 @@ const CARDS: CardDef[] = [
     icon: "🚀",
     useData: useVelocity,
     extract: (d: any) => ({
-      value: `${(d.overallMagnitude ?? 0).toFixed(1)}`,
-      interpretation: `decisions/day · ${d.overallTrend === "up" ? "↑ Accelerating" : d.overallTrend === "down" ? "↓ Decelerating" : "→ Cruising"}`,
+      value: `${(d?.overallMagnitude ?? 0).toFixed(1)}`,
+      interpretation: `decisions/day · ${d?.overallTrend === "up" ? "↑ Accelerating" : d?.overallTrend === "down" ? "↓ Decelerating" : "→ Cruising"}`,
     }),
     detail: VelocityTab,
   },
@@ -119,11 +122,11 @@ const CARDS: CardDef[] = [
     icon: "💰",
     useData: useCosts,
     extract: (d: any) => ({
-      value: `$${(d.costPerDirectedDecision ?? 0).toFixed(2)}`,
+      value: `$${(d?.costPerDirectedDecision ?? 0).toFixed(2)}`,
       interpretation:
-        (d.costPerDirectedDecision ?? 0) < 0.3
+        (d?.costPerDirectedDecision ?? 0) < 0.3
           ? "Running lean"
-          : (d.costPerDirectedDecision ?? 0) <= 1.0
+          : (d?.costPerDirectedDecision ?? 0) <= 1.0
             ? "Nominal fuel consumption"
             : "Running rich",
     }),
@@ -135,7 +138,7 @@ const CARDS: CardDef[] = [
     icon: "🔧",
     useData: usePromptPatterns,
     extract: (d: any) => {
-      const top = (d.effectivePatterns ?? [])[0];
+      const top = (d?.effectivePatterns ?? [])[0];
       return {
         value: top?.pattern ?? "—",
         interpretation: top
@@ -162,7 +165,7 @@ const CARDS: CardDef[] = [
     icon: "📖",
     useData: useNarratives,
     extract: (d: any) => {
-      const count = (d.narratives ?? []).length;
+      const count = (d?.narratives ?? []).length;
       return {
         value: count,
         interpretation:

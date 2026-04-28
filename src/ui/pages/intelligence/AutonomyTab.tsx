@@ -78,8 +78,16 @@ export function AutonomyTab({ enabled = true }: { enabled?: boolean }) {
   if (!data)
     return <div className="py-12 text-center text-muted">Steering data is warming up…</div>;
 
-  const bd = data.breakdown;
-  const history = (data.hdsHistory ?? []).map((h) => ({ label: h.date.slice(5), value: h.value }));
+  const bd = data.breakdown ?? {
+    hds: 0,
+    modificationRate: 0,
+    alternativesEval: 0,
+    comprehensionTrend: 0,
+  };
+  const history = (data.hdsHistory ?? []).map((h: any) => ({
+    label: h?.date?.slice(5) ?? "",
+    value: h?.value ?? 0,
+  }));
   const deps: DomainDep[] = data.dependencyMap ?? [];
   const diagnostics = buildSteeringDiagnostics(deps, bd);
 

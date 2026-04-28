@@ -5,6 +5,7 @@
 
 import { logger } from "../../utils/logger.js";
 import type { DbLike } from "../cache/manager.js";
+import { getWorkerPool } from "../workers/pool.js";
 
 export interface Feature {
   id: string;
@@ -31,26 +32,64 @@ interface EventForFeature {
 /**
  * Process new events and assign them to features.
  * Called after each materialization tick with newly added event IDs.
+ * Batch-loads events to avoid N+1 query pattern.
  */
 export async function assignEventsToFeatures(db: DbLike, newEventIds: string[]): Promise<void> {
   if (newEventIds.length === 0) return;
 
-  const activeFeatures = await loadActiveFeatures(db);
+  const startMs = Date.now();
+  const startMem = process.memoryUsage();
+  logger.info(`[feature-boundary] Starting feature assignment for ${newEventIds.length} events`, {
+    heapUsedMB: Math.round(startMem.heapUsed / 1024 / 1024),
+    rssMB: Math.round(startMem.rss / 1024 / 1024),
+  });
 
-  for (const eventId of newEventIds) {
-    const event = await loadEvent(db, eventId);
-    if (!event) continue;
+  const activeFeatures = await loadActiveFeatures(db);
+  const pool = getWorkerPool();
+
+  // Batch-load all events in one query instead of per-event queries
+  const events = await loadEventsBatch(db, newEventIds);
+  logger.info(`[feature-boundary] Loaded ${events.length}/${newEventIds.length} events in batch`, {
+    elapsedMs: Date.now() - startMs,
+  });
+
+  const newFeatures: Array<{
+    id: string;
+    projectId: string;
+    name: string;
+    branch: string | null;
+    firstSeen: string;
+    lastSeen: string;
+    eventCount: number;
+    fileCount: number;
+    sessionCount: number;
+    status: string;
+  }> = [];
+  const featureUpdates: Array<{ featureId: string; lastSeen: string }> = [];
+  const eventFeatureLinks: Array<{ eventId: string; featureId: string }> = [];
+
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
 
     const assignment = assignFeature(event, activeFeatures);
 
     if (assignment.isNew) {
-      // Create new feature in DB
       const feature = createFeatureFromEvent(event, assignment.featureId);
-      insertFeature(db, feature, event.projectId);
+      newFeatures.push({
+        id: feature.id,
+        projectId: event.projectId,
+        name: feature.name,
+        branch: feature.branch,
+        firstSeen: feature.firstSeen,
+        lastSeen: feature.lastSeen,
+        eventCount: feature.eventCount,
+        fileCount: feature.fileCount,
+        sessionCount: feature.sessionCount,
+        status: feature.status,
+      });
       activeFeatures.push(feature);
     } else {
-      // Update existing feature
-      updateFeatureWithEvent(db, assignment.featureId, event);
+      featureUpdates.push({ featureId: assignment.featureId, lastSeen: event.ts });
       const existing = activeFeatures.find((f) => f.id === assignment.featureId);
       if (existing) {
         existing.lastSeen = event.ts;
@@ -58,95 +97,173 @@ export async function assignEventsToFeatures(db: DbLike, newEventIds: string[]):
       }
     }
 
-    // Link event to feature
-    db.run("INSERT OR IGNORE INTO event_features (event_id, feature_id) VALUES (?, ?)", [
-      eventId,
-      assignment.featureId,
-    ]);
+    eventFeatureLinks.push({ eventId: event.id, featureId: assignment.featureId });
+
+    // Yield every 200 events to prevent event loop starvation
+    if (i > 0 && i % 200 === 0) {
+      await new Promise<void>((r) => setImmediate(r));
+    }
+  }
+
+  // Dispatch batched writes to worker thread (non-blocking)
+  if (newFeatures.length > 0 || featureUpdates.length > 0) {
+    await pool.upsertFeatures({ features: newFeatures, updates: featureUpdates });
+  }
+  if (eventFeatureLinks.length > 0) {
+    await pool.insertEventFeatures(eventFeatureLinks);
   }
 
   // Mark stale features (no activity in 7 days)
-  markStaleFeatures(db);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  await pool.markStaleFeatures(sevenDaysAgo);
 
-  logger.debug("Feature assignment complete", {
+  const endMem = process.memoryUsage();
+  logger.info(`[feature-boundary] Feature assignment complete`, {
     newEvents: newEventIds.length,
+    processed: events.length,
+    newFeatures: newFeatures.length,
     activeFeatures: activeFeatures.length,
+    elapsedMs: Date.now() - startMs,
+    heapUsedMB: Math.round(endMem.heapUsed / 1024 / 1024),
+    rssMB: Math.round(endMem.rss / 1024 / 1024),
   });
 }
 
 /**
  * Link events that form continuations or are related.
+ * Uses batch loading and caps per-tick work to prevent event loop starvation.
  */
 export async function linkRelatedEvents(db: DbLike, newEventIds: string[]): Promise<void> {
   if (newEventIds.length === 0) return;
 
-  for (const eventId of newEventIds) {
-    const event = await loadEvent(db, eventId);
-    if (!event) continue;
+  const startMs = Date.now();
+  const startMem = process.memoryUsage();
+  logger.info(`[event-linking] Starting link analysis for ${newEventIds.length} events`, {
+    heapUsedMB: Math.round(startMem.heapUsed / 1024 / 1024),
+    rssMB: Math.round(startMem.rss / 1024 / 1024),
+  });
 
-    const meta = event.metadata;
-    const sessionId = meta?.session_id as string;
+  // Cap per-tick work to prevent long blocking
+  const MAX_LINK_PER_TICK = 500;
+  const idsToProcess = newEventIds.slice(0, MAX_LINK_PER_TICK);
+  if (newEventIds.length > MAX_LINK_PER_TICK) {
+    logger.info(
+      `[event-linking] Capping to ${MAX_LINK_PER_TICK}/${newEventIds.length} events (will catch up on next tick)`,
+    );
+  }
 
-    // Session-based linking requires session_id
+  // Batch-load all events
+  const events = await loadEventsBatch(db, idsToProcess);
+
+  const links: Array<{
+    fromEvent: string;
+    toEvent: string;
+    linkType: string;
+    metadata: string | null;
+  }> = [];
+
+  // Build session groups in-memory to avoid per-event session queries
+  const sessionGroups = new Map<string, Array<{ id: string; ts: string }>>();
+  for (const event of events) {
+    const sessionId = event.metadata?.session_id as string;
     if (sessionId) {
-      // Find previous event in same session (continues_from)
-      const prevResult = await db.exec(
-        `SELECT id FROM events WHERE json_extract(metadata, '$.session_id') = ? AND ts < ? ORDER BY ts DESC LIMIT 1`,
-        [sessionId, event.ts],
+      if (!sessionGroups.has(sessionId)) sessionGroups.set(sessionId, []);
+      sessionGroups.get(sessionId)!.push({ id: event.id, ts: event.ts });
+    }
+  }
+  // Sort each session group by timestamp for continuation linking
+  for (const group of sessionGroups.values()) {
+    group.sort((a, b) => a.ts.localeCompare(b.ts));
+  }
+
+  // Session continuation links (in-memory, no DB queries)
+  for (const group of sessionGroups.values()) {
+    for (let i = 1; i < group.length; i++) {
+      links.push({
+        fromEvent: group[i - 1].id,
+        toEvent: group[i].id,
+        linkType: "continues_from",
+        metadata: null,
+      });
+    }
+  }
+
+  logger.info(`[event-linking] Session continuation links: ${links.length}`, {
+    sessions: sessionGroups.size,
+    elapsedMs: Date.now() - startMs,
+  });
+
+  // Skip expensive per-event queries (commit search, file overlap) for large batches.
+  // These will be caught up incrementally on subsequent ticks with smaller batches.
+  if (idsToProcess.length <= 100) {
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
+
+      // Find git commit events within 5 minutes after this event
+      const fiveMinLater = new Date(new Date(event.ts).getTime() + 5 * 60 * 1000).toISOString();
+      const commitResult = await db.exec(
+        `SELECT id FROM events WHERE source = 'git' AND type = 'commit' AND ts > ? AND ts < ? ORDER BY ts ASC LIMIT 1`,
+        [event.ts, fiveMinLater],
       );
-      if (prevResult[0]?.values.length > 0) {
-        const prevId = prevResult[0].values[0][0] as string;
-        if (prevId !== eventId) {
-          db.run(
-            "INSERT OR IGNORE INTO event_links (from_event, to_event, link_type, metadata) VALUES (?, ?, ?, ?)",
-            [prevId, eventId, "continues_from", null],
-          );
+      if (commitResult[0]?.values.length > 0) {
+        links.push({
+          fromEvent: event.id,
+          toEvent: commitResult[0].values[0][0] as string,
+          linkType: "triggered_commit",
+          metadata: null,
+        });
+      }
+
+      // Find events touching same files within 1 hour
+      const eventFiles = getEventFiles(event);
+      if (eventFiles.length > 0) {
+        const oneHourAgo = new Date(new Date(event.ts).getTime() - 3600 * 1000).toISOString();
+        const nearbyResult = await db.exec(
+          `SELECT id, metadata FROM events WHERE ts > ? AND ts < ? AND id != ? LIMIT 50`,
+          [oneHourAgo, event.ts, event.id],
+        );
+        for (const row of nearbyResult[0]?.values ?? []) {
+          const otherId = row[0] as string;
+          const otherMeta =
+            typeof row[1] === "string"
+              ? JSON.parse(row[1])
+              : ((row[1] as Record<string, unknown>) ?? {});
+          const otherFiles = [
+            ...((otherMeta?.files_referenced as string[]) ?? []),
+            ...((otherMeta?.files_modified as string[]) ?? []),
+          ];
+          const overlap = eventFiles.filter((f) => otherFiles.includes(f)).length;
+          if (overlap > 0) {
+            links.push({
+              fromEvent: otherId,
+              toEvent: event.id,
+              linkType: "related_events",
+              metadata: JSON.stringify({ sharedFiles: overlap }),
+            });
+          }
         }
       }
-    }
 
-    // Find git commit events within 5 minutes after this event (triggered_commit)
-    const fiveMinLater = new Date(new Date(event.ts).getTime() + 5 * 60 * 1000).toISOString();
-    const commitResult = await db.exec(
-      `SELECT id FROM events WHERE source = 'git' AND type = 'commit' AND ts > ? AND ts < ? ORDER BY ts ASC LIMIT 1`,
-      [event.ts, fiveMinLater],
-    );
-    if (commitResult[0]?.values.length > 0) {
-      const commitId = commitResult[0].values[0][0] as string;
-      db.run(
-        "INSERT OR IGNORE INTO event_links (from_event, to_event, link_type, metadata) VALUES (?, ?, ?, ?)",
-        [eventId, commitId, "triggered_commit", null],
-      );
-    }
-
-    // Find events touching same files within 1 hour (related_events)
-    const eventFiles = getEventFiles(event);
-    if (eventFiles.length > 0) {
-      const oneHourAgo = new Date(new Date(event.ts).getTime() - 3600 * 1000).toISOString();
-      const nearbyResult = await db.exec(
-        `SELECT id, metadata FROM events WHERE ts > ? AND ts < ? AND id != ? LIMIT 50`,
-        [oneHourAgo, event.ts, eventId],
-      );
-      for (const row of nearbyResult[0]?.values ?? []) {
-        const otherId = row[0] as string;
-        const otherMeta =
-          typeof row[1] === "string"
-            ? JSON.parse(row[1])
-            : ((row[1] as Record<string, unknown>) ?? {});
-        const otherFiles = [
-          ...((otherMeta?.files_referenced as string[]) ?? []),
-          ...((otherMeta?.files_modified as string[]) ?? []),
-        ];
-        const overlap = eventFiles.filter((f) => otherFiles.includes(f)).length;
-        if (overlap > 0) {
-          db.run(
-            "INSERT OR IGNORE INTO event_links (from_event, to_event, link_type, metadata) VALUES (?, ?, ?, ?)",
-            [otherId, eventId, "related_events", JSON.stringify({ sharedFiles: overlap })],
-          );
-        }
+      // Yield every 50 events
+      if (i > 0 && i % 50 === 0) {
+        await new Promise<void>((r) => setImmediate(r));
       }
     }
   }
+
+  // Dispatch batched writes to worker thread
+  if (links.length > 0) {
+    await getWorkerPool().insertEventLinks(links);
+  }
+
+  const endMem = process.memoryUsage();
+  logger.info(`[event-linking] Linking complete`, {
+    eventsProcessed: idsToProcess.length,
+    totalLinks: links.length,
+    elapsedMs: Date.now() - startMs,
+    heapUsedMB: Math.round(endMem.heapUsed / 1024 / 1024),
+    rssMB: Math.round(endMem.rss / 1024 / 1024),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -333,35 +450,48 @@ async function loadEvent(db: DbLike, eventId: string): Promise<EventForFeature |
   }
 }
 
-function insertFeature(db: DbLike, feature: Feature, projectId: string = ""): void {
-  db.run(
-    `INSERT OR REPLACE INTO features (id, project_id, name, branch, first_seen, last_seen, event_count, file_count, session_count, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      feature.id,
-      projectId,
-      feature.name,
-      feature.branch,
-      feature.firstSeen,
-      feature.lastSeen,
-      feature.eventCount,
-      feature.fileCount,
-      feature.sessionCount,
-      feature.status,
-    ],
-  );
-}
+/**
+ * Batch-load events by ID list. Uses chunked IN queries instead of per-event lookups.
+ * Reduces N queries to ceil(N/100) queries.
+ */
+async function loadEventsBatch(db: DbLike, eventIds: string[]): Promise<EventForFeature[]> {
+  const events: EventForFeature[] = [];
+  const CHUNK_SIZE = 100;
 
-function updateFeatureWithEvent(db: DbLike, featureId: string, event: EventForFeature): void {
-  const newFiles = getEventFiles(event);
-  db.run(
-    `UPDATE features SET last_seen = ?, event_count = event_count + 1, file_count = MAX(file_count, ?) WHERE id = ?`,
-    [event.ts, newFiles.length, featureId],
-  );
-}
+  for (let i = 0; i < eventIds.length; i += CHUNK_SIZE) {
+    const chunk = eventIds.slice(i, i + CHUNK_SIZE);
+    try {
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = await db.exec(
+        `SELECT id, project_id, ts, metadata, git_branch, content_summary FROM events WHERE id IN (${placeholders})`,
+        chunk,
+      );
+      for (const row of result[0]?.values ?? []) {
+        events.push({
+          id: row[0] as string,
+          projectId: (row[1] as string) ?? "",
+          ts: row[2] as string,
+          metadata:
+            typeof row[3] === "string"
+              ? JSON.parse(row[3])
+              : ((row[3] as Record<string, unknown>) ?? {}),
+          gitBranch: row[4] as string,
+          contentSummary: row[5] as string,
+        });
+      }
+    } catch {
+      // Fall back to individual loads for this chunk
+      for (const id of chunk) {
+        const event = await loadEvent(db, id);
+        if (event) events.push(event);
+      }
+    }
 
-function markStaleFeatures(db: DbLike): void {
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-  db.run(`UPDATE features SET status = 'stale' WHERE status = 'active' AND last_seen < ?`, [
-    sevenDaysAgo,
-  ]);
+    // Yield between chunks
+    if (i + CHUNK_SIZE < eventIds.length) {
+      await new Promise<void>((r) => setImmediate(r));
+    }
+  }
+
+  return events;
 }

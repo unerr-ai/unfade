@@ -3,9 +3,18 @@
 // Parses a day's CaptureEvents into structured reasoning signals.
 // No LLM. Never throws.
 
-import type { ExtractedSignals } from "../../schemas/distill.js";
+import type {
+  CorroborationGroup,
+  DayShape,
+  ExtractedSignals,
+  ImpactScore,
+  ScoredSignal,
+  SignalTier,
+  TriagedSignals,
+} from "../../schemas/distill.js";
 import type { CaptureEvent } from "../../schemas/event.js";
 import { logger } from "../../utils/logger.js";
+import { normalizedSimilarity } from "./conversation-digester.js";
 
 const DOMAIN_MAP: Record<string, string> = {
   ".ts": "TypeScript",
@@ -172,6 +181,49 @@ export function extractSignals(events: CaptureEvent[], date: string): ExtractedS
   }
 }
 
+/**
+ * Deduplicate AI conversations by conversation_id.
+ * Multiple snapshots of the same conversation may be captured —
+ * keep only the latest (longest detail / highest turn count) per conversation.
+ * Also deduplicates by summary text similarity for events without conversation_id.
+ */
+function deduplicateConversations(conversations: CaptureEvent[]): CaptureEvent[] {
+  const byConvId = new Map<string, CaptureEvent>();
+  const orphans: CaptureEvent[] = [];
+
+  for (const event of conversations) {
+    const convId = event.metadata?.conversation_id as string | undefined;
+    if (convId) {
+      const existing = byConvId.get(convId);
+      if (!existing) {
+        byConvId.set(convId, event);
+      } else {
+        // Keep the snapshot with more content (higher turn count or longer detail)
+        const existingTurns = (existing.metadata?.turn_count as number) ?? 0;
+        const newTurns = (event.metadata?.turn_count as number) ?? 0;
+        const existingLen = existing.content.detail?.length ?? 0;
+        const newLen = event.content.detail?.length ?? 0;
+        if (newTurns > existingTurns || (newTurns === existingTurns && newLen > existingLen)) {
+          byConvId.set(convId, event);
+        }
+      }
+    } else {
+      orphans.push(event);
+    }
+  }
+
+  // Dedup orphans by summary similarity
+  const dedupedOrphans: CaptureEvent[] = [];
+  for (const event of orphans) {
+    const isDupe = dedupedOrphans.some(
+      (existing) => normalizedSimilarity(existing.content.summary, event.content.summary) > 0.6,
+    );
+    if (!isDupe) dedupedOrphans.push(event);
+  }
+
+  return [...byConvId.values(), ...dedupedOrphans];
+}
+
 function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
   const commits = events.filter((e) => e.type === "commit");
   const aiConversations = events.filter((e) => e.type === "ai-conversation");
@@ -184,21 +236,49 @@ function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
   const allFiles = collectFiles(events);
   const domains = domainsFromFiles(allFiles);
 
+  // --- Deduplicate AI conversations by conversation_id ---
+  // The capture engine may emit multiple snapshots of the same conversation
+  // (e.g., periodic checkpoints). Keep only the latest snapshot per conversation.
+  const deduplicatedConversations = deduplicateConversations(aiConversations);
+
   // --- Decisions from AI conversation events (3x weight) ---
-  const aiDecisions: ExtractedSignals["decisions"] = aiConversations.map((event) => {
+  // Filtered: only conversations with decision-indicating signals pass through.
+  // Raw prompts and non-engineering conversations are excluded.
+  const aiDecisions: ExtractedSignals["decisions"] = deduplicatedConversations.map((event) => {
     const ds = parseDirectionSignals(event);
-    const turnCount =
-      typeof event.metadata?.turn_count === "number" ? event.metadata.turn_count : 0;
+    const meta = event.metadata ?? {};
+    const turnCount = typeof meta.turn_count === "number" ? meta.turn_count : 0;
+
+    // Extract rich conversation metadata for downstream processing
+    const conversationTitle =
+      typeof meta.conversation_title === "string" ? meta.conversation_title : undefined;
+    const filesModified = Array.isArray(meta.files_modified)
+      ? (meta.files_modified as string[])
+      : undefined;
+    const toolCalls = Array.isArray(meta.tool_calls_summary)
+      ? [...new Set((meta.tool_calls_summary as Array<{ name: string }>).map((t) => t.name))]
+      : undefined;
 
     return {
       eventId: event.id,
       summary: event.content.summary,
       branch: event.content.branch ?? event.gitContext?.branch,
       alternativesCount: ds ? Math.max(ds.rejectionCount, turnCount > 4 ? 2 : 0) : 0,
+      source: "ai-conversation" as const,
+      conversationMeta: {
+        conversationTitle:
+          conversationTitle && conversationTitle.length < 300 ? conversationTitle : undefined,
+        turnCount: turnCount > 0 ? turnCount : undefined,
+        filesModified:
+          filesModified && filesModified.length > 0 ? filesModified.slice(0, 30) : undefined,
+        toolsUsed: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
+      },
     };
   });
 
   // --- Decisions from git commits (1x weight) ---
+  // All commits are passed through as raw signals for the LLM.
+  // Fallback synthesizer filters to real decisions heuristically.
   const commitDecisions: ExtractedSignals["decisions"] = commits.map((event) => {
     const branch = event.content.branch ?? event.gitContext?.branch;
     const eventFiles = event.content.files ?? [];
@@ -216,6 +296,7 @@ function doExtract(events: CaptureEvent[], date: string): ExtractedSignals {
       summary: event.content.summary,
       branch,
       alternativesCount: Math.max(0, maxBranches - 1),
+      source: "commit" as const,
     };
   });
 
@@ -399,5 +480,481 @@ function emptySignals(date: string): ExtractedSignals {
       filesChanged: [],
       domains: [],
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Stage 0.5: Signal Triage & Prioritization (Layer 6)
+// ---------------------------------------------------------------------------
+
+const CORROBORATION_THRESHOLD = 0.35;
+/** 45-minute temporal clustering window — used by narrative-builder.ts */
+export const TEMPORAL_CLUSTER_WINDOW_MS = 45 * 60 * 1000;
+
+// Impact score factor weights
+const WEIGHT_SCOPE = 30;
+const WEIGHT_ALTERNATIVES = 25;
+const WEIGHT_CORROBORATION = 20;
+const WEIGHT_TEMPORAL = 15;
+const WEIGHT_DIRECTION = 10;
+const TOTAL_WEIGHT =
+  WEIGHT_SCOPE + WEIGHT_ALTERNATIVES + WEIGHT_CORROBORATION + WEIGHT_TEMPORAL + WEIGHT_DIRECTION;
+
+// Tier thresholds
+const PRIMARY_THRESHOLD = 60;
+const SUPPORTING_THRESHOLD = 30;
+
+/**
+ * Compute scope factor (0-100) based on number of files touched.
+ */
+function scopeFactor(fileCount: number): number {
+  if (fileCount >= 10) return 100;
+  if (fileCount >= 6) return 70;
+  if (fileCount >= 3) return 40;
+  if (fileCount >= 1) return 10;
+  return 0;
+}
+
+/**
+ * Compute alternatives factor (0-100).
+ */
+function alternativesFactor(count: number): number {
+  if (count >= 3) return 100;
+  if (count >= 2) return 60;
+  if (count >= 1) return 30;
+  return 0;
+}
+
+/**
+ * Compute temporal investment factor (0-100) based on duration in ms.
+ */
+function temporalFactor(durationMs: number): number {
+  const hours = durationMs / (60 * 60 * 1000);
+  if (hours >= 2) return 100;
+  if (hours >= 0.5) return 70;
+  const minutes = durationMs / (60 * 1000);
+  if (minutes >= 5) return 40;
+  return 10;
+}
+
+/**
+ * Compute direction signal strength factor (0-100).
+ */
+function directionFactor(hds: number | undefined): number {
+  if (hds === undefined) return 50; // neutral when no HDS
+  if (hds >= 0.6) return 100;
+  if (hds >= 0.3) return 60;
+  return 30;
+}
+
+/**
+ * Get the summary text for any signal by type and index.
+ */
+export function getSignalSummary(
+  signals: ExtractedSignals,
+  type: "decision" | "tradeOff" | "deadEnd" | "breakthrough",
+  index: number,
+): string {
+  switch (type) {
+    case "decision":
+      return signals.decisions[index]?.summary ?? "";
+    case "tradeOff":
+      return signals.tradeOffs[index]?.summary ?? "";
+    case "deadEnd":
+      return signals.deadEnds[index]?.summary ?? "";
+    case "breakthrough":
+      return signals.breakthroughs[index]?.summary ?? "";
+  }
+}
+
+/**
+ * Get file count for a signal.
+ */
+function getSignalFileCount(
+  signals: ExtractedSignals,
+  type: "decision" | "tradeOff" | "deadEnd" | "breakthrough",
+  index: number,
+): number {
+  switch (type) {
+    case "decision": {
+      const d = signals.decisions[index];
+      return d?.conversationMeta?.filesModified?.length ?? 0;
+    }
+    case "tradeOff":
+      return signals.tradeOffs[index]?.relatedFiles?.length ?? 0;
+    case "deadEnd":
+      return 0;
+    case "breakthrough":
+      return 0;
+  }
+}
+
+/**
+ * Get alternatives count for a signal.
+ */
+function getSignalAlternatives(
+  signals: ExtractedSignals,
+  type: "decision" | "tradeOff" | "deadEnd" | "breakthrough",
+  index: number,
+): number {
+  if (type === "decision") return signals.decisions[index]?.alternativesCount ?? 0;
+  if (type === "tradeOff") return 1; // trade-offs inherently have an alternative
+  return 0;
+}
+
+/**
+ * Get the source type for a signal.
+ */
+export function getSignalSource(
+  signals: ExtractedSignals,
+  type: "decision" | "tradeOff" | "deadEnd" | "breakthrough",
+  index: number,
+): string | undefined {
+  switch (type) {
+    case "decision":
+      return signals.decisions[index]?.source;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Detect cross-source corroboration groups using normalized keyword Jaccard.
+ * Signals from different source types with similarity ≥ 0.35 are grouped.
+ */
+function detectCorroboration(signals: ExtractedSignals): CorroborationGroup[] {
+  const groups: CorroborationGroup[] = [];
+
+  // Collect all signal references with their summaries and sources
+  type SignalRef = {
+    type: "decision" | "tradeOff" | "deadEnd" | "breakthrough";
+    index: number;
+    summary: string;
+    source: string;
+  };
+
+  const refs: SignalRef[] = [];
+  for (let i = 0; i < signals.decisions.length; i++) {
+    const d = signals.decisions[i];
+    refs.push({
+      type: "decision",
+      index: i,
+      summary: d.summary,
+      source: d.source ?? "commit",
+    });
+  }
+  for (let i = 0; i < signals.tradeOffs.length; i++) {
+    refs.push({
+      type: "tradeOff",
+      index: i,
+      summary: signals.tradeOffs[i].summary,
+      source: "ai-rejection",
+    });
+  }
+  for (let i = 0; i < signals.deadEnds.length; i++) {
+    refs.push({
+      type: "deadEnd",
+      index: i,
+      summary: signals.deadEnds[i].summary,
+      source: "revert",
+    });
+  }
+  for (let i = 0; i < signals.breakthroughs.length; i++) {
+    refs.push({
+      type: "breakthrough",
+      index: i,
+      summary: signals.breakthroughs[i].summary,
+      source: "commit",
+    });
+  }
+
+  // Track which refs have been grouped
+  const grouped = new Set<number>();
+  let groupId = 0;
+
+  for (let i = 0; i < refs.length; i++) {
+    if (grouped.has(i)) continue;
+
+    const members: SignalRef[] = [refs[i]];
+    const sources = new Set<string>([refs[i].source]);
+
+    for (let j = i + 1; j < refs.length; j++) {
+      if (grouped.has(j)) continue;
+      // Only corroborate across different sources
+      if (refs[j].source === refs[i].source) continue;
+
+      const sim = normalizedSimilarity(refs[i].summary, refs[j].summary);
+      if (sim >= CORROBORATION_THRESHOLD) {
+        members.push(refs[j]);
+        sources.add(refs[j].source);
+        grouped.add(j);
+      }
+    }
+
+    // Only create a group if multiple sources corroborate
+    if (sources.size >= 2) {
+      grouped.add(i);
+      const id = `corr-${groupId++}`;
+      groups.push({
+        id,
+        signalIndices: members.map((m) => ({ type: m.type, index: m.index })),
+        sources: Array.from(sources),
+        similarity:
+          members.length > 1 ? normalizedSimilarity(members[0].summary, members[1].summary) : 0,
+      });
+    }
+  }
+
+  return groups;
+}
+
+/**
+ * Build a map from signal key to corroboration group ID.
+ */
+function buildCorroborationMap(
+  groups: CorroborationGroup[],
+): Map<string, { groupId: string; sourceCount: number }> {
+  const map = new Map<string, { groupId: string; sourceCount: number }>();
+  for (const group of groups) {
+    for (const ref of group.signalIndices) {
+      map.set(`${ref.type}:${ref.index}`, {
+        groupId: group.id,
+        sourceCount: group.sources.length,
+      });
+    }
+  }
+  return map;
+}
+
+/**
+ * Compute impact score for a signal using the weighted 5-factor model.
+ */
+function computeImpactScore(
+  signals: ExtractedSignals,
+  events: CaptureEvent[],
+  type: "decision" | "tradeOff" | "deadEnd" | "breakthrough",
+  index: number,
+  corroborationMap: Map<string, { groupId: string; sourceCount: number }>,
+): ImpactScore {
+  const fileCount = getSignalFileCount(signals, type, index);
+  const alternatives = getSignalAlternatives(signals, type, index);
+
+  // Corroboration factor
+  const corrKey = `${type}:${index}`;
+  const corrInfo = corroborationMap.get(corrKey);
+  let corroborationValue = 20; // single source
+  if (corrInfo) {
+    if (corrInfo.sourceCount >= 3) corroborationValue = 100;
+    else if (corrInfo.sourceCount >= 2) corroborationValue = 60;
+  }
+
+  // Temporal investment: estimate from event timestamps
+  let temporalValue = 10;
+  if (type === "decision") {
+    const d = signals.decisions[index];
+    if (d) {
+      // Find related events by event ID and estimate time span
+      const eventTs = events.find((e) => e.id === d.eventId);
+      if (eventTs) {
+        const ts = new Date(eventTs.timestamp).getTime();
+        // Look for events in the same domain/branch within 4 hours
+        const branch = d.branch;
+        const related = events.filter((e) => {
+          const ets = new Date(e.timestamp).getTime();
+          if (Math.abs(ets - ts) > 4 * 60 * 60 * 1000) return false;
+          const eBranch = e.content.branch ?? e.gitContext?.branch;
+          return eBranch === branch;
+        });
+        if (related.length > 1) {
+          const timestamps = related.map((e) => new Date(e.timestamp).getTime());
+          const span = Math.max(...timestamps) - Math.min(...timestamps);
+          temporalValue = temporalFactor(span);
+        }
+      }
+    }
+  } else if (type === "deadEnd") {
+    const de = signals.deadEnds[index];
+    if (de?.timeSpentMinutes) {
+      temporalValue = temporalFactor(de.timeSpentMinutes * 60 * 1000);
+    }
+  }
+
+  // Direction signal strength
+  let directionValue = 50; // neutral default
+  if (type === "decision") {
+    const d = signals.decisions[index];
+    if (d) {
+      const event = events.find((e) => e.id === d.eventId);
+      if (event) {
+        const ds = parseDirectionSignals(event);
+        if (ds) {
+          directionValue = directionFactor(ds.humanDirectionScore);
+        }
+      }
+    }
+  }
+
+  const scopeVal = scopeFactor(fileCount);
+  const altVal = alternativesFactor(alternatives);
+
+  const total = Math.round(
+    (WEIGHT_SCOPE * scopeVal +
+      WEIGHT_ALTERNATIVES * altVal +
+      WEIGHT_CORROBORATION * corroborationValue +
+      WEIGHT_TEMPORAL * temporalValue +
+      WEIGHT_DIRECTION * directionValue) /
+      TOTAL_WEIGHT,
+  );
+
+  return {
+    total,
+    factors: {
+      scope: scopeVal,
+      alternatives: altVal,
+      corroboration: corroborationValue,
+      temporalInvestment: temporalValue,
+      directionStrength: directionValue,
+    },
+  };
+}
+
+/**
+ * Classify the day's shape from signals and events.
+ */
+function classifyDayShape(signals: ExtractedSignals, events: CaptureEvent[]): DayShape {
+  const domains = signals.stats.domains;
+  const dominantDomain = domains[0] ?? "general";
+
+  // Peak activity hour
+  const hourCounts = new Array(24).fill(0);
+  for (const event of events) {
+    const hour = new Date(event.timestamp).getHours();
+    hourCounts[hour]++;
+  }
+  const peakActivityHour = hourCounts.indexOf(Math.max(...hourCounts));
+
+  // Classify arc type
+  const branchCount = new Set(
+    events.map((e) => e.content.branch ?? e.gitContext?.branch).filter(Boolean),
+  ).size;
+  const domainCount = domains.length;
+  const totalAlternatives = signals.decisions.reduce((sum, d) => sum + d.alternativesCount, 0);
+  const aiConvCount = signals.stats.aiCompletions;
+  const commitCount = signals.stats.commitCount;
+
+  let arcType: DayShape["arcType"];
+
+  if (domainCount <= 2 && branchCount <= 2 && totalAlternatives < 3) {
+    // Low diversity, low alternatives → routine or deep-dive
+    if (commitCount >= 5 || aiConvCount >= 3) {
+      arcType = "deep-dive";
+    } else {
+      arcType = "routine";
+    }
+  } else if (totalAlternatives >= 5 && branchCount >= 3) {
+    // High alternatives, many branches → exploration
+    // Check if there's convergence (later events cluster on fewer branches)
+    const midpoint = Math.floor(events.length / 2);
+    const earlyBranches = new Set(
+      events
+        .slice(0, midpoint)
+        .map((e) => e.content.branch ?? e.gitContext?.branch)
+        .filter(Boolean),
+    );
+    const lateBranches = new Set(
+      events
+        .slice(midpoint)
+        .map((e) => e.content.branch ?? e.gitContext?.branch)
+        .filter(Boolean),
+    );
+    arcType = lateBranches.size < earlyBranches.size ? "convergence" : "exploration";
+  } else if (domainCount >= 4 && branchCount >= 3) {
+    arcType = "scattered";
+  } else if (totalAlternatives >= 3) {
+    arcType = "exploration";
+  } else {
+    arcType = "routine";
+  }
+
+  return { dominantDomain, peakActivityHour, arcType };
+}
+
+/**
+ * Triage extracted signals: score, prioritize, detect corroboration, classify day shape.
+ * This is Stage 0.5 of the Layer 6 distill pipeline.
+ */
+export function triageSignals(signals: ExtractedSignals, events: CaptureEvent[]): TriagedSignals {
+  try {
+    return doTriage(signals, events);
+  } catch (err) {
+    logger.warn("Signal triage failed, returning unprioritized signals", {
+      error: String(err),
+    });
+    // Fallback: all signals as background tier
+    return {
+      ...signals,
+      prioritized: { primary: [], supporting: [], background: [] },
+      corroborations: [],
+      dayShape: {
+        dominantDomain: signals.stats.domains[0] ?? "general",
+        peakActivityHour: 12,
+        arcType: "routine",
+      },
+    };
+  }
+}
+
+function doTriage(signals: ExtractedSignals, events: CaptureEvent[]): TriagedSignals {
+  // Step 1: Detect cross-source corroboration
+  const corroborations = detectCorroboration(signals);
+  const corroborationMap = buildCorroborationMap(corroborations);
+
+  // Step 2: Score all signals
+  const allScored: ScoredSignal[] = [];
+
+  const signalTypes = [
+    { type: "decision" as const, count: signals.decisions.length },
+    { type: "tradeOff" as const, count: signals.tradeOffs.length },
+    { type: "deadEnd" as const, count: signals.deadEnds.length },
+    { type: "breakthrough" as const, count: signals.breakthroughs.length },
+  ];
+
+  for (const { type, count } of signalTypes) {
+    for (let i = 0; i < count; i++) {
+      const impactScore = computeImpactScore(signals, events, type, i, corroborationMap);
+      const corrKey = `${type}:${i}`;
+      const corrInfo = corroborationMap.get(corrKey);
+
+      let tier: SignalTier;
+      if (impactScore.total >= PRIMARY_THRESHOLD) tier = "primary";
+      else if (impactScore.total >= SUPPORTING_THRESHOLD) tier = "supporting";
+      else tier = "background";
+
+      allScored.push({
+        type,
+        index: i,
+        impactScore,
+        tier,
+        corroborationGroup: corrInfo?.groupId,
+      });
+    }
+  }
+
+  // Step 3: Sort by impact score descending
+  allScored.sort((a, b) => b.impactScore.total - a.impactScore.total);
+
+  // Step 4: Partition into tiers
+  const primary = allScored.filter((s) => s.tier === "primary");
+  const supporting = allScored.filter((s) => s.tier === "supporting");
+  const background = allScored.filter((s) => s.tier === "background");
+
+  // Step 5: Classify day shape
+  const dayShape = classifyDayShape(signals, events);
+
+  return {
+    ...signals,
+    prioritized: { primary, supporting, background },
+    corroborations,
+    dayShape,
   };
 }

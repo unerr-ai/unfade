@@ -1,7 +1,7 @@
 // FILE: src/server/routes/amplify.ts
 // UF-066/UF-068: HTTP endpoints for amplification and similar search.
-// GET /unfade/amplify?date= — cross-temporal connections
-// GET /unfade/similar?problem=&limit= — similar decision search
+// GET /api/amplify?date= — cross-temporal connections
+// GET /api/similar?problem=&limit= — similar decision search
 
 import { Hono } from "hono";
 import { amplify, findSimilar } from "../../services/distill/amplifier.js";

@@ -54,7 +54,25 @@ CREATE TABLE IF NOT EXISTS events (
     feature_group_id            VARCHAR,
     chain_pattern               VARCHAR,
     chain_effectiveness         FLOAT,
-    prompt_response_effectiveness FLOAT
+    prompt_response_effectiveness FLOAT,
+    -- Knowledge extraction segments (Layer 2.5 KE-6)
+    segments                    JSON
+);
+`;
+
+export const DUCKDB_EVENT_SEGMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS event_segments (
+    event_id            VARCHAR NOT NULL,
+    segment_index       INTEGER NOT NULL,
+    segment_id          VARCHAR NOT NULL,
+    turn_start          INTEGER NOT NULL,
+    turn_end            INTEGER NOT NULL,
+    topic_label         VARCHAR,
+    summary             VARCHAR,
+    files_in_scope      VARCHAR[],
+    modules_in_scope    VARCHAR[],
+    segment_method      VARCHAR NOT NULL DEFAULT 'structural',
+    PRIMARY KEY (event_id, segment_index)
 );
 `;
 
@@ -90,26 +108,96 @@ CREATE TABLE IF NOT EXISTS direction_windows (
 );
 `;
 
-export const DUCKDB_COMPREHENSION_PROXY_DDL = `
-CREATE TABLE IF NOT EXISTS comprehension_proxy (
-    event_id            VARCHAR PRIMARY KEY,
+// ─── Layer 2.5: Knowledge Extraction Tables ────────────────────────────────
+
+/** Per-episode comprehension assessment (LLM-as-Judge or heuristic proxy). */
+export const DUCKDB_COMPREHENSION_ASSESSMENT_DDL = `
+CREATE TABLE IF NOT EXISTS comprehension_assessment (
+    episode_id          VARCHAR PRIMARY KEY,
     project_id          VARCHAR NOT NULL DEFAULT '',
-    mod_depth           FLOAT,
-    specificity         FLOAT,
-    rejection           FLOAT,
-    score               FLOAT,
-    ts                  TIMESTAMP
+    timestamp           TIMESTAMP,
+    steering            FLOAT,
+    understanding       FLOAT,
+    metacognition       FLOAT,
+    independence        FLOAT,
+    engagement          FLOAT,
+    overall_score       FLOAT,
+    rubber_stamp_count  INTEGER,
+    pushback_count      INTEGER,
+    assessment_method   VARCHAR,
+    domain_tags         JSON,
+    evidence            JSON,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `;
 
-export const DUCKDB_COMPREHENSION_BY_MODULE_DDL = `
-CREATE TABLE IF NOT EXISTS comprehension_by_module (
-    module              VARCHAR,
-    project_id          VARCHAR NOT NULL DEFAULT '',
-    score               FLOAT,
-    event_count         INTEGER,
+/** FSRS-adapted comprehension decay per domain — tracks forgetting curve state. */
+export const DUCKDB_DOMAIN_COMPREHENSION_DDL = `
+CREATE TABLE IF NOT EXISTS domain_comprehension (
+    domain              VARCHAR NOT NULL,
+    project_id          VARCHAR NOT NULL,
+    base_score          DOUBLE,
+    stability           DOUBLE,
+    complexity_modifier DOUBLE DEFAULT 1.0,
+    floor_value         DOUBLE DEFAULT 0,
+    last_touch          TIMESTAMP,
+    engagement_quality  INTEGER DEFAULT 3,
+    interaction_count   INTEGER,
+    current_score       DOUBLE,
     updated_at          TIMESTAMP,
-    PRIMARY KEY (module, project_id)
+    PRIMARY KEY (domain, project_id)
+);
+`;
+
+/** Comprehension score time-series for trend analysis. */
+export const DUCKDB_COMPREHENSION_SCORES_DDL = `
+CREATE TABLE IF NOT EXISTS comprehension_scores (
+    date                DATE NOT NULL,
+    project_id          VARCHAR NOT NULL,
+    score               DOUBLE,
+    trend               VARCHAR,
+    domain_count        INTEGER,
+    top_domain          VARCHAR,
+    weak_domain         VARCHAR,
+    PRIMARY KEY (date, project_id)
+);
+`;
+
+/** Tracks extraction status per event — pending/extracted/failed/deferred. */
+export const DUCKDB_EXTRACTION_STATUS_DDL = `
+CREATE TABLE IF NOT EXISTS extraction_status (
+    event_id            VARCHAR PRIMARY KEY,
+    project_id          VARCHAR NOT NULL DEFAULT '',
+    status              VARCHAR NOT NULL DEFAULT 'pending',
+    extracted_at        TIMESTAMP,
+    retry_count         INTEGER DEFAULT 0,
+    error               VARCHAR,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+`;
+
+/** Metacognitive signals aggregated per episode for analytics. */
+export const DUCKDB_METACOGNITIVE_SIGNALS_DDL = `
+CREATE TABLE IF NOT EXISTS metacognitive_signals (
+    episode_id          VARCHAR NOT NULL,
+    project_id          VARCHAR NOT NULL DEFAULT '',
+    turn_index          INTEGER NOT NULL,
+    signal_type         VARCHAR NOT NULL,
+    quote               VARCHAR,
+    strength            FLOAT,
+    PRIMARY KEY (episode_id, turn_index)
+);
+`;
+
+/** Per-segment agency classification for analytics. */
+export const DUCKDB_SEGMENT_AGENCY_DDL = `
+CREATE TABLE IF NOT EXISTS segment_agency (
+    segment_id          VARCHAR PRIMARY KEY,
+    episode_id          VARCHAR NOT NULL,
+    project_id          VARCHAR NOT NULL DEFAULT '',
+    classification      VARCHAR NOT NULL,
+    reasoning           VARCHAR,
+    created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 `;
 
@@ -241,8 +329,12 @@ export const ALL_DUCKDB_DDL = [
   DUCKDB_EVENTS_DDL,
   DUCKDB_SESSIONS_DDL,
   DUCKDB_DIRECTION_WINDOWS_DDL,
-  DUCKDB_COMPREHENSION_PROXY_DDL,
-  DUCKDB_COMPREHENSION_BY_MODULE_DDL,
+  DUCKDB_COMPREHENSION_ASSESSMENT_DDL,
+  DUCKDB_DOMAIN_COMPREHENSION_DDL,
+  DUCKDB_COMPREHENSION_SCORES_DDL,
+  DUCKDB_EXTRACTION_STATUS_DDL,
+  DUCKDB_METACOGNITIVE_SIGNALS_DDL,
+  DUCKDB_SEGMENT_AGENCY_DDL,
   DUCKDB_DIRECTION_BY_FILE_DDL,
   DUCKDB_TOKEN_PROXY_SPEND_DDL,
   DUCKDB_METRIC_SNAPSHOTS_DDL,
@@ -252,6 +344,7 @@ export const ALL_DUCKDB_DDL = [
   DUCKDB_FEATURE_REGISTRY_DDL,
   DUCKDB_PROMPT_RESPONSE_CORRELATIONS_DDL,
   DUCKDB_PROMPT_CHAINS_DDL,
+  DUCKDB_EVENT_SEGMENTS_DDL,
 ] as const;
 
 /** All DuckDB table names for DROP during rebuild. */
@@ -259,8 +352,12 @@ export const ALL_DUCKDB_TABLES = [
   "events",
   "sessions",
   "direction_windows",
-  "comprehension_proxy",
-  "comprehension_by_module",
+  "comprehension_assessment",
+  "domain_comprehension",
+  "comprehension_scores",
+  "extraction_status",
+  "metacognitive_signals",
+  "segment_agency",
   "direction_by_file",
   "token_proxy_spend",
   "metric_snapshots",
@@ -270,6 +367,7 @@ export const ALL_DUCKDB_TABLES = [
   "feature_registry",
   "prompt_response_correlations",
   "prompt_chains",
+  "event_segments",
 ] as const;
 
 /**

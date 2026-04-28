@@ -4,10 +4,28 @@
 
 import { EventEmitter } from "node:events";
 
+export interface LaunchProgressData {
+  stage:
+    | "materializing"
+    | "comprehension"
+    | "features"
+    | "links"
+    | "metrics"
+    | "classification"
+    | "intelligence"
+    | "substrate"
+    | "extraction"
+    | "distill";
+  detail: string;
+  icon: string;
+  data?: Record<string, unknown>;
+}
+
 export type BusEvent =
   | { type: "summary"; data: unknown }
   | { type: "event"; data: unknown }
-  | { type: "intelligence"; data: unknown };
+  | { type: "intelligence"; data: unknown }
+  | { type: "launch-progress"; data: LaunchProgressData };
 
 class UnfadeEventBus extends EventEmitter {
   emitBus(event: BusEvent): void {

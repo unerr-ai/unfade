@@ -11,11 +11,11 @@ export default function IntegrationsPage() {
   });
 
   const install = useMutation({
-    mutationFn: (name: string) => api.integrations.install(name),
+    mutationFn: (tool: string) => api.integrations.install(tool),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["integrations"] }),
   });
 
-  const integrations = data?.integrations ?? [];
+  const tools = data?.tools ?? [];
 
   return (
     <div>
@@ -25,24 +25,24 @@ export default function IntegrationsPage() {
         <div className="flex items-center gap-2 text-sm text-muted">
           <Loader2 size={14} className="animate-spin" /> Loading integrations…
         </div>
-      ) : integrations.length > 0 ? (
+      ) : tools.length > 0 ? (
         <div className="space-y-3">
-          {integrations.map((integ) => (
+          {tools.map((integ) => (
             <div
-              key={integ.name}
+              key={integ.tool}
               className="flex items-center gap-4 rounded-lg border border-border bg-surface p-4"
             >
               <Plug size={18} className={integ.connected ? "text-success" : "text-muted"} />
               <div className="flex-1">
-                <div className="text-sm font-medium text-foreground">{integ.name}</div>
-                <div className="text-xs text-muted">{integ.status}</div>
+                <div className="text-sm font-medium text-foreground">{integ.label}</div>
+                <div className="text-xs text-muted">{integ.path}</div>
               </div>
               {integ.connected ? (
                 <span className="text-xs text-success">Connected</span>
               ) : (
                 <button
                   type="button"
-                  onClick={() => install.mutate(integ.name)}
+                  onClick={() => install.mutate(integ.tool)}
                   disabled={install.isPending}
                   className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-dim disabled:opacity-50"
                 >

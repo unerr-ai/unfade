@@ -1,8 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
+import { ErrorState } from "@/components/shared/ErrorState";
 import { EvidenceDrawer } from "@/components/shared/EvidenceDrawer";
+import { EvidenceEventCard } from "@/components/shared/EvidenceEventCard";
 import { HeroMetric } from "@/components/shared/HeroMetric";
-import { api, type Decision } from "@/lib/api";
+import { api, type Decision, type EvidenceEvent } from "@/lib/api";
+import { relativeDate } from "@/lib/date-utils";
+import { sourceLabel, typeLabel } from "@/lib/event-labels";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/app";
 
@@ -23,34 +27,24 @@ function directionLabel(d: Decision): { text: string; color: string } {
   return { text: "Unknown origin", color: "text-muted" };
 }
 
-/** How long ago relative to now. */
-function relativeDate(dateStr: string): string {
-  const d = new Date(`${dateStr}T12:00:00`);
-  const now = new Date();
-  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7) return `${diffDays} days ago`;
-  if (diffDays < 30)
-    return `${Math.floor(diffDays / 7)} week${Math.floor(diffDays / 7) > 1 ? "s" : ""} ago`;
-  return `${Math.floor(diffDays / 30)} month${Math.floor(diffDays / 30) > 1 ? "s" : ""} ago`;
-}
-
 export default function DecisionsPage() {
   const persona = useAppStore((s) => s.persona);
   const [search, setSearch] = useState("");
   const [period, setPeriod] = useState("30d");
   const [domain, setDomain] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
   const [page, setPage] = useState(0);
-  const [selectedDecision, setSelectedDecision] = useState<Decision | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const { data, isLoading, isFetching } = useQuery({
-    queryKey: ["decisions", search, period, domain, page],
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
+    queryKey: ["decisions", search, period, domain, projectFilter, page],
     queryFn: () =>
       api.decisions.list({
         q: search || undefined,
         period,
         domain: domain || undefined,
+        project: projectFilter || undefined,
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
       }),
@@ -58,13 +52,51 @@ export default function DecisionsPage() {
     placeholderData: (prev) => prev,
   });
 
+  // Fetch projects for the filter dropdown
+  const { data: projectsData } = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => api.projects.list(),
+    staleTime: 60_000,
+  });
+
+  // Fetch decision detail when a decision is selected
+  const { data: detailData, isLoading: detailLoading } = useQuery({
+    queryKey: ["decision-detail", selectedIndex],
+    queryFn: () => (selectedIndex != null ? api.decisions.detail(selectedIndex) : null),
+    enabled: selectedIndex != null,
+    staleTime: 30_000,
+  });
+
+  if (error) return <ErrorState error={error} onRetry={() => refetch()} />;
+
   const decisions = data?.data?.decisions ?? [];
   const total = data?.data?.total ?? 0;
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const domains = [...new Set(decisions.map((d) => d.domain).filter(Boolean))] as string[];
+  const projects = projectsData?.projects ?? [];
 
-  const handleRowClick = useCallback((d: Decision) => {
-    setSelectedDecision(d);
+  // Map for quick project name lookup from the list response
+  const projectNames = new Map<string, string>();
+  for (const d of decisions) {
+    if (d.projectId && d.projectName) {
+      projectNames.set(d.projectId, d.projectName);
+    }
+  }
+
+  const handleRowClick = useCallback(
+    (d: Decision, listIndex: number) => {
+      // The actual index in the full decision set is offset + listIndex
+      const globalIndex = page * PAGE_SIZE + listIndex;
+      setSelectedIndex(globalIndex);
+      setDrawerOpen(true);
+    },
+    [page],
+  );
+
+  const handleCloseDrawer = useCallback(() => {
+    setDrawerOpen(false);
+    // Delay clearing index so drawer animates out with data
+    setTimeout(() => setSelectedIndex(null), 200);
   }, []);
 
   // Reset page when filters change
@@ -80,6 +112,10 @@ export default function DecisionsPage() {
     setPeriod(v);
     setPage(0);
   };
+  const updateProject = (v: string) => {
+    setProjectFilter(v);
+    setPage(0);
+  };
 
   if (persona === "executive") {
     return (
@@ -93,6 +129,15 @@ export default function DecisionsPage() {
     );
   }
 
+  // Build evidence items for the drawer from the detail API response
+  const selectedDecision =
+    selectedIndex != null ? decisions[selectedIndex - page * PAGE_SIZE] : null;
+  const evidenceEvents: EvidenceEvent[] = detailData?.evidence ?? [];
+  const detailProjectName =
+    detailData?.projectName ??
+    selectedDecision?.projectName ??
+    (selectedDecision?.projectId ? projectNames.get(selectedDecision.projectId) : undefined);
+
   return (
     <div>
       <h1 className="mb-4 font-heading text-2xl font-semibold">Decisions</h1>
@@ -105,6 +150,20 @@ export default function DecisionsPage() {
           placeholder="Search decisions…"
           className="flex-1 rounded-lg border border-border bg-surface px-4 py-2 text-sm text-foreground placeholder:text-muted focus:border-accent/60 focus:outline-none"
         />
+        {projects.length > 1 && (
+          <select
+            value={projectFilter}
+            onChange={(e) => updateProject(e.target.value)}
+            className="rounded border border-border bg-raised px-2 py-1.5 text-xs text-foreground"
+          >
+            <option value="">All projects</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           value={domain}
           onChange={(e) => updateDomain(e.target.value)}
@@ -146,15 +205,16 @@ export default function DecisionsPage() {
             {isFetching && <span className="animate-pulse">Loading…</span>}
           </div>
 
-          {/* Decision cards — Transmission Thesis: narrative-diagnostic, not flat table */}
+          {/* Decision cards */}
           <div className="space-y-3">
             {decisions.map((d, i) => {
               const direction = directionLabel(d);
+              const displayName = d.projectName ?? d.projectId;
               return (
                 <button
                   type="button"
                   key={`${d.date}-${i}`}
-                  onClick={() => handleRowClick(d)}
+                  onClick={() => handleRowClick(d, i)}
                   className="w-full rounded-lg border border-border bg-canvas p-4 text-left transition-colors hover:bg-raised"
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -173,9 +233,9 @@ export default function DecisionsPage() {
                         {d.domain}
                       </span>
                     )}
-                    {d.projectId && (
-                      <span className="rounded bg-muted/10 px-1.5 py-0.5 text-[10px] text-muted">
-                        {d.projectId}
+                    {displayName && (
+                      <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-400">
+                        {displayName}
                       </span>
                     )}
                     {d.evidenceEventIds && d.evidenceEventIds.length > 0 && (
@@ -226,28 +286,37 @@ export default function DecisionsPage() {
         </div>
       )}
 
+      {/* Evidence Drawer — fetches real evidence from decision-detail API */}
       <EvidenceDrawer
-        open={!!selectedDecision}
-        onClose={() => setSelectedDecision(null)}
+        open={drawerOpen}
+        onClose={handleCloseDrawer}
         title={selectedDecision?.decision ?? ""}
         entityType="Decision"
         items={
-          selectedDecision
+          detailLoading
             ? [
                 {
-                  timestamp: `${selectedDecision.date}T12:00:00Z`,
-                  source: "distill",
-                  summary: selectedDecision.rationale,
+                  timestamp: new Date().toISOString(),
+                  source: "loading",
+                  summary: "Loading evidence…",
                 },
               ]
-            : []
+            : evidenceEvents.map((ev) => ({
+                timestamp: ev.timestamp,
+                source: `${sourceLabel(ev.source)} / ${typeLabel(ev.type)}`,
+                summary: ev.summary,
+                rawData: ev,
+              }))
         }
         metrics={
           selectedDecision
             ? [
                 { label: "Domain", value: selectedDecision.domain ?? "—" },
                 { label: "Date", value: selectedDecision.date },
-                { label: "Project", value: selectedDecision.projectId ?? "—" },
+                {
+                  label: "Project",
+                  value: detailProjectName ?? "—",
+                },
                 { label: "Origin", value: directionLabel(selectedDecision).text },
                 ...(selectedDecision.humanDirectionScore != null
                   ? [
@@ -257,18 +326,31 @@ export default function DecisionsPage() {
                       },
                     ]
                   : []),
-                ...(selectedDecision.evidenceEventIds?.length
-                  ? [
-                      {
-                        label: "Evidence Events",
-                        value: String(selectedDecision.evidenceEventIds.length),
-                      },
-                    ]
-                  : []),
+                {
+                  label: "Evidence Events",
+                  value: detailLoading ? "Loading…" : String(evidenceEvents.length),
+                },
               ]
             : []
         }
-      />
+      >
+        {/* Rich evidence cards below the standard drawer items */}
+        {!detailLoading && evidenceEvents.length > 0 && (
+          <div>
+            <h4 className="mb-2 text-xs font-medium text-muted uppercase tracking-wider">
+              Evidence Trail
+            </h4>
+            <div className="space-y-2">
+              {evidenceEvents.map((ev) => (
+                <EvidenceEventCard key={ev.id} event={ev} />
+              ))}
+            </div>
+          </div>
+        )}
+        {!detailLoading && evidenceEvents.length === 0 && selectedIndex != null && (
+          <p className="text-sm text-muted">No evidence events found for this decision.</p>
+        )}
+      </EvidenceDrawer>
     </div>
   );
 }

@@ -66,14 +66,14 @@ export function MaturityTab({ enabled = true }: { enabled?: boolean }) {
         />
         <KpiCard
           label="Overall Score"
-          value={`${Math.round(data.overallScore * 100)}%`}
+          value={`${Math.round((data.overallScore ?? 0) * 100)}%`}
           interpretation="Drivetrain completeness"
         />
         {data.bottleneck && (
           <KpiCard
             label="Bottleneck"
             value={data.bottleneck.dimension}
-            interpretation={`This component limits your next upshift (${Math.round(data.bottleneck.score * 100)}%)`}
+            interpretation={`This component limits your next upshift (${Math.round((data.bottleneck?.score ?? 0) * 100)}%)`}
           />
         )}
       </div>

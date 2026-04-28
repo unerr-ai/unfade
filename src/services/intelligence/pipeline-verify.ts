@@ -104,7 +104,7 @@ async function checkDuckDbColumns(db: DbLike): Promise<VerificationCheck[]> {
 
   try {
     const countResult = await db.exec("SELECT COUNT(*) FROM events");
-    const totalEvents = (countResult[0]?.values[0]?.[0] as number) ?? 0;
+    const totalEvents = Number(countResult[0]?.values[0]?.[0] ?? 0);
     checks.push({
       name: "DuckDB events table",
       layer: "materialization",
@@ -123,15 +123,15 @@ async function checkDuckDbColumns(db: DbLike): Promise<VerificationCheck[]> {
       FROM events
     `);
     const row = columnResult[0]?.values[0] ?? [];
-    const total = (row[0] as number) ?? 0;
-    const hasSource = (row[1] as number) ?? 0;
+    const total = Number(row[0] ?? 0);
+    const hasSource = Number(row[1] ?? 0);
     checks.push({
       name: "DuckDB typed columns populated",
       layer: "materialization",
       passed: total === 0 || hasSource > 0,
       detail:
         total > 0
-          ? `source: ${hasSource}/${total}, hds: ${(row[3] as number) ?? 0}/${total}, ai_tool: ${(row[4] as number) ?? 0}/${total}, session_id: ${(row[5] as number) ?? 0}/${total}`
+          ? `source: ${hasSource}/${total}, hds: ${Number(row[3] ?? 0)}/${total}, ai_tool: ${Number(row[4] ?? 0)}/${total}, session_id: ${Number(row[5] ?? 0)}/${total}`
           : "No events to check",
       severity: "critical",
     });
@@ -167,9 +167,9 @@ async function checkClassificationColumns(db: DbLike): Promise<VerificationCheck
       WHERE source IN ('ai-session', 'mcp-active')
     `);
     const row = result[0]?.values[0] ?? [];
-    const total = (row[0] as number) ?? 0;
-    const hasPromptType = (row[1] as number) ?? 0;
-    const hasPhase = (row[2] as number) ?? 0;
+    const total = Number(row[0] ?? 0);
+    const hasPromptType = Number(row[1] ?? 0);
+    const hasPhase = Number(row[2] ?? 0);
 
     checks.push({
       name: "Prompt type classification",

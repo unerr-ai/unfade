@@ -144,6 +144,8 @@ export function linkContext(signals: ExtractedSignals, events: CaptureEvent[]): 
       files,
       repo,
       relatedAiConversations: relatedAi.length > 0 ? relatedAi : undefined,
+      source: d.source,
+      conversationMeta: d.conversationMeta,
     };
   });
 

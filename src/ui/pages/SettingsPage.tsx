@@ -14,6 +14,8 @@ export default function SettingsPage() {
     staleTime: 30_000,
   });
 
+  const llmStatus = status?.data;
+
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -23,8 +25,6 @@ export default function SettingsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
   });
 
-  const daemons = status?.daemons ?? [];
-
   return (
     <div>
       <h1 className="mb-6 font-heading text-2xl font-semibold">Settings</h1>
@@ -32,6 +32,17 @@ export default function SettingsPage() {
       <div className="space-y-6">
         <section className="rounded-lg border border-border bg-surface p-5">
           <h2 className="mb-4 text-sm font-heading font-semibold">LLM Configuration</h2>
+          {llmStatus?.configured && (
+            <div className="mb-4 flex items-center gap-2 text-xs text-muted">
+              <span
+                className={`h-2 w-2 rounded-full ${llmStatus.validated ? "bg-success" : "bg-warning"}`}
+              />
+              <span>
+                {llmStatus.provider}/{llmStatus.model} —{" "}
+                {llmStatus.validated ? "Verified" : (llmStatus.reason ?? "Not verified")}
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs text-muted">Provider</label>
@@ -106,29 +117,24 @@ export default function SettingsPage() {
         </section>
 
         <section className="rounded-lg border border-border bg-surface p-5">
-          <h2 className="mb-4 text-sm font-heading font-semibold">Daemon Control</h2>
+          <h2 className="mb-4 text-sm font-heading font-semibold">System Status</h2>
           {isLoading ? (
             <div className="flex items-center gap-2 text-sm text-muted">
               <Loader2 size={14} className="animate-spin" /> Loading…
             </div>
-          ) : daemons.length > 0 ? (
-            <div className="space-y-2">
-              {daemons.map((d) => (
-                <div key={d.id} className="flex items-center gap-4 rounded-md bg-raised p-3">
-                  <span
-                    className={`h-2 w-2 rounded-full ${d.running ? "bg-success" : "bg-warning"}`}
-                  />
-                  <span className="text-sm font-medium text-foreground">{d.id}</span>
-                  <span className="text-xs text-muted">PID {d.pid}</span>
-                  <span className="text-xs text-muted">{d.events} events</span>
-                  <span className="ml-auto text-xs text-muted">
-                    uptime {Math.round(d.uptime / 60)}m
-                  </span>
-                </div>
-              ))}
+          ) : llmStatus ? (
+            <div className="space-y-2 text-sm text-muted">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`h-2 w-2 rounded-full ${llmStatus.validated ? "bg-success" : "bg-warning"}`}
+                />
+                <span>
+                  LLM: {llmStatus.configured ? `${llmStatus.provider}` : "Not configured"}
+                </span>
+              </div>
             </div>
           ) : (
-            <p className="text-sm text-muted">No active daemons</p>
+            <p className="text-sm text-muted">Unable to load status</p>
           )}
         </section>
       </div>

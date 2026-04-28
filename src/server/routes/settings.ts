@@ -31,7 +31,7 @@ export interface SettingsStatus {
 /**
  * GET /settings/status — reports whether LLM is configured and reachable.
  * Used by home page to decide whether to show setup-required state.
- * Accessible at /unfade/settings/status (via mount prefix).
+ * Accessible at /api/settings/status (via mount prefix).
  */
 settingsRoutes.get("/settings/status", async (c) => {
   const projectDir = getProjectDataDir();

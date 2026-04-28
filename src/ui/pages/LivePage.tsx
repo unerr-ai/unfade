@@ -1,6 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState } from "react";
 import { ActiveSessionPanel } from "@/components/shared/ActiveSessionPanel";
+import { ErrorState } from "@/components/shared/ErrorState";
 import { EvidenceDrawer } from "@/components/shared/EvidenceDrawer";
 import { FreshnessBadge } from "@/components/shared/FreshnessBadge";
 import { useLiveEvents } from "@/hooks/useEvents";
@@ -19,8 +20,8 @@ const SOURCE_COLORS: Record<string, string> = {
 };
 
 export default function LivePage() {
-  const { data: events } = useLiveEvents();
-  const { data: health } = useHealth();
+  const { data: events, error: eventsError } = useLiveEvents();
+  const { data: health, error: healthError } = useHealth();
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [selectedEvent, setSelectedEvent] = useState<CapturedEvent | null>(null);
@@ -53,6 +54,10 @@ export default function LivePage() {
     (e) => e.source === "ai-session" || e.source === "mcp-active",
   ).length;
   const termCount = (events ?? []).filter((e) => e.source === "terminal").length;
+
+  if (eventsError || healthError) {
+    return <ErrorState error={eventsError ?? healthError} />;
+  }
 
   return (
     <div className="flex h-[calc(100vh-160px)] flex-col">

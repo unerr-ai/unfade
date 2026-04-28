@@ -58,7 +58,7 @@ async function detectHighAcceptance(
 
     let lowDir = 0;
     for (const row of result[0].values) {
-      const hds = row[0] as number;
+      const hds = Number(row[0] ?? 0);
       const phase = row[1] as string | null;
       if (hds < 0.2) {
         if (phase && !isHdsConcerning(hds, phase, baselines)) {
@@ -100,17 +100,18 @@ async function detectLowComprehension(
 ): Promise<BlindSpotAlert | null> {
   try {
     const result = await db.exec(
-      `SELECT module, score, event_count FROM comprehension_by_module
-       WHERE score < 40 AND event_count >= 5
-       ORDER BY score ASC
+      `SELECT domain AS module, current_score AS score, interaction_count AS event_count
+       FROM domain_comprehension
+       WHERE current_score < 40 AND interaction_count >= 5
+       ORDER BY current_score ASC
        LIMIT 1`,
     );
 
     if (!result[0]?.values.length) return null;
 
     const module = result[0].values[0][0] as string;
-    const score = result[0].values[0][1] as number;
-    const count = result[0].values[0][2] as number;
+    const score = Number(result[0].values[0][1] ?? 0);
+    const count = Number(result[0].values[0][2] ?? 0);
 
     const alertId = makeAlertId("low-comprehension", module);
     if (existing.alerts.some((a) => a.id === alertId && !a.acknowledged)) return null;
@@ -143,7 +144,7 @@ async function detectDecliningDirection(
 
     if (!result[0]?.values || result[0].values.length < 14) return null;
 
-    const values = result[0].values.map((r) => r[0] as number).reverse();
+    const values = result[0].values.map((r) => Number(r[0] ?? 0)).reverse();
     const trend = detectTrend(values);
 
     if (!trend || trend.direction !== "decelerating" || trend.confidence === "low") return null;

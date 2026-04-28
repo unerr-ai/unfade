@@ -88,17 +88,17 @@ export async function computeAndStoreCorrelations(db: DbLike, limit = 200): Prom
       const promptType = (row[1] as string) ?? "discovery";
       const featureGroup = (row[2] as string) ?? null;
       const constraintType = (row[3] as string) ?? "none";
-      const specificity = (row[4] as number) ?? 0;
-      const decompositionDepth = (row[5] as number) ?? 1;
-      const referenceDensity = (row[6] as number) ?? 0;
+      const specificity = Number(row[4] ?? 0);
+      const decompositionDepth = Number(row[5] ?? 1);
+      const referenceDensity = Number(row[6] ?? 0);
       const outcome = (row[7] as string) ?? null;
       const filesMod = Array.isArray(row[8]) ? (row[8] as string[]).length : 0;
-      const tokensOut = (row[9] as number) ?? 0;
-      const turnCount = (row[10] as number) ?? 1;
+      const tokensOut = Number(row[9] ?? 0);
+      const turnCount = Number(row[10] ?? 1);
       const _modAfterAccept = (row[11] as boolean) ?? false;
       const _courseCorrection = (row[12] as boolean) ?? false;
-      const hds = (row[13] as number) ?? 0;
-      const rejectionCount = (row[14] as number) ?? 0;
+      const hds = Number(row[13] ?? 0);
+      const rejectionCount = Number(row[14] ?? 0);
 
       const features: string[] = [];
       if (constraintType !== "none") features.push(`constraint:${constraintType}`);
@@ -180,10 +180,10 @@ export async function buildStrategyProfile(db: DbLike): Promise<PromptStrategyPr
         const allFeatures = ((row[5] as string) ?? "").split(",").filter(Boolean);
         profile.byPromptType[pType] = {
           bestStructure: [...new Set(allFeatures)].slice(0, 5),
-          avgSpecificity: Math.round(((row[1] as number) ?? 0) * 1000) / 1000,
-          avgFirstAttemptSuccessRate: Math.round(((row[2] as number) ?? 0) * 1000) / 1000,
-          avgTurnsToResolution: Math.round(((row[3] as number) ?? 1) * 10) / 10,
-          sampleSize: (row[4] as number) ?? 0,
+          avgSpecificity: Math.round(Number(row[1] ?? 0) * 1000) / 1000,
+          avgFirstAttemptSuccessRate: Math.round(Number(row[2] ?? 0) * 1000) / 1000,
+          avgTurnsToResolution: Math.round(Number(row[3] ?? 1) * 10) / 10,
+          sampleSize: Number(row[4] ?? 0),
         };
       }
     }
@@ -206,9 +206,9 @@ export async function buildStrategyProfile(db: DbLike): Promise<PromptStrategyPr
         const fGroup = (row[0] as string) ?? "";
         profile.byFeatureGroup[fGroup] = {
           dominantPromptType: (row[1] as PromptType) ?? "discovery",
-          avgEffectiveness: Math.round(((row[2] as number) ?? 0) * 1000) / 1000,
+          avgEffectiveness: Math.round(Number(row[2] ?? 0) * 1000) / 1000,
           bestChainPattern: null,
-          sampleSize: (row[3] as number) ?? 0,
+          sampleSize: Number(row[3] ?? 0),
         };
       }
     }
@@ -229,7 +229,7 @@ export async function buildStrategyProfile(db: DbLike): Promise<PromptStrategyPr
     if (globalResult[0]?.values) {
       for (const row of globalResult[0].values) {
         const feature = (row[0] as string) ?? "";
-        const avgEff = (row[1] as number) ?? 0;
+        const avgEff = Number(row[1] ?? 0);
         if (avgEff > 0.6) profile.globalPatterns.universallyEffective.push(feature);
         else if (avgEff < 0.2) profile.globalPatterns.universallyIneffective.push(feature);
       }

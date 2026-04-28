@@ -49,8 +49,8 @@ async function computeDirectionDensity(
         AND human_direction_score IS NOT NULL
         AND ts >= now() - INTERVAL '24 hours'
     `);
-    const avg = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const cnt = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const avg = Number(result[0]?.values[0]?.[0] ?? 0);
+    const cnt = Number(result[0]?.values[0]?.[1] ?? 0);
     return {
       value: Math.round(avg * 100),
       weight: WEIGHTS.directionDensity,
@@ -73,8 +73,8 @@ async function computeTokenEfficiency(
       WHERE source IN ('ai-session', 'mcp-active')
         AND ts >= now() - INTERVAL '24 hours'
     `);
-    const total = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const directed = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const total = Number(result[0]?.values[0]?.[0] ?? 0);
+    const directed = Number(result[0]?.values[0]?.[1] ?? 0);
     if (total === 0)
       return { value: 50, weight: WEIGHTS.tokenEfficiency, confidence: "low", dataPoints: 0 };
 
@@ -102,8 +102,8 @@ async function computeIterationRatio(
         AND turn_count IS NOT NULL
         AND ts >= now() - INTERVAL '24 hours'
     `);
-    const avgTurns = (result[0]?.values[0]?.[0] as number) ?? 5;
-    const cnt = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const avgTurns = Number(result[0]?.values[0]?.[0] ?? 5);
+    const cnt = Number(result[0]?.values[0]?.[1] ?? 0);
 
     const score = Math.max(0, Math.min(100, Math.round((1 - Math.min(avgTurns, 10) / 10) * 100)));
     return {
@@ -129,8 +129,8 @@ async function computeContextLeverage(
         AND prompt_specificity IS NOT NULL
         AND ts >= now() - INTERVAL '24 hours'
     `);
-    const avg = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const cnt = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const avg = Number(result[0]?.values[0]?.[0] ?? 0);
+    const cnt = Number(result[0]?.values[0]?.[1] ?? 0);
     return {
       value: Math.round(avg * 100),
       weight: WEIGHTS.contextLeverage,
@@ -147,11 +147,11 @@ async function computeModificationDepth(
 ): Promise<EfficiencySubMetric> {
   try {
     const result = await db.exec(`
-      SELECT AVG(score) as avg_score, COUNT(*) as cnt
-      FROM comprehension_proxy
+      SELECT AVG(overall_score) as avg_score, COUNT(*) as cnt
+      FROM comprehension_assessment
     `);
-    const avg = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const cnt = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const avg = Number(result[0]?.values[0]?.[0] ?? 0);
+    const cnt = Number(result[0]?.values[0]?.[1] ?? 0);
     return {
       value: Math.round(avg * 100),
       weight: WEIGHTS.modificationDepth,
@@ -174,9 +174,9 @@ async function computePhaseMultiplier(db: AnalyzerContext["analytics"]): Promise
       WHERE source IN ('ai-session', 'mcp-active')
         AND ts >= now() - INTERVAL '24 hours'
     `);
-    const planning = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const debugging = (result[0]?.values[0]?.[1] as number) ?? 0;
-    const total = (result[0]?.values[0]?.[2] as number) ?? 0;
+    const planning = Number(result[0]?.values[0]?.[0] ?? 0);
+    const debugging = Number(result[0]?.values[0]?.[1] ?? 0);
+    const total = Number(result[0]?.values[0]?.[2] ?? 0);
     if (total === 0) return 1.0;
 
     const planningRatio = planning / total;
@@ -198,8 +198,8 @@ async function computeOutcomeAdjustment(db: AnalyzerContext["analytics"]): Promi
         AND ts >= now() - INTERVAL '24 hours'
         AND outcome IS NOT NULL
     `);
-    const failures = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const total = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const failures = Number(result[0]?.values[0]?.[0] ?? 0);
+    const total = Number(result[0]?.values[0]?.[1] ?? 0);
     if (total === 0) return 1.0;
 
     const failureRatio = failures / total;
@@ -219,8 +219,8 @@ async function computeHistory(
     if (!result[0]?.values.length) return [];
     return result[0].values
       .map((row) => ({
-        date: row[0] as string,
-        aes: row[1] as number,
+        date: String(row[0]),
+        aes: Number(row[1] ?? 0),
       }))
       .reverse();
   } catch {
@@ -354,8 +354,12 @@ export const efficiencyAnalyzer: IncrementalAnalyzer<EfficiencyState, Efficiency
   minDataPoints: 5,
 
   async initialize(ctx: AnalyzerContext): Promise<IncrementalState<EfficiencyState>> {
-    logger.debug("efficiency: initializing");
+    logger.info("[efficiency] Initializing efficiency analyzer");
     const output = await computeEfficiency(ctx.analytics);
+    logger.info("[efficiency] Initialized", {
+      aes: output.aes,
+      dataPoints: output.subMetrics.directionDensity.dataPoints,
+    });
     return {
       value: { output },
       watermark: output.updatedAt,

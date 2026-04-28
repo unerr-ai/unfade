@@ -22,6 +22,7 @@ import { getProjectDataDir, getStateDir } from "../../utils/paths.js";
 import {
   getSynthesisProgress,
   invalidateSetupCache,
+  isSetupComplete,
   updateSynthesisProgress,
 } from "../setup-state.js";
 
@@ -34,7 +35,13 @@ setupRoutes.post("/api/setup/complete", async (c) => {
   const reqId = (c as unknown as { reqId?: string }).reqId;
   logger.info("setup.complete: marking done", { reqId });
   try {
-    await updateSetupStatus({ configuredAt: new Date().toISOString(), setupCompleted: true });
+    // Guard: prevent double completion (concurrent requests or re-submissions)
+    if (isSetupComplete()) {
+      logger.warn("setup.complete: already completed, ignoring", { reqId });
+      return c.json({ success: true });
+    }
+
+    await updateSetupStatus({ configuredAt: new Date().toISOString() });
     invalidateSetupCache();
 
     // Start capture pipeline (daemons were deferred until now)
@@ -268,62 +275,84 @@ setupRoutes.get("/api/setup/progress", (c) => {
 
 /**
  * GET /api/setup/launch-stream — SSE stream of daemon startup + materialization progress.
+ * Emits typed events: progress, discovery, insight, complete.
  */
 setupRoutes.get("/api/setup/launch-stream", (c) => {
   return streamSSE(c, async (stream) => {
     let id = 0;
+    let discoveryWatermark = 0;
+    let insightWatermark = 0;
+    let closed = false;
 
-    const sendEvent = async (type: string, message: string, data?: Record<string, unknown>) => {
-      await stream.writeSSE({
-        id: String(++id),
-        event: type,
-        data: JSON.stringify({ message, ...data }),
-      });
-    };
-
-    // Listen for bus events related to setup/launch progress
-    const listener = (event: import("../../services/event-bus.js").BusEvent) => {
-      if (event.type === "event" || event.type === "summary") {
-        const progress = getSynthesisProgress();
-        sendEvent(
-          "progress",
-          `Processing events... ${progress.processedEvents}/${progress.totalEvents} (${progress.percent}%)`,
-          {
-            percent: progress.percent,
-            phase: progress.phase,
-          },
-        );
+    const send = async (event: string, data: unknown) => {
+      if (closed) return;
+      try {
+        await stream.writeSSE({
+          id: String(++id),
+          event,
+          data: JSON.stringify(data),
+        });
+      } catch {
+        closed = true;
       }
     };
 
+    const sendProgressSnapshot = async () => {
+      const p = getSynthesisProgress();
+
+      await send("progress", {
+        percent: p.percent,
+        phase: p.phase,
+        materializationPercent: p.materializationPercent,
+        intelligencePercent: p.intelligencePercent,
+        coreFilesComplete: p.coreFilesComplete,
+        coreFilesTotal: p.coreFilesTotal,
+        currentStage: p.currentStage,
+        stageDetail: p.stageDetail,
+      });
+
+      // Send new discoveries
+      if (p.discoveries.length > discoveryWatermark) {
+        for (const d of p.discoveries.slice(discoveryWatermark)) {
+          await send("discovery", d);
+        }
+        discoveryWatermark = p.discoveries.length;
+      }
+
+      // Send new insights
+      if (p.insights.length > insightWatermark) {
+        for (const ins of p.insights.slice(insightWatermark)) {
+          await send("insight", ins);
+        }
+        insightWatermark = p.insights.length;
+      }
+
+      if (p.phase === "complete") {
+        await send("complete", { message: "All systems ready" });
+        return true;
+      }
+      return false;
+    };
+
+    // Push-based: listen for launch-progress events and send immediately
+    const listener = (event: import("../../services/event-bus.js").BusEvent) => {
+      if (event.type === "launch-progress") {
+        void sendProgressSnapshot();
+      }
+    };
     eventBus.onBus(listener);
 
-    // Send initial status
-    await sendEvent("status", "Launch stream connected");
+    await send("status", { message: "Launch stream connected" });
 
-    // Send progress updates every 2 seconds until complete or disconnected
-    const progressInterval = setInterval(async () => {
-      const progress = getSynthesisProgress();
-      try {
-        await sendEvent("progress", `Processing... ${progress.percent}%`, {
-          percent: progress.percent,
-          processedEvents: progress.processedEvents,
-          totalEvents: progress.totalEvents,
-          phase: progress.phase,
-        });
-        if (progress.phase === "complete") {
-          await sendEvent("complete", "Intelligence synthesis complete");
-          clearInterval(progressInterval);
-        }
-      } catch {
-        clearInterval(progressInterval);
-      }
+    // Poll fallback every 2s for any missed updates
+    const progressInterval = setInterval(() => {
+      void sendProgressSnapshot();
     }, 2000);
 
-    // Keep alive until client disconnects
+    // Keep alive until client disconnects or complete
     try {
-      while (true) {
-        await stream.sleep(10000);
+      while (!closed) {
+        await stream.sleep(5000);
         const progress = getSynthesisProgress();
         if (progress.phase === "complete") break;
       }

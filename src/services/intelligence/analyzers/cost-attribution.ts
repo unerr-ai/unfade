@@ -51,10 +51,10 @@ async function computeByModel(
     );
     if (!result[0]?.values.length) return [];
 
-    const total = result[0].values.reduce((s, r) => s + (r[1] as number), 0);
+    const total = result[0].values.reduce((s, r) => s + Number(r[1] ?? 0), 0);
     return result[0].values.map((row) => {
       const model = (row[0] as string) ?? "unknown";
-      const count = row[1] as number;
+      const count = Number(row[1] ?? 0);
       const price = findPrice(model, pricing);
       return {
         key: model,
@@ -96,12 +96,12 @@ async function computeByBranch(db: AnalyzerContext["analytics"]): Promise<CostDi
     );
     if (!result[0]?.values.length) return [];
 
-    const total = result[0].values.reduce((s, r) => s + (r[1] as number), 0);
+    const total = result[0].values.reduce((s, r) => s + Number(r[1] ?? 0), 0);
     return result[0].values.map((row) => ({
       key: (row[0] as string) ?? "unknown",
-      eventCount: row[1] as number,
+      eventCount: Number(row[1] ?? 0),
       estimatedCost: 0,
-      percentage: total > 0 ? Math.round(((row[1] as number) / total) * 100) : 0,
+      percentage: total > 0 ? Math.round((Number(row[1] ?? 0) / total) * 100) : 0,
     }));
   } catch {
     return [];
@@ -122,12 +122,12 @@ async function computeByFeature(db: AnalyzerContext["analytics"]): Promise<CostD
     );
     if (!result[0]?.values.length) return [];
 
-    const total = result[0].values.reduce((s, r) => s + (r[1] as number), 0);
+    const total = result[0].values.reduce((s, r) => s + Number(r[1] ?? 0), 0);
     return result[0].values.map((row) => ({
       key: (row[0] as string) ?? "unknown",
-      eventCount: row[1] as number,
+      eventCount: Number(row[1] ?? 0),
       estimatedCost: 0,
-      percentage: total > 0 ? Math.round(((row[1] as number) / total) * 100) : 0,
+      percentage: total > 0 ? Math.round((Number(row[1] ?? 0) / total) * 100) : 0,
     }));
   } catch {
     return [];
@@ -144,8 +144,8 @@ async function computeWasteRatio(db: AnalyzerContext["analytics"]): Promise<numb
        WHERE source IN ('ai-session', 'mcp-active')
          AND human_direction_score IS NOT NULL`,
     );
-    const total = (result[0]?.values[0]?.[0] as number) ?? 0;
-    const low = (result[0]?.values[0]?.[1] as number) ?? 0;
+    const total = Number(result[0]?.values[0]?.[0] ?? 0);
+    const low = Number(result[0]?.values[0]?.[1] ?? 0);
     if (total < 5) return null;
     return Math.round((low / total) * 100) / 100;
   } catch {
@@ -161,7 +161,7 @@ async function computeContextOverhead(db: AnalyzerContext["analytics"]): Promise
        WHERE source IN ('ai-session', 'mcp-active')
          AND prompt_specificity IS NOT NULL`,
     );
-    const avg = (result[0]?.values[0]?.[0] as number) ?? 0;
+    const avg = Number(result[0]?.values[0]?.[0] ?? 0);
     return Math.round((1 - avg) * 100) / 100;
   } catch {
     return null;
@@ -178,7 +178,7 @@ async function computeCostPerDirected(
        WHERE source IN ('ai-session', 'mcp-active')
          AND human_direction_score >= 0.5`,
     );
-    const directed = (result[0]?.values[0]?.[0] as number) ?? 0;
+    const directed = Number(result[0]?.values[0]?.[0] ?? 0);
     if (directed === 0 || totalCost === 0) return null;
     return Math.round((totalCost / directed) * 100) / 100;
   } catch {
@@ -223,7 +223,7 @@ async function computeAbandonedWaste(
     let totalCost = 0;
     for (const row of result[0].values) {
       const model = (row[0] as string) ?? "unknown";
-      const count = row[1] as number;
+      const count = Number(row[1] ?? 0);
       totalEvents += count;
       totalCost += count * findPrice(model, pricing);
     }

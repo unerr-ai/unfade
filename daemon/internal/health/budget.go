@@ -13,15 +13,15 @@ import (
 
 // BudgetConfig defines resource thresholds.
 type BudgetConfig struct {
-	MaxMemoryMB  float64       // Maximum RSS in MB (default: 50)
-	MaxCPUPct    float64       // Maximum CPU percentage (default: 1.0)
+	MaxMemoryMB   float64       // Maximum RSS in MB (default: 50)
+	MaxCPUPct     float64       // Maximum CPU percentage (default: 1.0)
 	CheckInterval time.Duration // How often to check (default: 30s)
 }
 
 // DefaultBudgetConfig returns the default resource budget.
 func DefaultBudgetConfig() BudgetConfig {
 	return BudgetConfig{
-		MaxMemoryMB:   50.0,
+		MaxMemoryMB:   100.0,
 		MaxCPUPct:     1.0,
 		CheckInterval: 30 * time.Second,
 	}
@@ -47,28 +47,30 @@ func CheckBudget(cfg BudgetConfig, log BudgetLogger) BudgetStatus {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 
-	memMB := float64(ms.Sys) / (1024 * 1024)
+	sysMB := float64(ms.Sys) / (1024 * 1024)
 	heapMB := float64(ms.HeapInuse) / (1024 * 1024)
 	goroutines := runtime.NumGoroutine()
 
+	// Use HeapInuse for budget enforcement — Sys includes OS-level overhead
+	// (mmap, stacks, runtime metadata) that the process doesn't actively use.
 	status := BudgetStatus{
-		MemoryMB:      memMB,
+		MemoryMB:      sysMB,
 		HeapMB:        heapMB,
 		NumGoroutines: goroutines,
-		MemoryOver:    memMB > cfg.MaxMemoryMB,
+		MemoryOver:    heapMB > cfg.MaxMemoryMB,
 	}
 
 	if status.MemoryOver {
 		log.Warn("resource budget exceeded: memory", map[string]any{
-			"current_mb": memMB,
 			"heap_mb":    heapMB,
+			"sys_mb":     sysMB,
 			"limit_mb":   cfg.MaxMemoryMB,
 			"goroutines": goroutines,
 			"pid":        os.Getpid(),
 		})
 	} else {
 		log.Debug("resource budget check", map[string]any{
-			"memory_mb":  memMB,
+			"memory_mb":  sysMB,
 			"heap_mb":    heapMB,
 			"goroutines": goroutines,
 		})

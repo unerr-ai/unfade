@@ -9,18 +9,27 @@ import { type FSWatcher, watch } from "chokidar";
 import { logger } from "../../utils/logger.js";
 import { getEventsDir, getStateDir } from "../../utils/paths.js";
 import { logBuffer } from "../logs/ring-buffer.js";
+import { destroyWorkerPool } from "../workers/pool.js";
 import { CacheManager } from "./manager.js";
-import { materializeIncremental, rebuildAll } from "./materializer.js";
+import { type MaterializeProgressInfo, materializeIncremental } from "./materializer.js";
+
+export interface KnowledgeExtractionHook {
+  /** Called after materialization when new rows exist. Returns number of events processed. */
+  run: (analytics: import("./manager.js").DbLike, limit?: number) => Promise<number>;
+}
 
 export interface MaterializerDaemonConfig {
   intervalMs: number;
   cwd?: string;
   onTick?: (newRows: number, cache: CacheManager) => void | Promise<void>;
   onClose?: () => void | Promise<void>;
+  onMaterializeProgress?: (info: MaterializeProgressInfo) => void;
+  /** Knowledge extraction hook — runs after materialization, before onTick. */
+  knowledgeExtraction?: KnowledgeExtractionHook;
 }
 
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30s fallback heartbeat
-const DEBOUNCE_MS = 100; // 100ms debounce for rapid writes
+const DEBOUNCE_MS = 500; // 500ms debounce — batches rapid writes into single ticks
 
 /**
  * Background materializer that watches .unfade/events/ for changes via chokidar.
@@ -36,6 +45,7 @@ export class MaterializerDaemon {
   private config: MaterializerDaemonConfig;
   private initialBuildDone = false;
   private lastTickMs = 0;
+  private lastProgressCheckMs = 0;
 
   constructor(config: MaterializerDaemonConfig) {
     this.config = config;
@@ -51,14 +61,21 @@ export class MaterializerDaemon {
     this.running = true;
 
     await this.writeResumeState();
-    await this.initialBuild();
+
+    // Kick off initial build without blocking — yields to event loop so
+    // the HTTP server can respond to health/progress requests immediately.
+    void this.initialBuild().catch((err) => {
+      logger.debug("Initial build failed (non-blocking)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
     // Set up file watcher on events directory
     const eventsDir = getEventsDir(this.config.cwd);
     if (existsSync(eventsDir)) {
       this.watcher = watch(eventsDir, {
         ignoreInitial: true,
-        awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 20 },
+        awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 200 },
       });
 
       this.watcher.on("change", () => this.debouncedTick());
@@ -128,6 +145,7 @@ export class MaterializerDaemon {
       // cursor save is best-effort
     }
 
+    await destroyWorkerPool();
     await this.cache.close();
 
     if (this.config.onClose) {
@@ -205,12 +223,34 @@ export class MaterializerDaemon {
       const count = (result[0]?.values[0]?.[0] as number) ?? 0;
 
       if (count === 0) {
-        const rows = await rebuildAll(this.cache, this.config.cwd);
-        logger.debug("Initial full rebuild", { rows });
+        const buildStartMs = Date.now();
+        logger.info("[materializer] Starting initial build (empty DB)");
 
-        // Update synthesis progress after initial rebuild
+        // Reset cursor so materializeIncremental processes everything from byte 0.
+        const { resetCursor } = await import("./cursor.js");
+        resetCursor(this.config.cwd);
+
+        // Reset DuckDB schema for clean start
+        await this.cache.resetDuckDbSchema();
+
+        const rows = await materializeIncremental(
+          this.cache,
+          this.config.cwd,
+          this.config.onMaterializeProgress,
+        );
+        logger.info(`[materializer] Initial build complete: ${rows} rows`, {
+          elapsedMs: Date.now() - buildStartMs,
+          heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+          rssMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+        });
+
+        // Run onTick so intelligence pipeline processes the initial data
         if (rows > 0 && this.config.onTick) {
+          logger.info(`[materializer] Starting pipeline onTick for ${rows} initial rows`);
           await this.config.onTick(rows, this.cache);
+          logger.info(`[materializer] Pipeline onTick complete`, {
+            elapsedMs: Date.now() - buildStartMs,
+          });
         }
       }
 
@@ -227,16 +267,43 @@ export class MaterializerDaemon {
     this.busy = true;
 
     try {
-      const newRows = await materializeIncremental(this.cache, this.config.cwd);
+      const newRows = await materializeIncremental(
+        this.cache,
+        this.config.cwd,
+        this.config.onMaterializeProgress,
+      );
       this.lastTickMs = Date.now();
 
       if (newRows > 0) {
         logBuffer.append("materializer", "debug", `Materialized ${newRows} new rows`);
       }
 
-      // Always call onTick so synthesis progress updates even when idle
-      if (this.config.onTick) {
+      // Knowledge extraction: runs AFTER materialization, BEFORE intelligence analyzers.
+      // Layer 3 analyzers see extraction results on the NEXT tick (acceptable 1-tick lag).
+      if (newRows > 0 && this.config.knowledgeExtraction) {
+        try {
+          const db = this.cache.analytics ?? this.cache.getDb();
+          const extracted = await this.config.knowledgeExtraction.run(db, 50);
+          if (extracted > 0) {
+            logBuffer.append("materializer", "debug", `Extracted knowledge from ${extracted} events`);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.debug("Knowledge extraction failed (non-fatal)", { error: msg });
+        }
+      }
+
+      // Only call onTick when there's actual work — intelligence processing is expensive.
+      // Synthesis progress is checked separately on a 5s throttle via the heartbeat path.
+      if (newRows > 0 && this.config.onTick) {
         await this.config.onTick(newRows, this.cache);
+      } else if (this.config.onTick) {
+        // Throttled progress-only check: at most every 5 seconds
+        const now = Date.now();
+        if (now - this.lastProgressCheckMs >= 5_000) {
+          this.lastProgressCheckMs = now;
+          await this.config.onTick(0, this.cache);
+        }
       }
 
       return newRows;

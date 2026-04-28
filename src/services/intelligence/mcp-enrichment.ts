@@ -246,8 +246,8 @@ async function loadLiveGraphContext(): Promise<GraphContextFile | null> {
             const name = row[0] as string;
             if (name)
               map[name] = {
-                comprehension: (row[1] as number) ?? 0,
-                durability: (row[2] as number) ?? 0.5,
+                comprehension: Number(row[1] ?? 0),
+                durability: Number(row[2] ?? 0.5),
               };
           }
           extended.featureKnowledgeMap = map;

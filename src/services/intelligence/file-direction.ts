@@ -47,7 +47,7 @@ async function fullScan(db: DbLike): Promise<DirectionByFileState> {
 
     for (const row of result[0].values) {
       const text = `${(row[0] as string) ?? ""} ${(row[1] as string) ?? ""}`;
-      const hds = (row[2] as number) ?? 0.5;
+      const hds = Number(row[2] ?? 0.5);
       for (const dir of extractFileDirs(text)) {
         const entry = byDir[dir] ?? { totalHds: 0, count: 0, avgHds: 0 };
         entry.totalHds += hds;
@@ -161,8 +161,8 @@ export async function readDirectionByFile(db: DbLike): Promise<FileDirectionEntr
     if (!result[0]?.values.length) return [];
     return result[0].values.map((row) => ({
       path: row[0] as string,
-      directionDensity: row[1] as number,
-      eventCount: row[2] as number,
+      directionDensity: Number(row[1]),
+      eventCount: Number(row[2]),
     }));
   } catch {
     return [];

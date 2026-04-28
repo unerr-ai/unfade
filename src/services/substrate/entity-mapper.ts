@@ -103,7 +103,7 @@ export async function mapFeaturesToEntities(
       if (parentId) {
         relationships.push({
           targetEntityId: `feat-${parentId}`,
-          type: "depends-on",
+          type: "DEPENDS_ON",
           weight: 0.5,
           evidence: "parent-feature",
         });

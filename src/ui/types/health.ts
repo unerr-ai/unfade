@@ -20,12 +20,15 @@ export interface RepoHealth {
 }
 
 export interface SystemHealth {
+  status: "ok" | "degraded";
+  version: string;
   pid: number;
   uptime: number;
+  configuredProvider: string;
+  configuredModel: string;
   repoCount: number;
   repos: RepoHealth[];
+  ingestStatus: string | null;
   intelligenceReady: boolean;
-  ingestStatus?: string;
-  configuredProvider?: string;
-  degradedReasons?: string[];
+  degradedReasons: string[];
 }

@@ -3,7 +3,7 @@
 // The materializer writes to both. Intelligence reads DuckDB. MCP/FTS reads SQLite.
 // Both are materialized views over the JSONL source of truth.
 
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { logger } from "../../utils/logger.js";
@@ -143,24 +143,60 @@ export class CacheManager {
   }
 
   private async initDuckDb(cacheDir: string): Promise<void> {
-    try {
-      const { DuckDBInstance: DI } = await import("@duckdb/node-api");
-      const dbPath = join(cacheDir, DUCKDB_FILENAME);
+    const { DuckDBInstance: DI } = await import("@duckdb/node-api");
+    const dbPath = join(cacheDir, DUCKDB_FILENAME);
+
+    const tryOpen = async () => {
       const instance = await DI.create(dbPath);
       const conn = await instance.connect();
-
       this.duckInstance = instance as unknown as DuckDBInstance;
       this.duckConn = conn as unknown as DuckDBConnection;
-
       await this.createDuckDbSchema(conn as unknown as DuckDBConnection);
-
       this.analyticsDb = this.wrapDuckDbAsDbLike(conn as unknown as DuckDBConnection);
       logger.debug("DuckDB analytics initialized", { path: dbPath });
+    };
+
+    try {
+      await tryOpen();
     } catch (err) {
-      logger.warn("DuckDB unavailable — analytics will degrade gracefully", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const msg = err instanceof Error ? err.message : String(err);
+      // Stale DuckDB lock — always clean up and retry.
+      // We hold the proper-lockfile server lock (acquired before anything else in
+      // unfade-server.ts), so we are guaranteed to be the only unfade instance.
+      // Any DuckDB "Conflicting lock" is therefore stale by definition — the PID
+      // may appear alive due to OS PID recycling, but it's not another unfade.
+      if (msg.includes("Conflicting lock")) {
+        const stalePid = msg.match(/\(PID (\d+)\)/)?.[1] ?? "unknown";
+        logger.info("DuckDB stale lock detected — clearing and retrying", { stalePid });
+        this.clearDuckDbLockFiles(dbPath);
+        try {
+          await tryOpen();
+          return;
+        } catch (retryErr) {
+          logger.warn("DuckDB unavailable after stale lock cleanup", {
+            error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+          });
+          this.analyticsDb = null;
+          return;
+        }
+      }
+      logger.warn("DuckDB unavailable — analytics will degrade gracefully", { error: msg });
       this.analyticsDb = null;
+    }
+  }
+
+  /** Remove DuckDB WAL and lock files so a fresh open can succeed. */
+  private clearDuckDbLockFiles(dbPath: string): void {
+    for (const suffix of [".wal", ".wal.lock", ".lock"]) {
+      const lockFile = dbPath + suffix;
+      try {
+        if (existsSync(lockFile)) {
+          unlinkSync(lockFile);
+          logger.debug("Removed stale DuckDB file", { file: lockFile });
+        }
+      } catch {
+        // best effort
+      }
     }
   }
 
@@ -297,9 +333,9 @@ export class CacheManager {
   }
 
   private createSqliteSchema(db: InstanceType<typeof Database>): void {
-    // SQLite keeps ONLY operational tables: events (+ FTS), lineage, features.
-    // All analytical tables (sessions, direction_windows, comprehension_*, token_proxy_spend,
-    // metric_snapshots, decisions, decision_edges, event_links) live in DuckDB.
+    // SQLite keeps operational tables: events (+ FTS), lineage, features, extraction_status.
+    // Analytical tables (sessions, direction_windows, comprehension, token_proxy_spend,
+    // metric_snapshots, decisions, decision_edges) live in DuckDB.
     db.exec(`
       CREATE TABLE IF NOT EXISTS events (
         id TEXT PRIMARY KEY,
@@ -357,6 +393,33 @@ export class CacheManager {
         metadata JSON,
         PRIMARY KEY (from_event, to_event, link_type)
       );
+
+      CREATE TABLE IF NOT EXISTS extraction_status (
+        event_id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        extracted_at TEXT,
+        retry_count INTEGER DEFAULT 0,
+        error TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_es_project ON extraction_status(project_id);
+      CREATE INDEX IF NOT EXISTS idx_es_status ON extraction_status(status);
+
+      CREATE TABLE IF NOT EXISTS event_segments (
+        event_id TEXT NOT NULL,
+        segment_index INTEGER NOT NULL,
+        segment_id TEXT NOT NULL,
+        turn_start INTEGER NOT NULL,
+        turn_end INTEGER NOT NULL,
+        topic_label TEXT,
+        summary TEXT,
+        files_in_scope TEXT,
+        modules_in_scope TEXT,
+        segment_method TEXT NOT NULL DEFAULT 'structural',
+        PRIMARY KEY (event_id, segment_index)
+      );
+      CREATE INDEX IF NOT EXISTS idx_es_event ON event_segments(event_id);
     `);
 
     try {

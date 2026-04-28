@@ -12,11 +12,15 @@ export interface Project {
   root: string;
   label: string;
   lastSeenAt: string;
-  capabilities: Record<string, boolean>;
-  status: "active" | "paused" | "error";
-  daemonPid: number | null;
-  daemonRunning: boolean;
-  materializerLagMs: number;
+  addedVia?: string;
+  monitoring: "active" | "paused";
+  rootExists: boolean;
+  daemon: {
+    pid: number | null;
+    running: boolean;
+    restartCount: number;
+    uptimeMs: number;
+  } | null;
 }
 
 export interface DiscoveredProject {

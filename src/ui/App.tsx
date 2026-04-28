@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
+import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
 import {
   DecisionsSkeleton,
   GenericSkeleton,
@@ -23,109 +24,140 @@ const IntegrationsPage = lazy(() => import("@/pages/IntegrationsPage"));
 const LogsPage = lazy(() => import("@/pages/LogsPage"));
 const SetupWizard = lazy(() => import("@/pages/setup/SetupWizard"));
 
+function NotFoundPage() {
+  return <Navigate to="/" replace />;
+}
+
 export function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route
-          path="/setup"
-          element={
-            <Suspense fallback={<GenericSkeleton />}>
-              <SetupWizard />
-            </Suspense>
-          }
-        />
-        <Route element={<AppShell />}>
+      <ErrorBoundary>
+        <Routes>
           <Route
-            index
+            path="/setup"
             element={
-              <Suspense fallback={<HomeSkeleton />}>
-                <HomePage />
-              </Suspense>
+              <ErrorBoundary>
+                <Suspense fallback={<GenericSkeleton />}>
+                  <SetupWizard />
+                </Suspense>
+              </ErrorBoundary>
             }
           />
-          <Route
-            path="live"
-            element={
-              <Suspense fallback={<LiveSkeleton />}>
-                <LivePage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="distill"
-            element={
-              <Suspense fallback={<GenericSkeleton />}>
-                <DistillPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="intelligence"
-            element={
-              <Suspense fallback={<IntelligenceSkeleton />}>
-                <IntelligencePage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="decisions"
-            element={
-              <Suspense fallback={<DecisionsSkeleton />}>
-                <DecisionsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="profile"
-            element={
-              <Suspense fallback={<ProfileSkeleton />}>
-                <ProfilePage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="cards"
-            element={
-              <Suspense fallback={<GenericSkeleton />}>
-                <CardsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="projects"
-            element={
-              <Suspense fallback={<GenericSkeleton />}>
-                <ProjectsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="settings"
-            element={
-              <Suspense fallback={<GenericSkeleton />}>
-                <SettingsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="integrations"
-            element={
-              <Suspense fallback={<GenericSkeleton />}>
-                <IntegrationsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="logs"
-            element={
-              <Suspense fallback={<GenericSkeleton />}>
-                <LogsPage />
-              </Suspense>
-            }
-          />
-        </Route>
-      </Routes>
+          <Route element={<AppShell />}>
+            <Route
+              index
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<HomeSkeleton />}>
+                    <HomePage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="live"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<LiveSkeleton />}>
+                    <LivePage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="distill"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<GenericSkeleton />}>
+                    <DistillPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="intelligence"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<IntelligenceSkeleton />}>
+                    <IntelligencePage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="decisions"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<DecisionsSkeleton />}>
+                    <DecisionsPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="profile"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<ProfileSkeleton />}>
+                    <ProfilePage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="cards"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<GenericSkeleton />}>
+                    <CardsPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="projects"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<GenericSkeleton />}>
+                    <ProjectsPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="settings"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<GenericSkeleton />}>
+                    <SettingsPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="integrations"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<GenericSkeleton />}>
+                    <IntegrationsPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="logs"
+              element={
+                <ErrorBoundary>
+                  <Suspense fallback={<GenericSkeleton />}>
+                    <LogsPage />
+                  </Suspense>
+                </ErrorBoundary>
+              }
+            />
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

@@ -87,3 +87,21 @@ logsRoutes.get("/api/logs/stream", (c) => {
     unsubscribe();
   });
 });
+
+/**
+ * POST /api/logs/client-error — receives client-side error reports from ErrorBoundary.
+ * Uses navigator.sendBeacon so the body is a plain string (not JSON content-type).
+ */
+logsRoutes.post("/api/logs/client-error", async (c) => {
+  try {
+    const text = await c.req.text();
+    const payload = JSON.parse(text);
+    const msg = `[UI] ${payload.error ?? "Unknown error"} at ${payload.url ?? "/"}`;
+    logBuffer.append("server", "error", msg, {
+      detail: payload.stack?.slice(0, 2000),
+    });
+  } catch {
+    // Best effort — don't fail if payload is malformed
+  }
+  return c.body(null, 204);
+});

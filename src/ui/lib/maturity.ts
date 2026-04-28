@@ -30,7 +30,9 @@ export const MATURITY_PHASES = [
 ] as const;
 
 export function getPhaseInfo(phase: number) {
-  return MATURITY_PHASES[Math.max(0, Math.min(phase - 1, 3))];
+  const idx =
+    typeof phase === "number" && !Number.isNaN(phase) ? Math.max(0, Math.min(phase - 1, 3)) : 0;
+  return MATURITY_PHASES[idx];
 }
 
 export function getPhaseColor(phase: number): string {

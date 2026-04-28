@@ -1,5 +1,5 @@
 // FILE: src/server/routes/decisions.ts
-// GET /unfade/decisions — decisions list via Sprint 2A reader.
+// GET /api/decisions — decisions list via Sprint 2A reader.
 
 import { Hono } from "hono";
 import { DecisionsInputSchema } from "../../schemas/mcp.js";

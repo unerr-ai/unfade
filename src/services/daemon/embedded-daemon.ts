@@ -1,11 +1,15 @@
 // FILE: src/services/daemon/embedded-daemon.ts
 // UF-305 + UF-306: Managed Go daemon child process with crash recovery.
-// Non-detached — lifecycle tied to parent Node process.
+// Supports two lifecycle modes:
+//   1. Spawned — daemon started as child process, lifecycle tied to parent.
+//   2. Adopted — orphaned daemon from a previous server run, verified via IPC.
 // Crash recovery: exponential backoff (1s → 2s → 4s → ... → 30s max).
 // Stderr piped to Node logger with [capture:<label>] prefix.
 
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { createConnection } from "node:net";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getBinDir } from "../../utils/paths.js";
@@ -25,6 +29,7 @@ export interface EmbeddedDaemonOptions {
 
 export class EmbeddedDaemon {
   private child: ChildProcess | null = null;
+  private adoptedPid: number | null = null;
   private repoRoot: string;
   private projectId: string;
   private captureMode: CaptureMode;
@@ -44,12 +49,19 @@ export class EmbeddedDaemon {
   }
 
   /**
-   * Spawn the Go daemon as a managed child process.
+   * Start the Go daemon — tries to adopt an existing orphaned daemon first,
+   * spawns a new one only if adoption fails.
    * Binary lives at ~/.unfade/bin/ (shared across all projects).
    * Returns the PID, or null if the binary doesn't exist.
    */
-  start(): number | null {
-    if (this.child) return this.child.pid ?? null;
+  async start(): Promise<number | null> {
+    if (this.child || this.adoptedPid) return this.getPid();
+
+    // Try adopting an existing daemon before spawning a new one.
+    // Post server-lock gate, any running daemon is an orphan from a previous
+    // server run — it's ours to adopt.
+    const adopted = await this.tryAdopt();
+    if (adopted) return this.adoptedPid;
 
     const daemonPath = join(getBinDir(), DAEMON_BINARY);
     if (!existsSync(daemonPath)) {
@@ -63,6 +75,7 @@ export class EmbeddedDaemon {
 
   /**
    * Gracefully stop the daemon. Sends SIGTERM, waits, then SIGKILL.
+   * Works for both spawned and adopted daemons.
    */
   async stop(): Promise<void> {
     this.shuttingDown = true;
@@ -72,12 +85,14 @@ export class EmbeddedDaemon {
       this.restartTimer = null;
     }
 
-    const pid = this.child?.pid;
+    const pid = this.child?.pid ?? this.adoptedPid;
     if (!pid) return;
 
     try {
       process.kill(pid, "SIGTERM");
     } catch {
+      this.child = null;
+      this.adoptedPid = null;
       return;
     }
 
@@ -92,12 +107,14 @@ export class EmbeddedDaemon {
     }
 
     this.child = null;
+    this.adoptedPid = null;
   }
 
   isRunning(): boolean {
-    if (!this.child?.pid) return false;
+    const pid = this.child?.pid ?? this.adoptedPid;
+    if (!pid) return false;
     try {
-      process.kill(this.child.pid, 0);
+      process.kill(pid, 0);
       return true;
     } catch {
       return false;
@@ -105,7 +122,7 @@ export class EmbeddedDaemon {
   }
 
   getPid(): number | null {
-    return this.child?.pid ?? null;
+    return this.child?.pid ?? this.adoptedPid ?? null;
   }
 
   getRepoRoot(): string {
@@ -125,7 +142,158 @@ export class EmbeddedDaemon {
     return Date.now() - this.startedAt;
   }
 
+  /**
+   * Resolve the daemon state directory (mirrors Go's resolveDaemonStateDir).
+   * ai-global → ~/.unfade/state/daemons/ai-global/
+   * per-repo  → ~/.unfade/state/daemons/<projectId>/
+   */
+  private getDaemonStateDir(): string {
+    const daemonId = this.captureMode === "ai-global" ? "ai-global" : this.projectId;
+    return join(homedir(), ".unfade", "state", "daemons", daemonId);
+  }
+
+  /**
+   * Try to adopt an existing orphaned daemon (from a previous server run).
+   * Returns true if adoption succeeded, false if we need to spawn fresh.
+   *
+   * Adoption criteria:
+   * 1. PID file exists with a valid PID
+   * 2. Process at that PID is alive (signal 0)
+   * 3. Daemon responds to IPC status command on its Unix socket
+   *
+   * If PID alive but IPC unresponsive → recycled PID (not our daemon) → clean up, return false.
+   * If PID dead → clean stale files, return false.
+   */
+  private async tryAdopt(): Promise<boolean> {
+    const stateDir = this.getDaemonStateDir();
+    const pidFile = join(stateDir, "daemon.pid");
+    const socketFile = join(stateDir, "daemon.sock");
+
+    // 1. Read PID file
+    let pid: number;
+    try {
+      if (!existsSync(pidFile)) return false;
+      pid = Number.parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
+      if (Number.isNaN(pid) || pid <= 0) return false;
+    } catch {
+      return false;
+    }
+
+    // 2. Check process alive via signal 0
+    try {
+      process.kill(pid, 0);
+    } catch {
+      // Process dead — clean stale files
+      this.cleanStaleDaemonFiles(stateDir);
+      return false;
+    }
+
+    // 3. PID alive — but could be a recycled PID (different process).
+    //    Verify it's actually our daemon by probing the IPC socket.
+    if (!existsSync(socketFile)) {
+      // No socket file → PID is recycled (not our daemon)
+      this.cleanStaleDaemonFiles(stateDir);
+      return false;
+    }
+
+    try {
+      const resp = await this.probeIPC(socketFile);
+      if (!resp.ok) {
+        // IPC failed — not our daemon (recycled PID or crashed mid-shutdown)
+        this.cleanStaleDaemonFiles(stateDir);
+        return false;
+      }
+    } catch {
+      this.cleanStaleDaemonFiles(stateDir);
+      return false;
+    }
+
+    // Adoption successful — store PID reference, mark as running
+    this.adoptedPid = pid;
+    this.startedAt = Date.now();
+    logger.info(`[capture:${this.label}] adopted existing daemon (PID ${pid})`);
+    logBuffer.append("daemon", "info", `Adopted existing daemon (PID ${pid})`, {
+      repoId: this.label,
+    });
+    return true;
+  }
+
+  /**
+   * Remove stale daemon files when we know the PID is dead or recycled.
+   */
+  private cleanStaleDaemonFiles(stateDir: string): void {
+    for (const file of ["daemon.pid", "daemon.sock", "health.json"]) {
+      try {
+        const path = join(stateDir, file);
+        if (existsSync(path)) {
+          unlinkSync(path);
+          logger.debug(`[capture:${this.label}] removed stale ${file}`);
+        }
+      } catch {
+        // best effort
+      }
+    }
+  }
+
+  /**
+   * Probe a daemon via its Unix socket to verify it's responsive.
+   * Sends a {"cmd":"status"} IPC command and checks for an {ok:true} response.
+   */
+  private probeIPC(socketFile: string): Promise<{ ok: boolean }> {
+    return new Promise((resolve) => {
+      let responded = false;
+      const respond = (r: { ok: boolean }) => {
+        if (!responded) {
+          responded = true;
+          resolve(r);
+        }
+      };
+
+      const conn = createConnection(socketFile);
+      conn.setTimeout(2000);
+      let buffer = "";
+
+      conn.on("connect", () => conn.write('{"cmd":"status"}\n'));
+      conn.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const nl = buffer.indexOf("\n");
+        if (nl !== -1) {
+          try {
+            const parsed = JSON.parse(buffer.slice(0, nl)) as { ok?: boolean };
+            respond({ ok: parsed.ok === true });
+          } catch {
+            respond({ ok: false });
+          }
+          conn.end();
+        }
+      });
+      conn.on("error", () => respond({ ok: false }));
+      conn.on("timeout", () => {
+        respond({ ok: false });
+        conn.destroy();
+      });
+      conn.on("end", () => respond({ ok: false }));
+    });
+  }
+
   private spawn(daemonPath: string): number | null {
+    // Pre-flight: if an existing daemon is alive, don't spawn (adoption already tried).
+    // This is a safety check — should not normally trigger since tryAdopt() ran first.
+    const existingPid = this.readPidFile();
+    if (existingPid !== null) {
+      try {
+        process.kill(existingPid, 0);
+        logger.error(
+          `[capture:${this.label}] cannot spawn: existing daemon (PID ${existingPid}) still alive. ` +
+            `Adoption was attempted but failed — this should not happen.`,
+        );
+        return null;
+      } catch {
+        // Process dead — clean up stale files before spawning
+        this.cleanStaleDaemonFiles(this.getDaemonStateDir());
+      }
+    }
+
     const args = ["--capture-mode", this.captureMode];
     if (this.repoRoot && this.captureMode !== "ai-global") {
       args.push("--project-dir", this.repoRoot);
@@ -202,9 +370,25 @@ export class EmbeddedDaemon {
     return child.pid ?? null;
   }
 
+  /**
+   * Read the PID from the daemon's PID file. Returns null if missing or invalid.
+   */
+  private readPidFile(): number | null {
+    const pidFile = join(this.getDaemonStateDir(), "daemon.pid");
+    try {
+      if (!existsSync(pidFile)) return null;
+      const pid = Number.parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
+      if (Number.isNaN(pid) || pid <= 0) return null;
+      return pid;
+    } catch {
+      return null;
+    }
+  }
+
   private waitForExit(timeoutMs: number): Promise<void> {
     return new Promise((resolve) => {
-      if (!this.child?.pid) {
+      const pid = this.child?.pid ?? this.adoptedPid;
+      if (!pid) {
         resolve();
         return;
       }

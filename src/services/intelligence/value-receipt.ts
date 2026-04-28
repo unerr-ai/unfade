@@ -34,7 +34,7 @@ async function countInjections(db: DbLike, sinceIso: string): Promise<number> {
          AND type IN ('tool-invocation', 'mcp-invocation', 'context-injection')
          AND ts >= '${sinceIso}'`,
     );
-    return (result[0]?.values[0]?.[0] as number) ?? 0;
+    return Number(result[0]?.values[0]?.[0] ?? 0);
   } catch {
     return 0;
   }

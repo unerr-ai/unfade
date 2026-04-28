@@ -1,5 +1,5 @@
 // FILE: src/server/routes/profile.ts
-// GET /unfade/profile — reasoning profile via Sprint 2A reader.
+// GET /api/profile — reasoning profile via Sprint 2A reader.
 
 import { Hono } from "hono";
 import { getProfile } from "../../tools/unfade-profile.js";

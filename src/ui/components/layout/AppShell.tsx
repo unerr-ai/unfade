@@ -1,4 +1,5 @@
-import { useIsFetching } from "@tanstack/react-query";
+import { useIsFetching, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useLayoutEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { Toaster } from "sonner";
 import { CommandPalette } from "@/components/shared/CommandPalette";
@@ -26,7 +27,22 @@ function GlobalLoadingBar() {
 export function AppShell() {
   const collapsed = useAppStore((s) => s.sidebarCollapsed);
   const location = useLocation();
+  const qc = useQueryClient();
   useSSE();
+
+  // Cancel page-specific in-flight queries on route change to prevent stale updates.
+  // Preserve global caches populated by SSE (summary, health, events).
+  // useLayoutEffect fires synchronously before the new page component renders,
+  // preventing a race where new page queries get cancelled.
+  useLayoutEffect(() => {
+    const GLOBAL_KEYS = ["summary", "health", "events"];
+    qc.cancelQueries({
+      predicate: (query) => {
+        const key = query.queryKey[0];
+        return typeof key === "string" && !GLOBAL_KEYS.includes(key);
+      },
+    });
+  }, [location.pathname, qc]);
 
   return (
     <div className="flex h-screen bg-canvas">

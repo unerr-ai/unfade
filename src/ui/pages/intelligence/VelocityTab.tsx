@@ -48,9 +48,10 @@ export function VelocityTab({ enabled = true }: { enabled?: boolean }) {
           <h3 className="mb-3 text-sm font-heading font-semibold">Velocity by Domain</h3>
           <div className="space-y-2">
             {domains.map(([name, d]) => {
-              const current = d.turnsToAcceptance?.current ?? 0;
+              const dom = d as any;
+              const current = dom?.turnsToAcceptance?.current ?? 0;
               const maxTurns = Math.max(
-                ...domains.map(([, v]) => v.turnsToAcceptance?.current ?? 0),
+                ...domains.map(([, v]) => (v as any)?.turnsToAcceptance?.current ?? 0),
                 1,
               );
               return (
@@ -63,7 +64,9 @@ export function VelocityTab({ enabled = true }: { enabled?: boolean }) {
                     />
                   </div>
                   <span className="w-12 text-right font-mono text-muted">{current.toFixed(1)}</span>
-                  <span className="w-16 text-right text-xs text-muted">{d.sessionsCount} sess</span>
+                  <span className="w-16 text-right text-xs text-muted">
+                    {dom?.sessionsCount ?? 0} sess
+                  </span>
                 </div>
               );
             })}

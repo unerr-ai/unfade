@@ -8,7 +8,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { readEvents } from "../../services/capture/event-store.js";
-import { findRepoById } from "../../services/registry/registry.js";
+import { findRepoById, loadRegistry } from "../../services/registry/registry.js";
 import { getGraphDir } from "../../utils/paths.js";
 
 export const decisionDetailRoutes = new Hono();
@@ -21,6 +21,7 @@ interface DecisionRecord {
   alternativesConsidered?: number;
   humanDirectionScore?: number;
   directionClassification?: string;
+  projectId?: string;
   evidenceEventIds?: string[];
   /** Snake_case alias (some exports / older lines) */
   evidence_event_ids?: string[];
@@ -33,6 +34,9 @@ interface EvidenceEvent {
   type: string;
   summary: string;
   detail?: string;
+  branch?: string;
+  files?: string[];
+  conversationTitle?: string;
 }
 
 // GET /api/decisions/:index — single decision with evidence (current project)
@@ -49,11 +53,13 @@ decisionDetailRoutes.get("/api/decisions/:index", async (c) => {
 
   const decision = decisions[index];
   const evidence = resolveEvidence(decision);
+  const projectName = resolveProjectName(decision.projectId);
 
   return c.json({
     index,
     decision,
     evidence,
+    projectName,
   });
 });
 
@@ -122,16 +128,7 @@ function resolveByIds(ids: string[], date: string, cwd?: string): EvidenceEvent[
   const events = readEvents(date, cwd);
   const idSet = new Set(ids);
 
-  return events
-    .filter((e) => idSet.has(e.id))
-    .map((e) => ({
-      id: e.id,
-      timestamp: e.timestamp,
-      source: e.source,
-      type: e.type,
-      summary: e.content.summary,
-      detail: e.content.detail?.slice(0, 500),
-    }));
+  return events.filter((e) => idSet.has(e.id)).map((e) => enrichEvidenceEvent(e));
 }
 
 function resolveByKeyword(decision: DecisionRecord, cwd?: string): EvidenceEvent[] {
@@ -158,15 +155,32 @@ function resolveByKeyword(decision: DecisionRecord, cwd?: string): EvidenceEvent
     }
   }
 
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5)
-    .map((s) => ({
-      id: s.event.id,
-      timestamp: s.event.timestamp,
-      source: s.event.source,
-      type: s.event.type,
-      summary: s.event.content.summary,
-      detail: s.event.content.detail?.slice(0, 500),
-    }));
+  return scored.sort((a, b) => b.score - a.score).map((s) => enrichEvidenceEvent(s.event));
+}
+
+function enrichEvidenceEvent(e: ReturnType<typeof readEvents>[number]): EvidenceEvent {
+  const meta = e.metadata ?? {};
+  return {
+    id: e.id,
+    timestamp: e.timestamp,
+    source: e.source,
+    type: e.type,
+    summary: e.content.summary,
+    detail: e.content.detail?.slice(0, 500),
+    branch: e.content.branch ?? e.gitContext?.branch,
+    files: e.content.files?.slice(0, 20),
+    conversationTitle:
+      typeof meta.conversation_title === "string" ? meta.conversation_title : undefined,
+  };
+}
+
+function resolveProjectName(projectId: string | undefined): string | undefined {
+  if (!projectId) return undefined;
+  try {
+    const registry = loadRegistry();
+    const repo = registry.repos.find((r) => r.id === projectId);
+    return repo?.label;
+  } catch {
+    return undefined;
+  }
 }

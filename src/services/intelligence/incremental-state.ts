@@ -10,6 +10,20 @@ import { getIntelligenceDir } from "../../utils/paths.js";
 import type { DbLike } from "../cache/manager.js";
 import type { Domain } from "./domain-classifier.js";
 
+/**
+ * Normalize a DuckDB timestamp value to an ISO string.
+ * DuckDB returns TIMESTAMP columns as `{micros: bigint|number}` objects
+ * rather than plain strings. This helper handles both forms.
+ */
+function normalizeDuckDbTs(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (raw && typeof raw === "object" && "micros" in raw) {
+    const micros = Number((raw as { micros: number | bigint }).micros);
+    return new Date(micros / 1000).toISOString();
+  }
+  return String(raw ?? "");
+}
+
 // ---------------------------------------------------------------------------
 // Core interfaces
 // ---------------------------------------------------------------------------
@@ -134,7 +148,15 @@ export function saveState<T>(
     mkdirSync(dir, { recursive: true });
     const target = join(dir, `${analyzerName}.state.json`);
     const tmp = `${target}.tmp.${process.pid}`;
-    writeFileSync(tmp, JSON.stringify(state, null, 2), "utf-8");
+    writeFileSync(
+      tmp,
+      JSON.stringify(
+        state,
+        (_key, value) => (typeof value === "bigint" ? Number(value) : value),
+        2,
+      ),
+      "utf-8",
+    );
     renameSync(tmp, target);
   } catch (err) {
     logger.debug(`Failed to save state for ${analyzerName}`, {
@@ -187,19 +209,19 @@ export async function buildEventBatch(
       events.push({
         id: row[0] as string,
         projectId: (row[1] as string) ?? "",
-        ts: (row[2] as string) ?? "",
+        ts: normalizeDuckDbTs(row[2]),
         source: (row[3] as string) ?? "",
         type: (row[4] as string) ?? "",
         sessionId,
         contentSummary: (row[6] as string) ?? null,
         contentBranch: (row[7] as string) ?? null,
         contentProject: (row[8] as string) ?? null,
-        humanDirectionScore: (row[9] as number) ?? null,
-        promptSpecificity: (row[10] as number) ?? null,
-        turnCount: (row[11] as number) ?? null,
-        tokensIn: (row[12] as number) ?? null,
-        tokensOut: (row[13] as number) ?? null,
-        estimatedCost: (row[14] as number) ?? null,
+        humanDirectionScore: row[9] != null ? Number(row[9]) : null,
+        promptSpecificity: row[10] != null ? Number(row[10]) : null,
+        turnCount: row[11] != null ? Number(row[11]) : null,
+        tokensIn: row[12] != null ? Number(row[12]) : null,
+        tokensOut: row[13] != null ? Number(row[13]) : null,
+        estimatedCost: row[14] != null ? Number(row[14]) : null,
         executionPhase: (row[15] as string) ?? null,
         outcome: (row[16] as string) ?? null,
         aiTool: (row[17] as string) ?? null,

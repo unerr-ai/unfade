@@ -51,18 +51,20 @@ export function CostTab({ enabled = true }: { enabled?: boolean }) {
           <h3 className="mb-3 text-sm font-heading font-semibold">Cost by Model</h3>
           <div className="space-y-2">
             {models.map(([name, m]) => {
-              const maxCost = Math.max(...models.map(([, v]) => v.cost), 1);
+              const mod = m as any;
+              const cost = mod?.cost ?? 0;
+              const maxCost = Math.max(...models.map(([, v]) => (v as any)?.cost ?? 0), 1);
               return (
                 <div key={name} className="flex items-center gap-3 text-sm">
                   <span className="w-28 truncate text-foreground font-medium">{name}</span>
                   <div className="flex-1 h-2 rounded-full bg-raised overflow-hidden">
                     <div
                       className="h-full rounded-full bg-accent"
-                      style={{ width: `${(m.cost / maxCost) * 100}%` }}
+                      style={{ width: `${(cost / maxCost) * 100}%` }}
                     />
                   </div>
-                  <span className="w-16 text-right font-mono text-muted">${m.cost.toFixed(2)}</span>
-                  <span className="w-12 text-right text-xs text-muted">{m.sessions}</span>
+                  <span className="w-16 text-right font-mono text-muted">${cost.toFixed(2)}</span>
+                  <span className="w-12 text-right text-xs text-muted">{mod?.sessions ?? 0}</span>
                 </div>
               );
             })}

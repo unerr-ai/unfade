@@ -48,7 +48,7 @@ async function queryViaHttp(
   if (options.limit) params.set("limit", options.limit);
 
   try {
-    const res = await fetch(`${baseUrl}/unfade/query?${params.toString()}`);
+    const res = await fetch(`${baseUrl}/api/query?${params.toString()}`);
     if (!res.ok) return null;
     return (await res.json()) as QueryOutput;
   } catch {

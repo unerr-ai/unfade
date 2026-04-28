@@ -59,9 +59,19 @@ function extractDecisions(
     const summary = event.content.summary;
     const branch = event.content.branch ?? event.gitContext?.branch;
 
-    // Each commit is implicitly a decision about what to work on.
-    // For the first distill, we keep it simple: each commit = one decision.
-    if (summary) {
+    if (!summary) continue;
+
+    // Only surface commits that show actual decision-making signal:
+    // decision keywords in message, or branch name suggesting deliberate work
+    const lower = summary.toLowerCase();
+    const hasDecisionKeywords =
+      /\b(chose|decided|switched|replaced|migrated|reverted|refactor|trade.?off|instead of|rather than|opted|picked|selected)\b/.test(
+        lower,
+      );
+    const isMerge = /\bmerge\b/.test(lower);
+    const isRevert = /\brevert\b/.test(lower);
+
+    if (hasDecisionKeywords || isMerge || isRevert) {
       decisions.push({
         decision: summary,
         rationale: branch ? `On branch ${branch}` : "From git history",

@@ -32,6 +32,7 @@ import { sendIPCCommand, waitForDaemonIPCReady } from "../utils/ipc.js";
 import { logger } from "../utils/logger.js";
 import { getDaemonProjectRoot, getDistillsDir, getEventsDir, getStateDir } from "../utils/paths.js";
 import { type RunningServer, startServer } from "./http.js";
+import { acquireServerLock, releaseServerLock } from "./server-lock.js";
 import { isSetupComplete, updateSynthesisProgress } from "./setup-state.js";
 import { closeServerCache } from "./shared-cache.js";
 
@@ -51,6 +52,10 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
 
   printServerHeader();
 
+  // Single-instance enforcement: acquire exclusive lock BEFORE anything else.
+  // Uses OS-level advisory locking — auto-releases on crash/SIGKILL.
+  await acquireServerLock(effectiveCwd);
+
   // Ensure cwd is registered
   const projectRoot = getDaemonProjectRoot(effectiveCwd);
   registerRepo(projectRoot);
@@ -59,14 +64,12 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
   const config = loadConfig();
   const registry = loadRegistry();
 
-  // Start HTTP server first (so dashboard is available during daemon startup)
-  const server = await startServer({ config, cwd: effectiveCwd });
-
-  // Start RepoManager — daemons only start if setup is already complete
+  // Start RepoManager before HTTP server so globalThis refs are available when routes handle requests
   const repoManager = new RepoManager();
-
-  // Expose repo manager on global so setup route can trigger pipeline later
   (globalThis as Record<string, unknown>).__unfade_repo_manager = repoManager;
+
+  // Start HTTP server (dashboard available during daemon startup)
+  const server = await startServer({ config, cwd: effectiveCwd });
 
   if (isSetupComplete()) {
     // Setup already done — start capture pipeline immediately
@@ -151,6 +154,9 @@ export async function startUnfadeServer(cwd?: string): Promise<RunningUnfade> {
       // may already be gone
     }
 
+    // 6. Release server lock
+    await releaseServerLock();
+
     printShutdownComplete();
   };
 
@@ -167,8 +173,8 @@ export async function startCapturePipeline(
 ): Promise<void> {
   const registry = repos ?? loadRegistry().repos;
 
-  // Start single global AI capture daemon
-  repoManager.startGlobalAICapture();
+  // Start single global AI capture daemon (adopts existing orphan or spawns fresh)
+  await repoManager.startGlobalAICapture();
 
   for (const entry of registry) {
     const managed = await repoManager.addRepo(entry);
@@ -193,7 +199,8 @@ export async function startCapturePipeline(
     (globalThis as Record<string, unknown>).__unfade_materializer = primaryManaged.materializer;
   }
 
-  triggerBackfillDistill();
+  // During setup, only generate latest 7 distill cards — full backfill runs after completion
+  triggerBackfillDistill(7);
 
   logger.info("Capture pipeline started", { repos: registry.length });
 }
@@ -241,7 +248,7 @@ async function triggerIngestWhenReady(repoRoot: string): Promise<void> {
  * Backfill distills for all event dates that don't have a distill yet.
  * Uses global paths (~/.unfade/) — not per-repo. Fire-and-forget.
  */
-function triggerBackfillDistill(): void {
+function triggerBackfillDistill(maxDays?: number): void {
   const eventsDir = getEventsDir();
   const distillsDir = getDistillsDir();
 
@@ -270,16 +277,27 @@ function triggerBackfillDistill(): void {
       const missing = dates.filter((d) => !existingDistills.has(d));
       if (missing.length === 0) return;
 
+      // During setup, only process the most recent N days — backfill the rest after
+      const toProcess = maxDays ? missing.slice(-maxDays) : missing;
+      const deferred = maxDays ? missing.length - toProcess.length : 0;
+
       logger.info("Backfill distill: processing undistilled days", {
         total: dates.length,
         missing: missing.length,
+        processing: toProcess.length,
+        deferred,
       });
 
-      for (const date of missing) {
+      for (const date of toProcess) {
         await distillIncremental(date);
       }
 
-      logger.info("Backfill distill complete", { days: missing.length });
+      logger.info("Backfill distill complete", { days: toProcess.length });
+
+      // If we deferred some, schedule a full backfill after a delay
+      if (deferred > 0) {
+        setTimeout(() => triggerBackfillDistill(), 10_000);
+      }
     } catch {
       // non-fatal — backfill distill is best-effort
     }

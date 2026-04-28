@@ -2,6 +2,7 @@ import { Lightbulb } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AreaChart } from "@/components/charts/AreaChart";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { ErrorState } from "@/components/shared/ErrorState";
 import { EventList } from "@/components/shared/EventList";
 import { HeroMetric } from "@/components/shared/HeroMetric";
 import { InsightCard } from "@/components/shared/InsightCard";
@@ -30,9 +31,10 @@ function HomeSkeleton() {
 
 export default function HomePage() {
   const { activeProjectId, persona } = useAppStore();
-  const { data: summary, isLoading } = useSummary();
+  const { data: summary, isLoading, error, refetch } = useSummary();
 
   if (isLoading) return <HomeSkeleton />;
+  if (error) return <ErrorState error={error} onRetry={() => refetch()} />;
 
   return activeProjectId ? (
     <HomeProject projectId={activeProjectId} summary={summary} persona={persona} />

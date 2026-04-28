@@ -31,8 +31,9 @@ import {
 } from "../../utils/paths.js";
 import { getFeedbackThreshold, readFeedback } from "../personalization/feedback.js";
 
-const RELEVANCE_THRESHOLD = 0.7;
+const RELEVANCE_THRESHOLD = 0.8;
 const DOMAIN_BONUS = 0.2;
+const MIN_SHARED_TOKENS = 3;
 
 interface ExtractedDecision {
   date: string;
@@ -236,6 +237,14 @@ export function amplify(date: string, cwd?: string): AmplifyOutput {
 
       for (const past of allPast) {
         const pastTokens = tokenize(past.decision);
+
+        // Require minimum shared non-stopword tokens to filter noise
+        let sharedCount = 0;
+        for (const t of todayTokens) {
+          if (pastTokens.has(t)) sharedCount++;
+        }
+        if (sharedCount < MIN_SHARED_TOKENS) continue;
+
         let relevance = jaccard(todayTokens, pastTokens);
 
         // Domain match bonus
@@ -588,6 +597,107 @@ export function amplifyV2(
   }
 
   return { connections: topConnections, connectionsSection };
+}
+
+// ---------------------------------------------------------------------------
+// Domain Trend Detection — replaces word-frequency "insights"
+// ---------------------------------------------------------------------------
+
+export interface DomainTrend {
+  type: "focus-streak" | "new-domain" | "domain-shift";
+  description: string;
+  domain: string;
+  days?: number;
+}
+
+/**
+ * Detect domain-level trends across recent distill decisions.
+ * Replaces the old word-frequency "Recurring: X 204 times" noise with
+ * meaningful observations: focus streaks, new domains, and domain shifts.
+ */
+export function detectDomainTrends(date: string, cwd?: string): DomainTrend[] {
+  const distillsDir = getDistillsDir(cwd);
+  const allDecisions = readAllDistillDecisions(distillsDir);
+  if (allDecisions.length === 0) return [];
+
+  // Build per-date domain sets
+  const dateDomainsMap = new Map<string, Set<string>>();
+  for (const d of allDecisions) {
+    if (!d.domain) continue;
+    const existing = dateDomainsMap.get(d.date) ?? new Set();
+    existing.add(d.domain.toLowerCase());
+    dateDomainsMap.set(d.date, existing);
+  }
+
+  // Sort dates descending, only look at last 30 days
+  const sortedDates = Array.from(dateDomainsMap.keys()).sort().reverse().slice(0, 30);
+
+  if (sortedDates.length < 2) return [];
+
+  const todayDomains = dateDomainsMap.get(date);
+  if (!todayDomains || todayDomains.size === 0) return [];
+
+  const trends: DomainTrend[] = [];
+
+  // All domains seen in last 30 days (excluding today)
+  const historicalDomains = new Set<string>();
+  for (const d of sortedDates) {
+    if (d === date) continue;
+    const domains = dateDomainsMap.get(d);
+    if (domains) {
+      for (const dom of domains) historicalDomains.add(dom);
+    }
+  }
+
+  for (const domain of todayDomains) {
+    // 1. Detect focus streaks — consecutive days working in same domain
+    let streak = 0;
+    for (const d of sortedDates) {
+      if (d === date) continue;
+      const domains = dateDomainsMap.get(d);
+      if (domains?.has(domain)) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+    if (streak >= 3) {
+      trends.push({
+        type: "focus-streak",
+        description: `${streak + 1} consecutive days in ${domain}`,
+        domain,
+        days: streak + 1,
+      });
+    }
+
+    // 2. Detect new domain — first time ever
+    if (!historicalDomains.has(domain)) {
+      trends.push({
+        type: "new-domain",
+        description: `First time working in ${domain}`,
+        domain,
+      });
+    }
+  }
+
+  // 3. Detect domain shifts — yesterday's domains differ significantly from today
+  const yesterdayDate = sortedDates.find((d) => d !== date);
+  if (yesterdayDate) {
+    const yesterdayDomains = dateDomainsMap.get(yesterdayDate);
+    if (yesterdayDomains) {
+      const newToday = Array.from(todayDomains).filter((d) => !yesterdayDomains.has(d));
+      const droppedToday = Array.from(yesterdayDomains).filter((d) => !todayDomains.has(d));
+      if (newToday.length > 0 && droppedToday.length > 0) {
+        trends.push({
+          type: "domain-shift",
+          description: `Shifted from ${droppedToday.join(", ")} to ${newToday.join(", ")}`,
+          domain: newToday[0],
+        });
+      }
+    }
+  }
+
+  return trends;
 }
 
 // ---------------------------------------------------------------------------

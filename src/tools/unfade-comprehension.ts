@@ -1,13 +1,12 @@
 // FILE: src/tools/unfade-comprehension.ts
-// UF-237: MCP tool — returns per-module comprehension scores + overall score.
-// Useful for AI agents to understand which parts of the codebase
-// the developer knows well vs is AI-dependent in.
+// MCP tool — returns per-domain comprehension scores from the knowledge extraction pipeline.
+// Reads from domain_comprehension + comprehension_assessment (DuckDB analytics).
 
 import type { McpMeta } from "../schemas/mcp.js";
 import { CacheManager } from "../services/cache/manager.js";
 import {
-  aggregateComprehensionByModule,
   type ModuleComprehension,
+  readComprehensionOverview,
   readModuleComprehension,
 } from "../services/intelligence/comprehension.js";
 
@@ -24,39 +23,29 @@ export async function getComprehension(cwd?: string): Promise<ComprehensionResul
   const start = Date.now();
 
   const cache = new CacheManager(cwd);
-  const db = await cache.getDb();
+  const analyticsDb = cache.analytics;
 
-  if (!db) {
+  if (!analyticsDb) {
     return {
       data: { overall: null, modules: [], totalModules: 0 },
       _meta: {
         tool: "unfade-comprehension",
         durationMs: Date.now() - start,
         degraded: true,
-        degradedReason: "SQLite cache unavailable",
+        degradedReason: "DuckDB analytics unavailable",
         lastUpdated: null,
       },
     };
   }
 
-  let modules = await readModuleComprehension(db);
-  if (modules.length === 0) {
-    modules = await aggregateComprehensionByModule(db);
-  }
-
-  const overall =
-    modules.length > 0
-      ? Math.round(
-          modules.reduce((sum, m) => sum + m.score * m.eventCount, 0) /
-            modules.reduce((sum, m) => sum + m.eventCount, 0),
-        )
-      : null;
+  const overview = await readComprehensionOverview(analyticsDb);
+  const modules = await readModuleComprehension(analyticsDb);
 
   await cache.close();
 
   return {
     data: {
-      overall,
+      overall: overview.overallScore,
       modules: modules.slice(0, 20),
       totalModules: modules.length,
     },

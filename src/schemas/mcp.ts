@@ -123,6 +123,8 @@ export const DecisionItemSchema = z.object({
   domain: z.string().optional(),
   alternativesConsidered: z.number().int().min(0).optional(),
   projectId: z.string().optional(),
+  /** Human-readable project name resolved from registry. */
+  projectName: z.string().optional(),
   /** Event IDs that contributed to this decision (evidence chain). */
   evidenceEventIds: z.array(z.string()).optional(),
   /** Human Direction Score — how much the developer steered this decision. */

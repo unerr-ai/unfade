@@ -397,7 +397,7 @@ function estimateDataPointsForDimension(ctx: AnalyzerContext, dimName: string): 
 
   const state = ctx.dependencyStates?.get(analyzerName);
   if (!state) return 5;
-  return state.eventCount ?? 10;
+  return Number(state.eventCount ?? 10);
 }
 
 function detectDimensionTrend(currentScore: number, history: number[]): MaturityDimension["trend"] {

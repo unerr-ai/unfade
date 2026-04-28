@@ -67,7 +67,7 @@ export default function ProjectsPage() {
           {repoList.map((repo) => {
             const proj = projectMap.get(repo.id);
             const summary = repo.summary;
-            const running = proj?.daemonRunning ?? false;
+            const running = proj?.daemon?.running ?? false;
 
             return (
               <div key={repo.id} className="rounded-lg border border-border bg-surface p-4">

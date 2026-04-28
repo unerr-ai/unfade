@@ -89,7 +89,7 @@ export async function isServerRunning(
       return { running: false, port: null };
     }
 
-    const resp = await fetch(`http://127.0.0.1:${port}/unfade/health`, {
+    const resp = await fetch(`http://127.0.0.1:${port}/api/health`, {
       signal: AbortSignal.timeout(1000),
     });
     if (resp.ok) {

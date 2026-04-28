@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getEventsDir, getGraphDir, getMetricsDir } from "../../utils/paths.js";
+import { getWorkerPool } from "../workers/pool.js";
 import {
   hashLine,
   isCursorValid,
@@ -77,7 +78,18 @@ function clampBytesProcessed(bytesProcessed: number, fullContent: string, file: 
  * Writes to both SQLite (operational) and DuckDB (analytical).
  * Returns the number of new rows upserted.
  */
-export async function materializeIncremental(cache: CacheManager, cwd?: string): Promise<number> {
+export interface MaterializeProgressInfo {
+  filesProcessed: number;
+  filesTotal: number;
+  currentFile: string;
+  eventsInFile: number;
+}
+
+export async function materializeIncremental(
+  cache: CacheManager,
+  cwd?: string,
+  onProgress?: (info: MaterializeProgressInfo) => void,
+): Promise<number> {
   const db = await cache.getDb();
   if (!db) return 0;
 
@@ -87,7 +99,7 @@ export async function materializeIncremental(cache: CacheManager, cwd?: string):
   const cursor = loadCursor(cwd);
   let totalNew = 0;
 
-  totalNew += await materializeEventsIncremental(db, duckDb, cursor, cwd);
+  totalNew += await materializeEventsIncremental(db, duckDb, cursor, cwd, onProgress);
   totalNew += await materializeDecisionsIncremental(db, duckDb, cursor, cwd);
   totalNew += materializeMetricsIncremental(db, duckDb, cursor, cwd);
 
@@ -118,7 +130,7 @@ export async function rebuildAll(cache: CacheManager, cwd?: string): Promise<num
 
   let totalRows = 0;
 
-  totalRows += rebuildEvents(db, duckDb, cwd);
+  totalRows += await rebuildEvents(db, duckDb, cwd);
   totalRows += rebuildDecisions(db, duckDb, cwd);
   totalRows += rebuildMetrics(db, duckDb, cwd);
 
@@ -142,6 +154,7 @@ async function materializeEventsIncremental(
   duckDb: DbLike | null,
   cursor: MaterializerCursor,
   cwd?: string,
+  onProgress?: (info: MaterializeProgressInfo) => void,
 ): Promise<number> {
   const eventsDir = getEventsDir(cwd);
   if (!existsSync(eventsDir)) return 0;
@@ -158,6 +171,7 @@ async function materializeEventsIncremental(
     .sort();
 
   let totalNew = 0;
+  const eventsBatch: Record<string, unknown>[] = [];
 
   for (const file of files) {
     const filePath = join(eventsDir, file);
@@ -224,7 +238,7 @@ async function materializeEventsIncremental(
 
       try {
         const event = JSON.parse(trimmed);
-        upsertEvent(db, event);
+        eventsBatch.push(event);
         if (duckDb) upsertEventDuck(duckDb, event);
         lastValidLine = trimmed;
         totalNew++;
@@ -233,11 +247,6 @@ async function materializeEventsIncremental(
       }
 
       bytesProcessed += rawLineLength;
-
-      // Yield to the event loop every 100 inserts to prevent blocking HTTP serving
-      if (totalNew > 0 && totalNew % 100 === 0) {
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
     }
 
     // Defensive clamp: ensure byteOffset never exceeds actual file bytes.
@@ -251,10 +260,22 @@ async function materializeEventsIncremental(
       epoch: readEpochFile(filePath) ?? undefined,
       fileSize: statSync(filePath).size,
     };
+
+    if (onProgress) {
+      const fileIdx = files.indexOf(file);
+      onProgress({
+        filesProcessed: fileIdx + 1,
+        filesTotal: files.length,
+        currentFile: file,
+        eventsInFile: totalNew,
+      });
+    }
   }
 
-  if (totalNew > 0) {
-    refreshFts(db);
+  // Dispatch batched SQLite writes to worker thread (non-blocking)
+  if (eventsBatch.length > 0) {
+    await getWorkerPool().upsertEvents(eventsBatch);
+    await getWorkerPool().refreshFts();
   }
 
   return totalNew;
@@ -391,12 +412,13 @@ function materializeMetricsIncremental(
 // Full rebuild helpers
 // ---------------------------------------------------------------------------
 
-function rebuildEvents(db: DbLike, duckDb: DbLike | null, cwd?: string): number {
+async function rebuildEvents(db: DbLike, duckDb: DbLike | null, cwd?: string): Promise<number> {
   const eventsDir = getEventsDir(cwd);
   if (!existsSync(eventsDir)) return 0;
 
-  db.run("DELETE FROM events");
-  let count = 0;
+  // Clear SQLite events via worker (owns the write connection)
+  await getWorkerPool().execQuery("DELETE FROM events");
+  const eventsBatch: Record<string, unknown>[] = [];
   const files = readdirSync(eventsDir).filter((f) => f.endsWith(".jsonl"));
 
   for (const file of files) {
@@ -406,17 +428,19 @@ function rebuildEvents(db: DbLike, duckDb: DbLike | null, cwd?: string): number 
       if (!trimmed) continue;
       try {
         const event = JSON.parse(trimmed);
-        upsertEvent(db, event);
+        eventsBatch.push(event);
         if (duckDb) upsertEventDuck(duckDb, event);
-        count++;
       } catch {
         // skip malformed
       }
     }
   }
 
-  refreshFts(db);
-  return count;
+  if (eventsBatch.length > 0) {
+    await getWorkerPool().upsertEvents(eventsBatch);
+    await getWorkerPool().refreshFts();
+  }
+  return eventsBatch.length;
 }
 
 function rebuildDecisions(_db: DbLike, duckDb: DbLike | null, cwd?: string): number {
@@ -469,41 +493,6 @@ function rebuildMetrics(_db: DbLike, duckDb: DbLike | null, cwd?: string): numbe
 // ---------------------------------------------------------------------------
 // Shared upsert helpers
 // ---------------------------------------------------------------------------
-
-function upsertEvent(db: DbLike, event: Record<string, unknown>): void {
-  const projectId =
-    (event.projectId as string) || (event.content as Record<string, unknown>)?.project || "";
-  db.run(
-    `INSERT OR REPLACE INTO events (id, project_id, ts, source, type, content_summary, content_detail, git_repo, git_branch, metadata)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      event.id,
-      projectId,
-      event.timestamp,
-      event.source,
-      event.type,
-      (event.content as Record<string, unknown>)?.summary ?? "",
-      (event.content as Record<string, unknown>)?.detail ?? "",
-      (event.gitContext as Record<string, unknown>)?.repo ?? "",
-      (event.gitContext as Record<string, unknown>)?.branch ?? "",
-      JSON.stringify(event.metadata ?? {}),
-    ],
-  );
-}
-
-// SQLite upsertDecision and upsertMetricSnapshot removed — decisions and metrics
-// are now DuckDB-only (see upsertDecisionDuck / upsertMetricSnapshotDuck below).
-
-function refreshFts(db: DbLike): void {
-  try {
-    db.run("DELETE FROM events_fts");
-    db.run(
-      "INSERT INTO events_fts (content_summary, content_detail) SELECT content_summary, content_detail FROM events",
-    );
-  } catch {
-    // FTS5 might not be available
-  }
-}
 
 async function getDecisionCount(db: DbLike): Promise<number> {
   try {

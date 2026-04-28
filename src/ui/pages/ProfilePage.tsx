@@ -2,13 +2,19 @@ import { useQuery } from "@tanstack/react-query";
 import { User } from "lucide-react";
 import { RadarChart } from "@/components/charts/RadarChart";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { ErrorState } from "@/components/shared/ErrorState";
 import { HeroMetric } from "@/components/shared/HeroMetric";
 import { KpiCard } from "@/components/shared/KpiCard";
 import { useMaturity } from "@/hooks/useIntelligence";
 import { api } from "@/lib/api";
 
 export default function ProfilePage() {
-  const { data: profileResp, isLoading } = useQuery({
+  const {
+    data: profileResp,
+    isLoading,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ["profile"],
     queryFn: api.profile.get,
     staleTime: 120_000,
@@ -28,6 +34,8 @@ export default function ProfilePage() {
     );
   }
 
+  if (error) return <ErrorState error={error} onRetry={() => refetch()} />;
+
   const profile = profileResp?.data;
   if (!profile || profile.dataPoints < 2) {
     return (
@@ -39,15 +47,19 @@ export default function ProfilePage() {
     );
   }
 
-  const ds = profile.decisionStyle;
+  const ds = profile.decisionStyle ?? {
+    avgAlternativesEvaluated: 0,
+    aiModificationRate: 0,
+    aiAcceptanceRate: 0,
+  };
   const domains = profile.domainDistribution ?? [];
-  const patterns = (profile.patterns ?? []).filter((p) => p.confidence >= 0.7);
+  const patterns = (profile.patterns ?? []).filter((p: any) => p.confidence >= 0.7);
   const topDomain = domains[0]?.domain;
 
   const traits: string[] = [];
-  if (ds.avgAlternativesEvaluated >= 3) traits.push("architectural thinking");
-  if (ds.aiModificationRate >= 0.25) traits.push("active steering");
-  if (1 - ds.aiAcceptanceRate >= 0.8) traits.push("high-durability decisions");
+  if ((ds.avgAlternativesEvaluated ?? 0) >= 3) traits.push("architectural thinking");
+  if ((ds.aiModificationRate ?? 0) >= 0.25) traits.push("active steering");
+  if (1 - (ds.aiAcceptanceRate ?? 0) >= 0.8) traits.push("high-durability decisions");
 
   const identityLine =
     traits.length > 0
@@ -61,10 +73,10 @@ export default function ProfilePage() {
       <div className="space-y-6">
         <HeroMetric
           label="Engineering Identity"
-          value={maturity ? `Phase ${maturity.phase}` : "—"}
+          value={maturity?.phase ? `Phase ${maturity.phase}` : "—"}
           interpretation={identityLine}
           maturityPhase={
-            maturity ? { phase: maturity.phase, label: maturity.phaseLabel } : undefined
+            maturity?.phase ? { phase: maturity.phase, label: maturity.phaseLabel } : undefined
           }
         />
 
@@ -76,13 +88,13 @@ export default function ProfilePage() {
           />
           <KpiCard
             label="Alternatives"
-            value={ds.avgAlternativesEvaluated.toFixed(1)}
-            interpretation={ds.avgAlternativesEvaluated >= 3 ? "architectural" : "direct"}
+            value={(ds.avgAlternativesEvaluated ?? 0).toFixed(1)}
+            interpretation={(ds.avgAlternativesEvaluated ?? 0) >= 3 ? "architectural" : "direct"}
           />
           <KpiCard
             label="Modification Rate"
-            value={`${Math.round(ds.aiModificationRate * 100)}%`}
-            interpretation={ds.aiModificationRate >= 0.25 ? "active steering" : "passive"}
+            value={`${Math.round((ds.aiModificationRate ?? 0) * 100)}%`}
+            interpretation={(ds.aiModificationRate ?? 0) >= 0.25 ? "active steering" : "passive"}
           />
           <KpiCard label="Active Domains" value={domains.length} interpretation="distinct areas" />
         </div>
@@ -154,27 +166,31 @@ export default function ProfilePage() {
           </div>
         )}
 
-        <div className="rounded-lg border border-border bg-surface p-5">
-          <h2 className="mb-3 text-sm font-heading font-semibold">Activity Patterns</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="rounded-md bg-raised p-4 text-center">
-              <div className="font-mono text-2xl font-bold text-accent">
-                {profile.temporalPatterns.avgDecisionsPerDay.toFixed(1)}
+        {profile.temporalPatterns && (
+          <div className="rounded-lg border border-border bg-surface p-5">
+            <h2 className="mb-3 text-sm font-heading font-semibold">Activity Patterns</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-md bg-raised p-4 text-center">
+                <div className="font-mono text-2xl font-bold text-accent">
+                  {(profile.temporalPatterns.avgDecisionsPerDay ?? 0).toFixed(1)}
+                </div>
+                <div className="mt-1 text-xs text-muted">Decisions / day</div>
               </div>
-              <div className="mt-1 text-xs text-muted">Decisions / day</div>
+              <div className="rounded-md bg-raised p-4 text-center">
+                <div className="font-mono text-2xl font-bold text-accent">{profile.dataPoints}</div>
+                <div className="mt-1 text-xs text-muted">Total observations</div>
+              </div>
             </div>
-            <div className="rounded-md bg-raised p-4 text-center">
-              <div className="font-mono text-2xl font-bold text-accent">{profile.dataPoints}</div>
-              <div className="mt-1 text-xs text-muted">Total observations</div>
-            </div>
+            {profile.temporalPatterns.mostProductiveHours?.length > 0 && (
+              <p className="mt-3 text-xs text-muted">
+                Most productive:{" "}
+                {profile.temporalPatterns.mostProductiveHours
+                  .map((h: number) => `${h}:00`)
+                  .join(", ")}
+              </p>
+            )}
           </div>
-          {profile.temporalPatterns.mostProductiveHours.length > 0 && (
-            <p className="mt-3 text-xs text-muted">
-              Most productive:{" "}
-              {profile.temporalPatterns.mostProductiveHours.map((h) => `${h}:00`).join(", ")}
-            </p>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );

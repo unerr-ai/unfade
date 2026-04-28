@@ -4,7 +4,7 @@
 
 import type { DomainVelocity, Velocity } from "../../../schemas/intelligence/velocity.js";
 import { logger } from "../../../utils/logger.js";
-import { classifyDomainFast } from "../domain-classifier.js";
+import { getWorkerPool } from "../../workers/pool.js";
 import type {
   IncrementalAnalyzer,
   IncrementalState,
@@ -45,8 +45,6 @@ async function _collectSourceEventIds(db: AnalyzerContext["analytics"]): Promise
 async function computeDomainTurns(
   db: AnalyzerContext["analytics"],
 ): Promise<Map<string, number[]>> {
-  const domainWeeks = new Map<string, Map<string, number[]>>();
-
   try {
     const result = await db.exec(`
       SELECT
@@ -61,46 +59,22 @@ async function computeDomainTurns(
 
     if (!result[0]?.values.length) return new Map();
 
-    for (const row of result[0].values) {
-      const summary = (row[0] as string) ?? "";
-      const turns = (row[1] as number) ?? 0;
-      const date = (row[2] as string) ?? "";
-      if (turns <= 0 || !date) continue;
+    // Offload CPU-heavy row classification to worker thread
+    const rows = result[0].values.map((row) => ({
+      contentSummary: (row[0] as string) ?? "",
+      turns: Number(row[1] ?? 0),
+      date: (row[2] as string) ?? "",
+    }));
 
-      const domain = classifyDomainFast(summary);
-      const weekKey = getWeekKey(date);
-
-      if (!domainWeeks.has(domain)) domainWeeks.set(domain, new Map());
-      const weeks = domainWeeks.get(domain)!;
-      if (!weeks.has(weekKey)) weeks.set(weekKey, []);
-      weeks.get(weekKey)?.push(turns);
+    const domainWeeklyAverages = await getWorkerPool().classifyVelocityRows(rows);
+    const output = new Map<string, number[]>();
+    for (const [domain, averages] of Object.entries(domainWeeklyAverages)) {
+      output.set(domain, averages);
     }
+    return output;
   } catch {
     return new Map();
   }
-
-  const output = new Map<string, number[]>();
-  for (const [domain, weeks] of domainWeeks) {
-    const weeklyAverages: number[] = [];
-    const sortedWeeks = [...weeks.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    for (const [, turns] of sortedWeeks) {
-      weeklyAverages.push(mean(turns));
-    }
-    if (weeklyAverages.length >= 2) {
-      output.set(domain, weeklyAverages);
-    }
-  }
-
-  return output;
-}
-
-function getWeekKey(date: string): string {
-  const d = new Date(date);
-  const yearStart = new Date(d.getFullYear(), 0, 1);
-  const weekNum = Math.ceil(
-    ((d.getTime() - yearStart.getTime()) / 86400000 + yearStart.getDay() + 1) / 7,
-  );
-  return `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
 }
 
 function mean(values: number[]): number {

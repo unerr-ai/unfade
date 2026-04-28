@@ -85,7 +85,7 @@ async function extractPromptFeatures(db: AnalyzerContext["analytics"]): Promise<
       const promptText = (row[0] as string) ?? "";
       const promptsContext = (row[1] as string) ?? "";
       const text = `${promptText} ${promptsContext}`;
-      const hds = (row[2] as number) ?? 0.5;
+      const hds = Number(row[2] ?? 0.5);
 
       const len = text.length;
       const length: "short" | "medium" | "long" =

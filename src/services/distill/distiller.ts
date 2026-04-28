@@ -8,26 +8,32 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadConfig } from "../../config/manager.js";
 import type { UnfadeConfig } from "../../schemas/config.js";
-import type { DailyDistill } from "../../schemas/distill.js";
+import type { DailyDistill, EnrichedDistill } from "../../schemas/distill.js";
 import type { CaptureEvent } from "../../schemas/event.js";
 import type { ReasoningModelV2 } from "../../schemas/profile.js";
 import { localDateStr } from "../../utils/date.js";
 import { logger } from "../../utils/logger.js";
 import { getDistillsDir, getGraphDir, getProfileDir } from "../../utils/paths.js";
 import { countEvents, readEvents } from "../capture/event-store.js";
-import { selectNudge } from "../intelligence/nudges.js";
-import { readSnapshots, writeMetricSnapshot } from "../intelligence/snapshot.js";
+import { writeMetricSnapshot } from "../intelligence/snapshot.js";
 import { notify } from "../notification/notifier.js";
-import { detectCrossSessionPatterns } from "../personalization/cross-session-detector.js";
 import { detectBlindSpots } from "../personalization/feedback.js";
 import { surfaceablePatterns } from "../personalization/pattern-detector.js";
 import { updateProfileV2 } from "../personalization/profile-builder.js";
-import { amplifyV2 } from "./amplifier.js";
 import { linkContext } from "./context-linker.js";
+import { digestConversations } from "./conversation-digester.js";
 import { generateDecisionRecords } from "./decision-records.js";
+import { buildNarrativeSpine } from "./narrative-builder.js";
+import {
+  buildEnrichedDistill,
+  findEvidenceEventIds,
+  formatDistillMarkdown,
+  linkContinuityThreads,
+} from "./post-enricher.js";
 import { createLLMProvider, type LLMProviderResult } from "./providers/ai.js";
-import { aggregateDirectionSignals, extractSignals } from "./signal-extractor.js";
+import { aggregateDirectionSignals, extractSignals, triageSignals } from "./signal-extractor.js";
 import { fuseSignals } from "./signal-fusion.js";
 import { synthesize } from "./synthesizer.js";
 
@@ -86,12 +92,20 @@ export async function distillIncremental(
   const rawEvents = readEvents(date, cwd);
   const events = fuseSignals(rawEvents);
 
-  // Stage 1-2: Extract signals + link context (pure computation)
+  // Stage 1: Extract + triage signals
   const signals = extractSignals(events, date);
+  const triaged = triageSignals(signals, events);
+  const narrativeSpine = await buildNarrativeSpine(triaged, events);
+
+  // Stage 2: Link context
   const linked = linkContext(signals, events);
 
-  // Stage 3: Fallback synthesis only (no LLM, zero cost)
-  const result = await synthesize(linked, null, { cwd });
+  // Stage 1.5: Digest conversations (heuristic — no LLM for incremental, which must be fast).
+  // The full `distill()` command uses LLM for higher-quality enrichment.
+  const conversationDigests = await digestConversations(events, null);
+
+  // Stage 3: Fallback synthesis (zero cost, instant)
+  const result = await synthesize(linked, null, { cwd, conversationDigests });
 
   // Stage 3.5: Direction signals
   const { averageHDS, classifications, toolBreakdown } = aggregateDirectionSignals(events);
@@ -128,42 +142,28 @@ export async function distillIncremental(
     }
   }
 
-  // Stages 6-12: Profile, graph, amplification, write (all zero-cost)
+  // Stages 6-12: Profile, graph, write (all zero-cost)
   const v2Profile = updateProfileV2(result, signals, cwd);
   writeMetricSnapshot(date, result, v2Profile, cwd);
-
-  const snapshots = readSnapshots(undefined, cwd);
-  const nudge = selectNudge(result, v2Profile, snapshots);
-  const insightSection = nudge ? `## Insight\n\n${nudge}\n` : "";
 
   appendToDecisionsGraph(result, events, cwd);
   updateDomainsGraph(result, cwd);
 
-  const personalizationSection = formatPersonalizationSection(v2Profile, result);
-  const { connectionsSection } = amplifyV2(date, cwd);
-  const directionSection = formatDirectionSection(result);
-  const crossPatterns = detectCrossSessionPatterns(cwd);
-  const amplifiedSection = formatAmplifiedSection(crossPatterns);
+  // Build enriched distill JSON + post-synthesis enrichments
+  const enriched = buildEnrichedDistill(result, triaged, narrativeSpine, events);
+  await linkContinuityThreads(enriched, cwd);
 
-  const distillPath = writeDistill(
-    date,
-    result,
-    cwd,
-    personalizationSection,
-    connectionsSection,
-    insightSection,
-    directionSection,
-    amplifiedSection,
-  );
+  const distillPath = writeDistill(date, enriched, cwd);
 
   generateDecisionRecords(result, cwd);
 
   // Incremental distills are silent — no desktop notification for background updates.
   // The scheduled LLM distill sends the notification when it enriches the result.
 
-  logger.debug("Incremental distill complete (fallback)", {
+  logger.debug("Incremental distill complete", {
     date,
     decisions: result.decisions.length,
+    synthesizedBy: result.synthesizedBy ?? "fallback",
   });
 
   return { date, distill: result, path: distillPath, skipped: false };
@@ -201,15 +201,25 @@ export async function distill(
   // Stage 1: Extract signals
   const signals = extractSignals(events, date);
 
+  // Stage 1a: Triage signals (impact scoring, tier partitioning, day shape)
+  const triaged = triageSignals(signals, events);
+
+  // Stage 1b: Build narrative spine (temporal clustering, causal chains, acts)
+  const narrativeSpine = await buildNarrativeSpine(triaged, events);
+
+  // Stage 1.5: Digest conversations (LLM when available, fallback otherwise)
+  const provider =
+    options.provider !== undefined ? options.provider : await createLLMProvider(config);
+  const conversationDigests = await digestConversations(events, provider);
+
   // Stage 2: Link context
   const linked = linkContext(signals, events);
 
   // Stage 3: Synthesize (LLM or fallback)
-  const provider =
-    options.provider !== undefined ? options.provider : await createLLMProvider(config);
   const result = await synthesize(linked, provider, {
     cwd,
     modelLimits: config.distill.modelLimits,
+    conversationDigests,
   });
 
   // Stage 3.5: Aggregate direction signals from AI session events
@@ -253,67 +263,16 @@ export async function distill(
   // Write daily metric snapshot (RDI + identity labels)
   writeMetricSnapshot(date, result, v2Profile, cwd);
 
-  // Generate post-distill nudge (max 1 per distill)
-  const snapshots = readSnapshots(undefined, cwd);
-  const nudge = selectNudge(result, v2Profile, snapshots);
-  const insightSection = nudge ? `## Insight\n\n${nudge}\n` : "";
-
   // Update graph files — include evidence event IDs for decision archaeology
   appendToDecisionsGraph(result, events, cwd);
   updateDomainsGraph(result, cwd);
 
-  // Build personalization + connections sections
-  const personalizationSection = formatPersonalizationSection(v2Profile, result);
-  const { connectionsSection } = amplifyV2(date, cwd);
+  // Build enriched distill JSON (structured output for API + UI)
+  const enriched = buildEnrichedDistill(result, triaged, narrativeSpine, events);
+  await linkContinuityThreads(enriched, cwd);
 
-  // Build direction summary sections
-  const directionSection = formatDirectionSection(result);
-
-  // Detect cross-session amplified patterns
-  const crossPatterns = detectCrossSessionPatterns(cwd);
-  const amplifiedSection = formatAmplifiedSection(crossPatterns);
-
-  // 12C.2/12C.4: Compute value receipt and debugging arcs sections
-  let valueReceiptSection = "";
-  let debuggingArcsSection = "";
-  try {
-    const { CacheManager } = await import("../cache/manager.js");
-    const cache = new CacheManager(cwd);
-    await cache.getDb();
-    const analyticsDb = cache.analytics;
-    if (analyticsDb) {
-      const { computeValueReceipt, formatValueReceiptSection } = await import(
-        "../intelligence/value-receipt.js"
-      );
-      const receipt = await computeValueReceipt(
-        analyticsDb,
-        config.pricing as Record<string, number> | undefined,
-      );
-      valueReceiptSection = formatValueReceiptSection(receipt);
-
-      const { detectDebuggingArcs, formatDebuggingArcsSection } = await import(
-        "../intelligence/debugging-arcs.js"
-      );
-      const arcs = await detectDebuggingArcs(analyticsDb);
-      debuggingArcsSection = formatDebuggingArcsSection(arcs);
-    }
-  } catch {
-    // non-fatal — value receipt and debugging arcs are additive
-  }
-
-  // Write distill markdown (with personalization + connections + insight + direction + amplified + value receipt + arcs)
-  const distillPath = writeDistill(
-    date,
-    result,
-    cwd,
-    personalizationSection,
-    connectionsSection,
-    insightSection,
-    directionSection,
-    amplifiedSection,
-    valueReceiptSection,
-    debuggingArcsSection,
-  );
+  // Write distill markdown + JSON
+  const distillPath = writeDistill(date, enriched, cwd);
 
   // Generate decision records for significant human-directed decisions
   generateDecisionRecords(result, cwd);
@@ -395,9 +354,11 @@ export function formatPersonalizationSection(
   profile: ReasoningModelV2 | null,
   distill: DailyDistill,
 ): string {
-  if (!profile || profile.dataPoints < 2) return "";
+  // Guard against degenerate data — don't show a broken section
+  if (!profile || profile.dataPoints < 5) return "";
+  if (profile.decisionStyle.avgAlternativesEvaluated === 0) return "";
 
-  const lines: string[] = ["## Personalization", ""];
+  const lines: string[] = ["## Your Patterns", ""];
 
   // Decision style summary + baseline comparison
   const todayAlts =
@@ -427,17 +388,13 @@ export function formatPersonalizationSection(
       );
     }
   }
-
-  // AI interaction
-  if (profile.decisionStyle.aiAcceptanceRate > 0) {
-    lines.push(`AI acceptance rate: ${Math.round(profile.decisionStyle.aiAcceptanceRate * 100)}%`);
-  }
   lines.push("");
 
-  // Domain depth comparison
-  if (profile.domainDistribution.length > 0) {
+  // Domain depth comparison — only show when meaningful (≥2 domains with ≥3 decisions each)
+  const meaningfulDomains = profile.domainDistribution.filter((d) => d.frequency >= 3);
+  if (meaningfulDomains.length >= 2) {
     lines.push("**Domain depth:**");
-    const topDomains = profile.domainDistribution.slice(0, 5);
+    const topDomains = meaningfulDomains.slice(0, 5);
     for (const d of topDomains) {
       const trendArrow =
         d.depthTrend === "deepening" ? " ↑" : d.depthTrend === "broadening" ? " →" : "";
@@ -476,206 +433,25 @@ export function formatPersonalizationSection(
  * Write distill result as markdown to .unfade/distills/YYYY-MM-DD.md.
  * Returns the file path.
  */
+
 /**
- * Format the Human Direction Summary + AI Collaboration Summary sections.
+ * Write both markdown and structured JSON for a distill.
  */
-function formatDirectionSection(distill: DailyDistill): string {
-  if (!distill.directionSummary) return "";
-
-  const ds = distill.directionSummary;
-  const lines: string[] = ["## Human Direction Summary", ""];
-
-  const classLabel =
-    ds.averageHDS >= 0.6
-      ? "Human-Directed"
-      : ds.averageHDS >= 0.3
-        ? "Collaborative"
-        : "LLM-Directed";
-
-  lines.push(`Average HDS: ${ds.averageHDS.toFixed(2)} (${classLabel})`);
-  lines.push(
-    `Human-Directed: ${ds.humanDirectedCount} decisions | Collaborative: ${ds.collaborativeCount} | LLM-Directed: ${ds.llmDirectedCount}`,
-  );
-
-  if (ds.topHumanDirectedDecisions.length > 0) {
-    lines.push("");
-    lines.push("**Top human-directed decisions:**");
-    for (const d of ds.topHumanDirectedDecisions) {
-      const truncated = d.length > 120 ? `${d.slice(0, 117)}...` : d;
-      lines.push(`- ${truncated}`);
-    }
-  }
-  lines.push("");
-
-  if (distill.aiCollaborationSummary) {
-    const acs = distill.aiCollaborationSummary;
-    lines.push("## AI Collaboration Summary", "");
-
-    for (const tool of acs.toolBreakdown) {
-      lines.push(`- **${tool.tool}:** ${tool.eventCount} events (${tool.sessionCount} sessions)`);
-    }
-    lines.push(`- **Direction style:** ${acs.directionStyle}`);
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
-
-function formatAmplifiedSection(
-  patterns: Array<{
-    pattern: string;
-    occurrences: number;
-    firstSeen: string;
-    lastSeen: string;
-    domains: string[];
-    examples: string[];
-  }>,
-): string {
-  if (patterns.length === 0) return "";
-
-  const lines: string[] = ["## Amplified Insights", ""];
-  lines.push("_Cross-session patterns detected across your reasoning history:_");
-  lines.push("");
-
-  for (const p of patterns.slice(0, 5)) {
-    lines.push(`- **${p.pattern}**`);
-    lines.push(`  ${p.occurrences} occurrences (${p.firstSeen} → ${p.lastSeen})`);
-    if (p.domains.length > 0) {
-      lines.push(`  Domains: ${p.domains.join(", ")}`);
-    }
-  }
-  lines.push("");
-
-  return lines.join("\n");
-}
-
-function writeDistill(
-  date: string,
-  result: DailyDistill,
-  cwd?: string,
-  personalizationSection?: string,
-  connectionsSection?: string,
-  insightSection?: string,
-  directionSection?: string,
-  amplifiedSection?: string,
-  valueReceiptSection?: string,
-  debuggingArcsSection?: string,
-): string {
+function writeDistill(date: string, enriched: EnrichedDistill, cwd?: string): string {
   const distillsDir = getDistillsDir(cwd);
   mkdirSync(distillsDir, { recursive: true });
-  const filePath = join(distillsDir, `${date}.md`);
 
-  let markdown = formatDistillMarkdown(result);
+  // Write structured JSON (primary output for API + UI)
+  const jsonPath = join(distillsDir, `${date}.json`);
+  writeFileSync(jsonPath, JSON.stringify(enriched, null, 2), "utf-8");
 
-  if (directionSection) {
-    markdown = insertBeforeFooter(markdown, directionSection);
-  }
-  if (personalizationSection) {
-    markdown = insertBeforeFooter(markdown, personalizationSection);
-  }
-  if (connectionsSection) {
-    markdown = insertBeforeFooter(markdown, connectionsSection);
-  }
-  if (amplifiedSection) {
-    markdown = insertBeforeFooter(markdown, amplifiedSection);
-  }
-  if (insightSection) {
-    markdown = insertBeforeFooter(markdown, insightSection);
-  }
-  if (valueReceiptSection) {
-    markdown = insertBeforeFooter(markdown, valueReceiptSection);
-  }
-  if (debuggingArcsSection) {
-    markdown = insertBeforeFooter(markdown, debuggingArcsSection);
-  }
+  // Write human-readable markdown (secondary — for quick inspection / MCP)
+  const mdPath = join(distillsDir, `${date}.md`);
+  const markdown = formatDistillMarkdown(enriched);
+  writeFileSync(mdPath, markdown, "utf-8");
 
-  writeFileSync(filePath, markdown, "utf-8");
-
-  logger.debug("Wrote distill file", { path: filePath });
-  return filePath;
-}
-
-/**
- * Insert content before the footer (--- line) in markdown.
- */
-function insertBeforeFooter(markdown: string, content: string): string {
-  const footerIdx = markdown.lastIndexOf("\n---\n");
-  if (footerIdx === -1) return `${markdown}\n${content}`;
-  return `${markdown.slice(0, footerIdx)}\n${content}\n${markdown.slice(footerIdx)}`;
-}
-
-/**
- * Format DailyDistill as readable markdown.
- */
-function formatDistillMarkdown(d: DailyDistill): string {
-  const lines: string[] = [
-    `# Daily Distill — ${d.date}`,
-    "",
-    `> ${d.summary}`,
-    "",
-    `- **Events processed:** ${d.eventsProcessed}`,
-    `- **Synthesized by:** ${d.synthesizedBy ?? "unknown"}`,
-    "",
-  ];
-
-  if (d.decisions.length > 0) {
-    lines.push("## Decisions", "");
-    for (const dec of d.decisions) {
-      const alts = dec.alternativesConsidered
-        ? ` (${dec.alternativesConsidered} alternatives considered)`
-        : "";
-      const domain = dec.domain ? ` [${dec.domain}]` : "";
-      lines.push(`- **${dec.decision}**${domain}${alts}`);
-      lines.push(`  _${dec.rationale}_`);
-    }
-    lines.push("");
-  }
-
-  if (d.tradeOffs && d.tradeOffs.length > 0) {
-    lines.push("## Trade-offs", "");
-    for (const t of d.tradeOffs) {
-      lines.push(`- **${t.tradeOff}**`);
-      lines.push(`  Chose: ${t.chose} · Rejected: ${t.rejected}`);
-      if (t.context) lines.push(`  _${t.context}_`);
-    }
-    lines.push("");
-  }
-
-  if (d.deadEnds && d.deadEnds.length > 0) {
-    lines.push("## Dead Ends", "");
-    for (const de of d.deadEnds) {
-      const time = de.timeSpentMinutes ? ` (~${de.timeSpentMinutes} min)` : "";
-      lines.push(`- **${de.description}**${time}`);
-      if (de.resolution) lines.push(`  _Resolution: ${de.resolution}_`);
-    }
-    lines.push("");
-  }
-
-  if (d.breakthroughs && d.breakthroughs.length > 0) {
-    lines.push("## Breakthroughs", "");
-    for (const b of d.breakthroughs) {
-      lines.push(`- **${b.description}**`);
-      if (b.trigger) lines.push(`  _Triggered by: ${b.trigger}_`);
-    }
-    lines.push("");
-  }
-
-  if (d.patterns && d.patterns.length > 0) {
-    lines.push("## Patterns", "");
-    for (const p of d.patterns) {
-      lines.push(`- ${p}`);
-    }
-    lines.push("");
-  }
-
-  if (d.domains && d.domains.length > 0) {
-    lines.push("## Domains", "");
-    lines.push(d.domains.join(", "));
-    lines.push("");
-  }
-
-  lines.push("---", "", `_Generated ${new Date().toISOString()}_`, "");
-  return lines.join("\n");
+  logger.debug("Wrote distill files", { json: jsonPath, md: mdPath });
+  return mdPath;
 }
 
 /**
@@ -690,7 +466,7 @@ function appendToDecisionsGraph(result: DailyDistill, events: CaptureEvent[], cw
 
   const dominantProjectId = deriveDominantProjectId(events);
 
-  const lines = result.decisions.map((d) => {
+  const newLines = result.decisions.map((d) => {
     const evidenceIds = findEvidenceEventIds(d, events);
     const entry: Record<string, unknown> = {
       date: result.date,
@@ -709,9 +485,27 @@ function appendToDecisionsGraph(result: DailyDistill, events: CaptureEvent[], cw
     return JSON.stringify(entry);
   });
 
-  if (lines.length > 0) {
-    appendFileSync(filePath, `${lines.join("\n")}\n`, "utf-8");
+  if (newLines.length === 0) return;
+
+  // Idempotent: remove existing entries for this date, then append new ones.
+  // Prevents duplicate decisions when materializer re-runs distill for the same day.
+  let existingLines: string[] = [];
+  if (existsSync(filePath)) {
+    existingLines = readFileSync(filePath, "utf-8")
+      .split("\n")
+      .filter((line) => {
+        if (!line.trim()) return false;
+        try {
+          const entry = JSON.parse(line) as { date?: string };
+          return entry.date !== result.date;
+        } catch {
+          return true; // keep malformed lines
+        }
+      });
   }
+
+  const allLines = [...existingLines, ...newLines];
+  writeFileSync(filePath, `${allLines.join("\n")}\n`, "utf-8");
 }
 
 /**
@@ -733,90 +527,6 @@ function deriveDominantProjectId(events: CaptureEvent[]): string {
     }
   }
   return maxPid;
-}
-
-/**
- * Find event IDs that contributed to a decision via keyword matching.
- * Matches the decision text against event content summaries.
- */
-function findEvidenceEventIds(
-  decision: { decision: string; domain?: string; rationale?: string },
-  events: CaptureEvent[],
-): string[] {
-  const keywords = extractKeywords(
-    `${decision.decision} ${decision.rationale ?? ""} ${decision.domain ?? ""}`,
-  );
-  if (keywords.length === 0) return [];
-
-  const scored: Array<{ id: string; score: number }> = [];
-
-  for (const event of events) {
-    const text = `${event.content.summary} ${event.content.detail ?? ""}`.toLowerCase();
-    let hits = 0;
-    for (const kw of keywords) {
-      if (text.includes(kw)) hits++;
-    }
-    if (hits >= 2) {
-      scored.push({ id: event.id, score: hits });
-    }
-  }
-
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5)
-    .map((s) => s.id);
-}
-
-function extractKeywords(text: string): string[] {
-  const stopWords = new Set([
-    "the",
-    "a",
-    "an",
-    "is",
-    "was",
-    "are",
-    "to",
-    "for",
-    "of",
-    "in",
-    "on",
-    "with",
-    "and",
-    "or",
-    "not",
-    "it",
-    "this",
-    "that",
-    "we",
-    "i",
-    "you",
-    "be",
-    "have",
-    "do",
-    "will",
-    "would",
-    "could",
-    "should",
-    "but",
-    "if",
-    "from",
-    "at",
-    "by",
-    "as",
-    "into",
-    "about",
-    "than",
-    "so",
-    "no",
-    "up",
-  ]);
-
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !stopWords.has(w))
-    .slice(0, 15);
 }
 
 /**

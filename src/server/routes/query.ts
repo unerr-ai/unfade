@@ -1,5 +1,5 @@
 // FILE: src/server/routes/query.ts
-// GET /unfade/query — keyword search via Sprint 2A query engine.
+// GET /api/query — keyword search via Sprint 2A query engine.
 
 import { Hono } from "hono";
 import { QueryInputSchema } from "../../schemas/mcp.js";

@@ -70,7 +70,7 @@ async function countDirectedDecisions(db: DbLike, date: string): Promise<number>
          AND human_direction_score >= 0.5`,
       [date],
     );
-    return (result[0]?.values[0]?.[0] as number) ?? 0;
+    return Number(result[0]?.values[0]?.[0] ?? 0);
   } catch {
     return 0;
   }

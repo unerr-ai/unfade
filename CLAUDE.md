@@ -202,18 +202,19 @@ make clean        # Remove binaries
 - `.internal/product/unfade.md` — Full product strategy
 - `.internal/product/unfade_support.md` — Competitive analysis and prioritization
 
-### Architecture
-- `.internal/architecture/VERTICAL_SLICING_PLAN.md` — Overall build sequencing (if present)
-- `.internal/architecture/UNFADE_CLI_RESEARCH_AND_DESIGN.md` — Shared foundation, data ownership, contracts
-- `.internal/architecture/PHASE_0_FOUNDATION.md` — Scaffolding, config, paths, logger
-- `.internal/architecture/PHASE_1_CAPTURE_AND_INTELLIGENCE.md` — Events, distillation, LLM providers
-- `.internal/architecture/PHASE_2_CONTEXT_AND_INTEGRATION.md` — MCP server, HTTP API, hooks
-- `.internal/architecture/PHASE_3_IDENTITY_AND_PERSONALIZATION.md` — Profile v2, patterns, amplification
-- `.internal/architecture/PHASE_4_PLATFORM_AND_LAUNCH.md` — Platform, continuous intelligence, launch, registry/SSE
-- `.internal/architecture/PHASE_6_POST_LAUNCH.md` — Windows, cloud distill, team/enterprise prep
-- `.internal/architecture/PHASE_7_BREAKTHROUGH_INTELLIGENCE.md` — Active intelligence layer (roadmap)
-- `.internal/architecture/PHASE_7_WEB_UI_UX_ARCHITECTURE.md` — Web UI re-architecture (localhost:7654), RRVV spec
-- `.internal/architecture/PHASE_13_GAP_REMEDIATION_AND_COHERENCE.md` — U2D audit: gap analysis + remediation sprints (13A–13E)
-- `.internal/architecture/PHASE_14_GLOBAL_FIRST_STORAGE_ARCHITECTURE.md` — Global-first storage: `~/.unfade/` with `projectId` dimension (14A–14F)
-- `.internal/architecture/PHASE_15_RRVV_UI_UX_SYSTEM_REDESIGN.md` — UI/UX redesign: component library, Intelligence Hub, project selector, system reveal (15A–15E)
-- `.internal/architecture/PHASE_10_SYSTEM_HARDENING.md` — System hardening: logging, onboarding + project discovery, daemon control, monitoring lifecycle (§7–§10 added post-Phase 14/15)
+### Architecture — Layer Docs (current truth)
+- `.internal/architecture/LAYER_0_FOUNDATION.md` — Build pipeline, schemas, paths, logger, CLI entry, config, Go scaffold
+- `.internal/architecture/LAYER_1_GO_DAEMON.md` — Go capture engine: git-only + ai-global modes, IPC, JSONL output
+- `.internal/architecture/LAYER_2_DUAL_DB_MATERIALIZER.md` — SQLite + DuckDB materializer, incremental ingest, cursor tracking
+- `.internal/architecture/LAYER_3_INTELLIGENCE_AND_SUBSTRATE.md` — 25 DAG-ordered analyzers, SubstrateEngine/CozoDB, profile accumulator
+- `.internal/architecture/LAYER_4_UI_HTTP_SSE.md` — React 19 + Vite 8 SPA, Hono API, SSE push, TanStack Query
+- `.internal/architecture/CROSS_LAYER_FLOW.md` — Startup/shutdown flow, event lifecycle, ownership rules, timing budget
+
+### Architecture — Active Phase Docs
+- `.internal/architecture/PHASE_10_SYSTEM_HARDENING.md` — Logging, onboarding, project discovery, daemon control
+- `.internal/architecture/PHASE_14_GLOBAL_FIRST_STORAGE_ARCHITECTURE.md` — Global-first storage: `~/.unfade/` with `projectId` dimension
+- `.internal/architecture/PHASE_15_RRVV_UI_UX_SYSTEM_REDESIGN.md` — UI/UX redesign: component library, Intelligence Hub, system reveal
+- `.internal/architecture/PHASE_16_INTELLIGENCE_SYSTEM_REDESIGN.md` — Intelligence pipeline: DAG scheduler, incremental state, diagnostics
+- `.internal/architecture/PHASE_16_SUBSTRATE_INVESTIGATION.md` — CozoDB semantic substrate design investigation
+- `.internal/architecture/PHASE_16_VALIDATION_ANALYSIS.md` — Phase 16 + substrate cross-reference against user pain
+- `.internal/architecture/UI_FRAMEWORK_RRVV_ANALYSIS.md` — Current UI audit: template strings → React migration analysis

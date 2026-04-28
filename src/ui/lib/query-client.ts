@@ -4,7 +4,8 @@ import { WarmingUpError } from "./api";
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 30_000,
+      staleTime: 10_000,
+      gcTime: 5 * 60_000, // Garbage-collect unused queries after 5 minutes
       refetchOnWindowFocus: false,
       retry: (failureCount, error) => {
         // 202 "warming up" — retry up to 5 times with backoff

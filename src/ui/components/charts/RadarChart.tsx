@@ -47,15 +47,21 @@ export function RadarChart({
   });
 
   const dataPoints = axes.map((axis, i) => {
-    const pct = Math.min(axis.value / (axis.max ?? 100), 1);
-    return polar(i * angleStep, r * pct);
+    const val = Number.isFinite(axis.value) ? axis.value : 0;
+    const pct = Math.min(val / (axis.max ?? 100), 1);
+    return polar(i * angleStep, r * Math.max(0, pct));
   });
   const dataPath = dataPoints.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
 
   const labels = axes.map((axis, i) => {
     const labelR = r + 20;
     const [x, y] = polar(i * angleStep, labelR);
-    return { x, y, text: axis.label, value: Math.round(axis.value) };
+    return {
+      x,
+      y,
+      text: axis.label,
+      value: Number.isFinite(axis.value) ? Math.round(axis.value) : 0,
+    };
   });
 
   return (

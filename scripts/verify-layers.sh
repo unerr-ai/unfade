@@ -21,7 +21,10 @@
 #   analyzer state persistence/watermarks, output freshness/validity,
 #   substrate topology/trajectories, entity types (9), relationship types (14),
 #   lifecycle distribution, confidence spread, distill outputs, profile/graph,
-#   intelligence pipeline end-to-end flow
+#   intelligence pipeline end-to-end flow, BigInt runtime error detection,
+#   output content validation (field checks), state health (eventCount/watermarks),
+#   DuckDB typed column data, silent failure detection, cross-layer consistency,
+#   summary.json coherence
 #
 # Run:  bash scripts/verify-layers.sh
 # Prereq: `unfade` must have been started at least once
@@ -122,7 +125,7 @@ if [[ -f "$REGISTRY" ]]; then
   REPO_COUNT=$(node -e "
     const r = JSON.parse(require('fs').readFileSync('$REGISTRY','utf8'));
     console.log((r.repos || []).length);
-  " 2>/dev/null || echo "0")
+  " 2>/dev/null || true)
   pass "Registry exists: $REPO_COUNT repo(s) registered"
 else
   fail "Registry missing at $REGISTRY"
@@ -370,7 +373,7 @@ if [[ -d "$EVENTS_DIR" ]]; then
       let bad = 0;
       for (const l of lines) { try { JSON.parse(l); } catch { bad++; } }
       console.log(bad);
-    " 2>/dev/null || echo "0")
+    " 2>/dev/null || true)
     if [[ "$TRUNC_COUNT" -eq 0 ]]; then
       pass "No truncated/corrupt JSONL lines (O_APPEND atomicity OK)"
     else
@@ -474,9 +477,9 @@ TODAY_FILE="$UNFADE_HOME/events/${TODAY}.jsonl"
 if [[ -f "$TODAY_FILE" ]]; then
   # Check file modification time — recent means active capture
   if [[ "$(uname)" == "Darwin" ]]; then
-    FILE_MTIME=$(stat -f%m "$TODAY_FILE" 2>/dev/null || echo "0")
+    FILE_MTIME=$(stat -f%m "$TODAY_FILE" 2>/dev/null || true)
   else
-    FILE_MTIME=$(stat -c%Y "$TODAY_FILE" 2>/dev/null || echo "0")
+    FILE_MTIME=$(stat -c%Y "$TODAY_FILE" 2>/dev/null || true)
   fi
   NOW=$(date +%s)
   AGE_SECS=$((NOW - FILE_MTIME))
@@ -502,7 +505,7 @@ if [[ -f "$TODAY_FILE" ]]; then
       [[ -d "$dir" ]] || continue
       HFILE="$dir/health.json"
       if [[ -f "$HFILE" ]]; then
-        HE=$(node -e "const h=JSON.parse(require('fs').readFileSync('$HFILE','utf8')); console.log(h.events_today??0);" 2>/dev/null || echo "0")
+        HE=$(node -e "const h=JSON.parse(require('fs').readFileSync('$HFILE','utf8')); console.log(h.events_today??0);" 2>/dev/null || true)
         HEALTH_EVENTS_TOTAL=$((HEALTH_EVENTS_TOTAL + HE))
       fi
     done
@@ -570,8 +573,8 @@ if [[ -d "$DAEMONS_DIR" ]]; then
 
     # Scan daemon.log for resource budget warnings
     if [[ -f "$LOG_FILE" ]]; then
-      BUDGET_WARNS=$(grep -c "resource budget exceeded" "$LOG_FILE" 2>/dev/null || echo "0")
-      if [[ "$BUDGET_WARNS" -gt 0 ]]; then
+      BUDGET_WARNS=$(grep -c "resource budget exceeded" "$LOG_FILE" 2>/dev/null || true)
+      if [[ "${BUDGET_WARNS:-0}" -gt 0 ]]; then
         warn "$DAEMON_ID: $BUDGET_WARNS 'resource budget exceeded' warnings in log"
         grep "resource budget exceeded" "$LOG_FILE" 2>/dev/null | tail -2 | while read -r line; do
           echo -e "      ${YELLOW}${line:0:140}${NC}"
@@ -581,8 +584,8 @@ if [[ -d "$DAEMONS_DIR" ]]; then
       fi
 
       # Check for repeated restart/crash patterns
-      RESTART_COUNT=$(grep -c "starting\|restarting\|recovered" "$LOG_FILE" 2>/dev/null || echo "0")
-      if [[ "$RESTART_COUNT" -gt 5 ]]; then
+      RESTART_COUNT=$(grep -c "starting\|restarting\|recovered" "$LOG_FILE" 2>/dev/null || true)
+      if [[ "${RESTART_COUNT:-0}" -gt 5 ]]; then
         warn "$DAEMON_ID: $RESTART_COUNT start/restart entries — may be crash-looping"
       fi
     fi
@@ -741,7 +744,7 @@ if [[ -f "$SQLITE_DB" ]]; then
   fi
 
   # Event count
-  SQLITE_EVENT_COUNT=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events" 2>/dev/null || echo "0")
+  SQLITE_EVENT_COUNT=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events" 2>/dev/null || true)
   if [[ "$SQLITE_EVENT_COUNT" -gt 0 ]]; then
     pass "SQLite events: $SQLITE_EVENT_COUNT rows"
   else
@@ -749,7 +752,7 @@ if [[ -f "$SQLITE_DB" ]]; then
   fi
 
   # FTS index health
-  FTS_COUNT=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events_fts" 2>/dev/null || echo "0")
+  FTS_COUNT=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events_fts" 2>/dev/null || true)
   if [[ "$FTS_COUNT" -gt 0 ]]; then
     pass "SQLite FTS index: $FTS_COUNT entries"
   else
@@ -770,7 +773,7 @@ if [[ -f "$SQLITE_DB" ]]; then
   fi
 
   # Check project_id column exists and has values (global-first model)
-  PID_COUNT=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(DISTINCT project_id) FROM events WHERE project_id IS NOT NULL AND project_id != ''" 2>/dev/null || echo "0")
+  PID_COUNT=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(DISTINCT project_id) FROM events WHERE project_id IS NOT NULL AND project_id != ''" 2>/dev/null || true)
   if [[ "$PID_COUNT" -gt 0 ]]; then
     pass "SQLite: $PID_COUNT distinct project_id(s) — global-first model OK"
   else
@@ -790,7 +793,7 @@ DUCK_QUERIED="no"
 
 if [[ -f "$DUCKDB_FILE" ]]; then
   DUCKDB_SIZE=$(du -sh "$DUCKDB_FILE" 2>/dev/null | awk '{print $1}')
-  DUCKDB_BYTES=$(stat -f%z "$DUCKDB_FILE" 2>/dev/null || stat -c%s "$DUCKDB_FILE" 2>/dev/null || echo "0")
+  DUCKDB_BYTES=$(stat -f%z "$DUCKDB_FILE" 2>/dev/null || stat -c%s "$DUCKDB_FILE" 2>/dev/null || true)
   pass "DuckDB file exists ($DUCKDB_SIZE)"
 
   if [[ "$DUCKDB_BYTES" -lt 100000 ]]; then
@@ -1091,7 +1094,7 @@ section "2.8" "HTTP Server Health"
 # =============================================================================
 
 SERVER_PORT="${UNFADE_PORT:-7654}"
-SERVER_URL="http://localhost:${SERVER_PORT}"
+SERVER_URL="http://127.0.0.1:${SERVER_PORT}"
 
 # Check if unfade server process is running
 UNFADE_SERVER_PID=$( (pgrep -f "unfade.*server|node.*unfade|node.*cli.mjs" 2>/dev/null || true) | head -1)
@@ -1113,8 +1116,8 @@ else
   warn "No unfade server process detected"
 fi
 
-# HTTP health check
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/" 2>/dev/null || echo "000")
+# HTTP health check (follow redirects with -L)
+HTTP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/" 2>/dev/null || echo "000")
 if [[ "$HTTP_STATUS" == "200" ]]; then
   pass "HTTP server responding at $SERVER_URL (status $HTTP_STATUS)"
 elif [[ "$HTTP_STATUS" == "000" ]]; then
@@ -1123,13 +1126,38 @@ else
   warn "HTTP server at $SERVER_URL returned unexpected status $HTTP_STATUS"
 fi
 
+# System health API check (/api/system/health is the canonical path)
+HEALTH_JSON=$(curl -sL --connect-timeout 3 "$SERVER_URL/api/system/health" 2>/dev/null || echo "")
+HEALTH_STATUS=$(echo "$HEALTH_JSON" | node -e "
+  try {
+    const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    const s = d.data?.status ?? 'unknown';
+    const ir = d.data?.intelligenceReady ?? false;
+    const repos = d.data?.repos?.length ?? 0;
+    const lag = d.data?.repos?.[0]?.materializerLagMs ?? -1;
+    const reasons = (d.data?.degradedReasons ?? []).join('; ');
+    console.log(s + '|' + ir + '|' + repos + '|' + lag + '|' + reasons);
+  } catch { console.log('error|false|0|-1|'); }
+" 2>/dev/null || echo "error|false|0|-1|")
+IFS='|' read -r H_STATUS H_INTL_READY H_REPOS H_LAG H_REASONS <<< "$HEALTH_STATUS"
+if [[ "$H_STATUS" == "ok" ]]; then
+  pass "System health: ok (intelligenceReady=$H_INTL_READY, repos=$H_REPOS)"
+elif [[ "$H_STATUS" == "degraded" ]]; then
+  warn "System health: degraded — $H_REASONS"
+  detail "intelligenceReady=$H_INTL_READY  repos=$H_REPOS  materializerLagMs=$H_LAG"
+elif [[ "$H_STATUS" == "error" ]]; then
+  fail "System health API not responding or unparseable"
+else
+  warn "System health: $H_STATUS"
+fi
+
 # API endpoint health check
-API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/api/setup/progress" 2>/dev/null || echo "000")
+API_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/api/setup/progress" 2>/dev/null || echo "000")
 if [[ "$API_STATUS" == "200" ]]; then
   pass "API endpoint /api/setup/progress responding (status $API_STATUS)"
 
   # Parse progress response
-  PROGRESS_JSON=$(curl -s --connect-timeout 3 "$SERVER_URL/api/setup/progress" 2>/dev/null || echo "{}")
+  PROGRESS_JSON=$(curl -sL --connect-timeout 3 "$SERVER_URL/api/setup/progress" 2>/dev/null || echo "{}")
   PROG_INFO=$(echo "$PROGRESS_JSON" | node -e "
     const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
     console.log((d.phase??'unknown') + '|' + (d.percent??0) + '|' + (d.processedEvents??0) + '|' + (d.totalEvents??0));
@@ -1179,7 +1207,7 @@ if [[ -f "$SQLITE_DB" && "$TOTAL_LINES" -gt 0 ]]; then
   " 2>/dev/null || echo "")
 
   if [[ -n "$LAST_EVENT_ID" ]]; then
-    FOUND_IN_SQLITE=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events WHERE id='$LAST_EVENT_ID'" 2>/dev/null || echo "0")
+    FOUND_IN_SQLITE=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events WHERE id='$LAST_EVENT_ID'" 2>/dev/null || true)
     if [[ "$FOUND_IN_SQLITE" -gt 0 ]]; then
       pass "End-to-end: last JSONL event ($LAST_EVENT_ID) found in SQLite"
     else
@@ -1192,7 +1220,7 @@ if [[ -f "$SQLITE_DB" && "$TOTAL_LINES" -gt 0 ]]; then
       " 2>/dev/null || echo "")
 
       if [[ -n "$OLDER_EVENT_ID" ]]; then
-        FOUND_OLDER=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events WHERE id='$OLDER_EVENT_ID'" 2>/dev/null || echo "0")
+        FOUND_OLDER=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events WHERE id='$OLDER_EVENT_ID'" 2>/dev/null || true)
         if [[ "$FOUND_OLDER" -gt 0 ]]; then
           warn "End-to-end: latest event not yet in SQLite, but recent event ($OLDER_EVENT_ID) is — materializer slightly behind"
         else
@@ -1252,7 +1280,7 @@ fi
 
 if [[ -f "$COZO_DB" ]]; then
   COZO_SIZE=$(du -sh "$COZO_DB" 2>/dev/null | awk '{print $1}')
-  COZO_BYTES=$(stat -f%z "$COZO_DB" 2>/dev/null || stat -c%s "$COZO_DB" 2>/dev/null || echo "0")
+  COZO_BYTES=$(stat -f%z "$COZO_DB" 2>/dev/null || stat -c%s "$COZO_DB" 2>/dev/null || true)
   pass "CozoDB graph.db exists ($COZO_SIZE)"
 
   if [[ "$COZO_BYTES" -lt 1000 ]]; then
@@ -1451,7 +1479,7 @@ if [[ "$DUCK_QUERIED" != "yes" ]]; then
       const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
       const total = Object.values(d.typeDistribution || {}).reduce((a,b) => a+b, 0);
       console.log(total);
-    " 2>/dev/null || echo "0")
+    " 2>/dev/null || true)
     if [[ "$ENTITY_COUNT" -gt 0 ]]; then
       pass "Graph density: $ENTITY_COUNT entities from ~$SQLITE_EVENT_COUNT events (SQLite fallback)"
     else
@@ -1463,7 +1491,7 @@ elif [[ "$DUCK_EVENT_COUNT" -gt 0 ]]; then
     const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
     const total = Object.values(d.typeDistribution || {}).reduce((a,b) => a+b, 0);
     console.log(total);
-  " 2>/dev/null || echo "0")
+  " 2>/dev/null || true)
 
   if [[ "$ENTITY_COUNT" -gt 0 ]]; then
     RATIO=$((DUCK_EVENT_COUNT / ENTITY_COUNT))
@@ -1496,7 +1524,7 @@ ANALYZER_OUTPUTS=(
   "token-proxy-spend.json"
   "direction-windows.json"
   "efficiency.json"
-  "comprehension-radar.json"
+  "comprehension.json"
   "cost-attribution.json"
   "rejections.json"
   "velocity.json"
@@ -1623,7 +1651,7 @@ if [[ -d "$INTEL_DIR" ]]; then
   NEWEST_OUTPUT=$(ls -t "$INTEL_DIR"/*.json 2>/dev/null | head -1)
   if [[ -n "$NEWEST_OUTPUT" ]]; then
     # macOS stat
-    NEWEST_MTIME=$(stat -f%m "$NEWEST_OUTPUT" 2>/dev/null || stat -c%Y "$NEWEST_OUTPUT" 2>/dev/null || echo "0")
+    NEWEST_MTIME=$(stat -f%m "$NEWEST_OUTPUT" 2>/dev/null || stat -c%Y "$NEWEST_OUTPUT" 2>/dev/null || true)
     NOW_EPOCH=$(date +%s)
     AGE_SECS=$((NOW_EPOCH - NEWEST_MTIME))
     AGE_MINS=$((AGE_SECS / 60))
@@ -1647,7 +1675,7 @@ if [[ -d "$INTEL_DIR" ]]; then
       BN=$(basename "$OF")
       [[ "$BN" == "substrate-"* ]] && continue
       TOTAL_OUTPUTS=$((TOTAL_OUTPUTS + 1))
-      OF_MTIME=$(stat -f%m "$OF" 2>/dev/null || stat -c%Y "$OF" 2>/dev/null || echo "0")
+      OF_MTIME=$(stat -f%m "$OF" 2>/dev/null || stat -c%Y "$OF" 2>/dev/null || true)
       OF_AGE=$((NOW_EPOCH - OF_MTIME))
       [[ "$OF_AGE" -gt 86400 ]] && STALE_COUNT=$((STALE_COUNT + 1))
     done
@@ -1738,7 +1766,7 @@ if [[ -f "$SUBSTRATE_TRAJECTORIES" ]]; then
     const d = JSON.parse(require('fs').readFileSync('$SUBSTRATE_TRAJECTORIES','utf8'));
     const count = Array.isArray(d) ? d.length : (d.trajectories || []).length;
     console.log(count);
-  " 2>/dev/null || echo "0")
+  " 2>/dev/null || true)
 
   if [[ "${TRAJ_COUNT:-0}" -gt 0 ]]; then
     pass "Trajectories: $TRAJ_COUNT trajectory record(s)"
@@ -1850,7 +1878,7 @@ if echo "$COZO_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(
   fi
 
   # Schema version check (should be 2)
-  SCHEMA_VER=$(echo "$COZO_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.schemaVersion || 0)" 2>/dev/null || echo "0")
+  SCHEMA_VER=$(echo "$COZO_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.schemaVersion || 0)" 2>/dev/null || true)
   if [[ "$SCHEMA_VER" -eq 2 ]]; then
     pass "CozoDB schema version: $SCHEMA_VER (expected: 2)"
   elif [[ "$SCHEMA_VER" -gt 0 ]]; then
@@ -1863,7 +1891,7 @@ if echo "$COZO_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync(
   CONTRIB_COUNT=$(echo "$COZO_RESULT" | node -e "
     const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
     console.log(Object.keys(d.analyzerContributions || {}).length);
-  " 2>/dev/null || echo "0")
+  " 2>/dev/null || true)
 
   if [[ "$CONTRIB_COUNT" -ge 20 ]]; then
     pass "Analyzer diversity: $CONTRIB_COUNT analyzers contributing to substrate (≥20)"
@@ -1969,7 +1997,7 @@ if [[ -f "$DOMAINS_FILE" ]]; then
   DOMAIN_COUNT=$(node -e "
     const d = JSON.parse(require('fs').readFileSync('$DOMAINS_FILE','utf8'));
     console.log(Object.keys(d).length);
-  " 2>/dev/null || echo "0")
+  " 2>/dev/null || true)
   if [[ "${DOMAIN_COUNT:-0}" -gt 0 ]]; then
     pass "Domain map: $DOMAIN_COUNT domain(s) in domains.json"
   else
@@ -1999,7 +2027,7 @@ if [[ -d "$STATE_DIR" && -d "$INTEL_DIR" ]]; then
       }
     } catch {}
     console.log(total);
-  " 2>/dev/null || echo "0")
+  " 2>/dev/null || true)
 
   if [[ "${TOTAL_EVENTS_PROCESSED:-0}" -gt 0 ]]; then
     pass "Intelligence pipeline active: $TOTAL_EVENTS_PROCESSED total events processed across analyzers"
@@ -2040,6 +2068,641 @@ else
 fi
 
 
+# =============================================================================
+section "3.9" "Core Intelligence Files (Setup Gating)"
+# =============================================================================
+
+# These 7 files are required by CORE_INTELLIGENCE_FILES in setup-state.ts.
+# Setup completion is blocked until ALL of these exist.
+CORE_FILES=(
+  "efficiency.json"
+  "comprehension.json"
+  "velocity.json"
+  "prompt-patterns.json"
+  "cost-attribution.json"
+  "decision-replay.json"
+  "rejections.json"
+)
+
+CORE_PRESENT=0
+CORE_MISSING=""
+for CF in "${CORE_FILES[@]}"; do
+  if [[ -f "$INTEL_DIR/$CF" ]]; then
+    CORE_PRESENT=$((CORE_PRESENT + 1))
+    # Check file is non-empty and valid JSON
+    CF_SIZE=$(stat -f%z "$INTEL_DIR/$CF" 2>/dev/null || stat -c%s "$INTEL_DIR/$CF" 2>/dev/null || true)
+    if [[ "${CF_SIZE:-0}" -lt 5 ]]; then
+      warn "  Core file $CF exists but is effectively empty ($CF_SIZE bytes)"
+    fi
+  else
+    CORE_MISSING="$CORE_MISSING $CF"
+  fi
+done
+
+CORE_TOTAL=${#CORE_FILES[@]}
+if [[ "$CORE_PRESENT" -eq "$CORE_TOTAL" ]]; then
+  pass "All $CORE_TOTAL core intelligence files present (setup gating satisfied)"
+else
+  fail "Core intelligence files: $CORE_PRESENT/$CORE_TOTAL present (MISSING:$CORE_MISSING)"
+  detail "Missing files block setup completion and intelligence API endpoints"
+fi
+
+# =============================================================================
+section "3.10" "Intelligence API Endpoints"
+# =============================================================================
+
+# Check key intelligence endpoints return actual data (not warming_up 202)
+INTL_ENDPOINTS=(
+  "/api/intelligence/efficiency"
+  "/api/intelligence/comprehension"
+  "/api/intelligence/velocity"
+  "/api/intelligence/prompt-patterns"
+  "/api/intelligence/costs"
+  "/api/intelligence/decisions"
+  "/api/intelligence/rejections"
+)
+
+INTL_OK=0
+INTL_WARMING=0
+INTL_ERR=0
+for EP in "${INTL_ENDPOINTS[@]}"; do
+  EP_CODE=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL$EP" 2>/dev/null || echo "000")
+  if [[ "$EP_CODE" == "200" ]]; then
+    INTL_OK=$((INTL_OK + 1))
+  elif [[ "$EP_CODE" == "202" ]]; then
+    INTL_WARMING=$((INTL_WARMING + 1))
+    detail "$EP → 202 warming_up"
+  elif [[ "$EP_CODE" == "000" ]]; then
+    INTL_ERR=$((INTL_ERR + 1))
+  else
+    INTL_ERR=$((INTL_ERR + 1))
+    detail "$EP → $EP_CODE"
+  fi
+done
+
+INTL_TOTAL=${#INTL_ENDPOINTS[@]}
+if [[ "$INTL_OK" -eq "$INTL_TOTAL" ]]; then
+  pass "All $INTL_TOTAL intelligence API endpoints returning data"
+elif [[ "$INTL_OK" -gt 0 ]]; then
+  warn "Intelligence API: $INTL_OK/$INTL_TOTAL ok, $INTL_WARMING warming_up, $INTL_ERR errors"
+elif [[ "$INTL_WARMING" -gt 0 ]]; then
+  warn "Intelligence API: all endpoints still warming up ($INTL_WARMING/$INTL_TOTAL)"
+else
+  skip "Intelligence API not reachable (server may not be running)"
+fi
+
+# =============================================================================
+section "3.11" "Pipeline Logging & Correlation IDs"
+# =============================================================================
+
+# Check daemon logs for pipeline correlation IDs (tickId pattern)
+DAEMON_LOG_FOUND=false
+for DDIR in "$UNFADE_HOME/state/daemons"/*/; do
+  [[ -d "$DDIR" ]] || continue
+  DLOG="$DDIR/daemon.log"
+  if [[ -f "$DLOG" ]]; then
+    DAEMON_LOG_FOUND=true
+    LOG_LINES=$(wc -l < "$DLOG" 2>/dev/null | tr -d ' ' || true)
+    detail "$(basename "$(dirname "$DLOG")")/daemon.log: $LOG_LINES lines"
+
+    # Check for pipeline tick correlation IDs (format: [pipeline:<8-hex-chars>])
+    TICK_COUNT=$(grep -c '\[pipeline:[0-9a-f]\{8\}\]' "$DLOG" 2>/dev/null | tr -d ' ' || true)
+    if [[ "${TICK_COUNT:-0}" -gt 0 ]]; then
+      pass "  Pipeline correlation IDs found ($TICK_COUNT log lines with tickId)"
+      # Show latest tick ID
+      LATEST_TICK=$(grep -o '\[pipeline:[0-9a-f]\{8\}\]' "$DLOG" 2>/dev/null | tail -1 || echo "")
+      if [[ -n "$LATEST_TICK" ]]; then
+        detail "Latest: $LATEST_TICK"
+      fi
+    else
+      warn "  No pipeline correlation IDs found — pipeline may not have run yet"
+    fi
+
+    # Check for errors/warnings in recent logs (last 100 lines)
+    RECENT_ERRORS=$(tail -100 "$DLOG" 2>/dev/null | grep -ci '"level":50\|"level":40' | tr -d ' ' || true)
+    if [[ "${RECENT_ERRORS:-0}" -gt 0 ]]; then
+      warn "  $RECENT_ERRORS error/warn entries in last 100 lines of daemon log"
+      # Show last error
+      LAST_ERR=$(tail -100 "$DLOG" 2>/dev/null | grep '"level":50\|"level":40' | tail -1 | node -e "
+        try {
+          const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+          console.log((d.msg ?? '').substring(0, 120));
+        } catch { console.log('(unparseable)'); }
+      " 2>/dev/null || echo "")
+      if [[ -n "$LAST_ERR" ]]; then
+        detail "Last error: $LAST_ERR"
+      fi
+    else
+      pass "  No recent errors in daemon log"
+    fi
+  fi
+done
+
+if [[ "$DAEMON_LOG_FOUND" == "false" ]]; then
+  warn "No daemon log files found in $UNFADE_HOME/state/daemons/"
+fi
+
+# Check for server-level logs
+if [[ -d "$UNFADE_HOME/logs" ]]; then
+  SERVER_LOG_COUNT=$(ls "$UNFADE_HOME/logs/"*.log 2>/dev/null | wc -l || true)
+  if [[ "${SERVER_LOG_COUNT:-0}" -gt 0 ]]; then
+    pass "Server log directory exists with $SERVER_LOG_COUNT log file(s)"
+  else
+    warn "Server log directory exists but empty"
+  fi
+else
+  detail "No server log directory at $UNFADE_HOME/logs/ (logs go to stderr)"
+fi
+
+# =============================================================================
+section "3.12" "Distill Content & Decision Quality"
+# =============================================================================
+
+DISTILLS_DIR="$UNFADE_HOME/distills"
+if [[ -d "$DISTILLS_DIR" ]]; then
+  DISTILL_COUNT=$(ls "$DISTILLS_DIR"/*.md 2>/dev/null | wc -l || true)
+  DISTILL_COUNT=$(echo "$DISTILL_COUNT" | tr -d ' ')
+  if [[ "${DISTILL_COUNT:-0}" -gt 0 ]]; then
+    pass "Distills directory has $DISTILL_COUNT summaries"
+    # Check latest distill for decision section
+    LATEST_DISTILL=$(ls -t "$DISTILLS_DIR"/*.md 2>/dev/null | head -1)
+    if [[ -n "$LATEST_DISTILL" ]]; then
+      DECISION_COUNT=$(grep -c '^- \*\*' "$LATEST_DISTILL" 2>/dev/null || true)
+      detail "Latest distill ($(basename "$LATEST_DISTILL")): $DECISION_COUNT decision entries"
+      if [[ "${DECISION_COUNT:-0}" -gt 20 ]]; then
+        warn "  High decision count ($DECISION_COUNT) — may indicate quality filtering issue"
+      fi
+    fi
+  else
+    warn "Distills directory exists but no .md files"
+  fi
+
+  # Check graph/decisions.jsonl
+  DECISIONS_JSONL="$UNFADE_HOME/graph/decisions.jsonl"
+  if [[ -f "$DECISIONS_JSONL" ]]; then
+    DJSONL_LINES=$(wc -l < "$DECISIONS_JSONL" 2>/dev/null || true)
+    DJSONL_LINES=$(echo "$DJSONL_LINES" | tr -d ' ')
+    pass "decisions.jsonl exists: $DJSONL_LINES entries"
+  else
+    detail "No decisions.jsonl in graph/ (populated by distill pipeline)"
+  fi
+else
+  warn "Distills directory missing at $DISTILLS_DIR"
+fi
+
+# =============================================================================
+section "3.13" "Event Source Distribution"
+# =============================================================================
+
+# Check SQLite for event source distribution (quick sanity check)
+SQLITE_DB="$UNFADE_HOME/cache/unfade.db"
+if [[ -f "$SQLITE_DB" ]]; then
+  SRC_DIST=$(sqlite3 "$SQLITE_DB" "SELECT source, COUNT(*) as cnt FROM events GROUP BY source ORDER BY cnt DESC" 2>/dev/null || echo "")
+  if [[ -n "$SRC_DIST" ]]; then
+    pass "Event source distribution from SQLite:"
+    echo "$SRC_DIST" | while IFS='|' read -r SRC CNT; do
+      detail "  $SRC: $CNT events"
+    done
+
+    # Check if ai-session events exist (needed by efficiency analyzer)
+    AI_SESSION_CNT=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events WHERE source='ai-session'" 2>/dev/null || true)
+    if [[ "${AI_SESSION_CNT:-0}" -ge 5 ]]; then
+      pass "ai-session events: $AI_SESSION_CNT (≥5 needed for efficiency analyzer)"
+    elif [[ "${AI_SESSION_CNT:-0}" -gt 0 ]]; then
+      warn "ai-session events: $AI_SESSION_CNT (<5, efficiency analyzer needs minDataPoints=5)"
+    else
+      warn "No ai-session events — efficiency analyzer will not produce output"
+    fi
+  else
+    warn "Could not query event source distribution"
+  fi
+else
+  skip "SQLite DB not found for event distribution check"
+fi
+
+
+# =============================================================================
+section "3.14" "BigInt Error Detection (DuckDB Runtime Safety)"
+# =============================================================================
+
+# DuckDB returns BigInt for COUNT/SUM aggregates. Unhandled BigInt causes:
+#   - "Cannot mix BigInt and other types" — arithmetic with plain numbers
+#   - "Do not know how to serialize a BigInt" — JSON.stringify without replacer
+# Both are silent runtime failures that prevent analyzer output generation.
+
+BIGINT_CHECKED=false
+BIGINT_ERRORS=0
+
+# Check server stderr log (if running via redirect)
+SERVER_LOG="/tmp/unfade-server.log"
+if [[ -f "$SERVER_LOG" ]]; then
+  BIGINT_CHECKED=true
+  BIGINT_MIX=$(grep -c "Cannot mix BigInt" "$SERVER_LOG" 2>/dev/null || true)
+  BIGINT_SERIALIZE=$(grep -c "Do not know how to serialize a BigInt" "$SERVER_LOG" 2>/dev/null || true)
+  BIGINT_ERRORS=$(( ${BIGINT_MIX:-0} + ${BIGINT_SERIALIZE:-0} ))
+
+  if [[ "$BIGINT_ERRORS" -eq 0 ]]; then
+    pass "No BigInt runtime errors in server log"
+  else
+    fail "BigInt errors detected: $BIGINT_MIX 'Cannot mix' + $BIGINT_SERIALIZE 'serialize' errors"
+    detail "Fix: wrap DuckDB results with Number() — see src/services/intelligence/"
+    # Show first occurrence for context
+    FIRST_BIGINT=$(grep -m1 "Cannot mix BigInt\|Do not know how to serialize a BigInt" "$SERVER_LOG" 2>/dev/null | head -c 200 || echo "")
+    if [[ -n "$FIRST_BIGINT" ]]; then
+      detail "First: $FIRST_BIGINT"
+    fi
+  fi
+fi
+
+# Check daemon logs for BigInt errors too
+for DDIR in "$UNFADE_HOME/state/daemons"/*/; do
+  [[ -d "$DDIR" ]] || continue
+  DLOG="$DDIR/daemon.log"
+  [[ -f "$DLOG" ]] || continue
+  BIGINT_CHECKED=true
+  D_BIGINT=$(grep -c "Cannot mix BigInt\|serialize a BigInt" "$DLOG" 2>/dev/null || true)
+  if [[ "${D_BIGINT:-0}" -gt 0 ]]; then
+    BIGINT_ERRORS=$(( ${BIGINT_ERRORS:-0} + ${D_BIGINT:-0} ))
+    warn "BigInt errors in $(basename "$(dirname "$DLOG")")/daemon.log: $D_BIGINT occurrences"
+  fi
+done
+
+if [[ "$BIGINT_CHECKED" == "false" ]]; then
+  skip "BigInt error check (no server/daemon logs found)"
+fi
+
+# =============================================================================
+section "3.15" "Analyzer Output Content Validation"
+# =============================================================================
+
+# Validate that core intelligence files contain expected fields and non-trivial data.
+# A file that exists but has empty/default data means the analyzer ran but produced nothing.
+
+CONTENT_OK=0
+CONTENT_WARN=0
+CONTENT_FAIL=0
+
+validate_output() {
+  local FILE="$1"
+  local EXPECTED_FIELDS="$2"
+  local BN=$(basename "$FILE")
+
+  if [[ ! -f "$FILE" ]]; then
+    return
+  fi
+
+  VRESULT=$(node -e "
+    const d = JSON.parse(require('fs').readFileSync('$FILE','utf8'));
+    const fields = '$EXPECTED_FIELDS'.split(',');
+    const missing = fields.filter(f => !(f in d));
+    const hasNaN = JSON.stringify(d).includes('NaN') || JSON.stringify(d).includes('Infinity');
+    const hasBigInt = JSON.stringify(d).includes('BigInt');
+    console.log(JSON.stringify({
+      missing: missing,
+      hasNaN: hasNaN,
+      hasBigInt: hasBigInt,
+      keys: Object.keys(d).length
+    }));
+  " 2>/dev/null || echo '{"error":true}')
+
+  if echo "$VRESULT" | grep -q '"error":true'; then
+    CONTENT_FAIL=$((CONTENT_FAIL + 1))
+    fail "  $BN: failed to parse/validate"
+    return
+  fi
+
+  VMISSING=$(echo "$VRESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.missing.length)" 2>/dev/null || true)
+  VNAN=$(echo "$VRESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.hasNaN)" 2>/dev/null || echo "false")
+  VBIGINT=$(echo "$VRESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.hasBigInt)" 2>/dev/null || echo "false")
+  VKEYS=$(echo "$VRESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.keys)" 2>/dev/null || true)
+
+  if [[ "$VNAN" == "true" ]]; then
+    CONTENT_WARN=$((CONTENT_WARN + 1))
+    warn "  $BN: contains NaN/Infinity values (likely unhandled Number() conversion)"
+  elif [[ "$VBIGINT" == "true" ]]; then
+    CONTENT_FAIL=$((CONTENT_FAIL + 1))
+    fail "  $BN: contains BigInt string (serialization issue)"
+  elif [[ "${VMISSING:-0}" -gt 0 ]]; then
+    CONTENT_WARN=$((CONTENT_WARN + 1))
+    MLIST=$(echo "$VRESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.missing.join(', '))" 2>/dev/null || echo "?")
+    warn "  $BN: missing expected fields: $MLIST"
+  else
+    CONTENT_OK=$((CONTENT_OK + 1))
+  fi
+}
+
+# Validate core intelligence files with expected fields
+if [[ -d "$INTEL_DIR" ]]; then
+  validate_output "$INTEL_DIR/efficiency.json" "aes,confidence,subMetrics,trend,updatedAt"
+  validate_output "$INTEL_DIR/comprehension.json" "overallScore,byModule,updatedAt"
+  validate_output "$INTEL_DIR/velocity.json" "currentVelocity,trend,updatedAt"
+  validate_output "$INTEL_DIR/prompt-patterns.json" "patterns,updatedAt"
+  validate_output "$INTEL_DIR/cost-attribution.json" "totalCost,byModel,updatedAt"
+  validate_output "$INTEL_DIR/decision-replay.json" "decisions,updatedAt"
+  validate_output "$INTEL_DIR/rejections.json" "rejections,updatedAt"
+  validate_output "$INTEL_DIR/summary-writer.json" "schemaVersion,updatedAt,directionDensity24h"
+
+  CONTENT_TOTAL=$((CONTENT_OK + CONTENT_WARN + CONTENT_FAIL))
+  if [[ "$CONTENT_TOTAL" -gt 0 ]]; then
+    if [[ "$CONTENT_FAIL" -eq 0 && "$CONTENT_WARN" -eq 0 ]]; then
+      pass "All $CONTENT_OK validated output files have correct structure"
+    elif [[ "$CONTENT_FAIL" -eq 0 ]]; then
+      warn "Output content: $CONTENT_OK ok, $CONTENT_WARN warnings"
+    else
+      fail "Output content: $CONTENT_OK ok, $CONTENT_WARN warnings, $CONTENT_FAIL failures"
+    fi
+  fi
+else
+  skip "Output content validation (intelligence directory missing)"
+fi
+
+# =============================================================================
+section "3.16" "Analyzer State Health (Event Counts & Watermarks)"
+# =============================================================================
+
+# Verify ALL analyzer state files have non-zero eventCount, valid watermarks,
+# and no BigInt residue in serialized state.
+
+STATE_DIR="$INTEL_DIR/state"
+if [[ -d "$STATE_DIR" ]]; then
+  STATE_HEALTHY=0
+  STATE_ZERO=0
+  STATE_CORRUPT=0
+  STATE_ZERO_LIST=""
+
+  for SF in "$STATE_DIR"/*.state.json; do
+    [[ -f "$SF" ]] || continue
+    BN=$(basename "$SF" .state.json)
+
+    SRESULT=$(node -e "
+      const raw = require('fs').readFileSync('$SF', 'utf8');
+      // Check for BigInt residue (raw 'n' suffix on numbers)
+      const hasBigIntResidue = /\"[0-9]+n\"/.test(raw) || /: [0-9]+n[,}]/.test(raw);
+      const d = JSON.parse(raw);
+      const ec = typeof d.eventCount === 'number' ? d.eventCount : 0;
+      const wm = d.watermark || '';
+      const ua = d.updatedAt || '';
+      const hasValue = d.value != null && Object.keys(d.value || {}).length > 0;
+      console.log(JSON.stringify({ ec, wm, ua, hasValue, hasBigIntResidue }));
+    " 2>/dev/null || echo '{"error":true}')
+
+    if echo "$SRESULT" | grep -q '"error":true'; then
+      STATE_CORRUPT=$((STATE_CORRUPT + 1))
+      detail "  $BN: corrupt/unparseable state file"
+      continue
+    fi
+
+    S_EC=$(echo "$SRESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.ec)" 2>/dev/null || true)
+    S_BIGINT=$(echo "$SRESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.hasBigIntResidue)" 2>/dev/null || echo "false")
+    S_HAS_VALUE=$(echo "$SRESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.hasValue)" 2>/dev/null || echo "false")
+
+    if [[ "$S_BIGINT" == "true" ]]; then
+      STATE_CORRUPT=$((STATE_CORRUPT + 1))
+      fail "  $BN: BigInt residue in serialized state"
+    elif [[ "${S_EC:-0}" -eq 0 ]]; then
+      STATE_ZERO=$((STATE_ZERO + 1))
+      STATE_ZERO_LIST="$STATE_ZERO_LIST $BN"
+    elif [[ "$S_HAS_VALUE" == "false" ]]; then
+      STATE_CORRUPT=$((STATE_CORRUPT + 1))
+      warn "  $BN: eventCount=$S_EC but value is empty"
+    else
+      STATE_HEALTHY=$((STATE_HEALTHY + 1))
+    fi
+  done
+
+  STATE_TOTAL=$((STATE_HEALTHY + STATE_ZERO + STATE_CORRUPT))
+  if [[ "$STATE_TOTAL" -gt 0 ]]; then
+    if [[ "$STATE_CORRUPT" -eq 0 && "$STATE_ZERO" -eq 0 ]]; then
+      pass "All $STATE_HEALTHY analyzer states healthy (non-zero eventCount, valid structure)"
+    elif [[ "$STATE_CORRUPT" -eq 0 ]]; then
+      warn "Analyzer states: $STATE_HEALTHY healthy, $STATE_ZERO zero-events"
+      if [[ -n "$STATE_ZERO_LIST" ]]; then
+        detail "Zero-event analyzers:$STATE_ZERO_LIST"
+      fi
+    else
+      fail "Analyzer states: $STATE_HEALTHY healthy, $STATE_ZERO zero, $STATE_CORRUPT corrupt"
+    fi
+  fi
+else
+  skip "Analyzer state health (state directory missing)"
+fi
+
+# =============================================================================
+section "3.17" "DuckDB Typed Column Data Validation"
+# =============================================================================
+
+# Verify DuckDB events table has data in typed columns (not all NULL).
+# If typed columns are empty, intelligence analyzers will produce empty results.
+
+DUCKDB_PATH="$UNFADE_HOME/cache/unfade.duckdb"
+if [[ -f "$DUCKDB_PATH" ]]; then
+  # DuckDB may be locked by running server — try via API first, then direct
+  if [[ -n "${SERVER_URL:-}" ]]; then
+    # Query via intelligence endpoint to verify DuckDB is responsive
+    DUCK_CHECK=$(curl -s --connect-timeout 3 "$SERVER_URL/api/intelligence/efficiency" 2>/dev/null || echo "")
+    if [[ -n "$DUCK_CHECK" ]]; then
+      # Check if response has actual data (not warming up)
+      DUCK_STATUS=$(echo "$DUCK_CHECK" | node -e "
+        try {
+          const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+          if (d.warming_up) console.log('warming');
+          else if (d.aes != null || (d.data && d.data.aes != null)) console.log('ok');
+          else console.log('empty');
+        } catch { console.log('error'); }
+      " 2>/dev/null || echo "error")
+
+      case "$DUCK_STATUS" in
+        ok)     pass "DuckDB responding with typed data via intelligence API" ;;
+        warming) warn "DuckDB intelligence still warming up" ;;
+        empty)   warn "DuckDB intelligence API returned empty data" ;;
+        error)   warn "DuckDB intelligence API response unparseable" ;;
+      esac
+    else
+      skip "DuckDB validation via API (server not responding)"
+    fi
+  fi
+
+  # Check DuckDB file size as a sanity check
+  DUCK_SIZE=$(du -sh "$DUCKDB_PATH" 2>/dev/null | awk '{print $1}')
+  if [[ -n "$DUCK_SIZE" ]]; then
+    detail "DuckDB file size: $DUCK_SIZE"
+    # If file is tiny (<100KB), likely has no data
+    DUCK_BYTES=$(stat -f%z "$DUCKDB_PATH" 2>/dev/null || stat -c%s "$DUCKDB_PATH" 2>/dev/null || true)
+    if [[ "${DUCK_BYTES:-0}" -lt 102400 ]]; then
+      warn "DuckDB file very small ($DUCK_SIZE) — may not have materialized data"
+    else
+      pass "DuckDB file size reasonable ($DUCK_SIZE)"
+    fi
+  fi
+else
+  skip "DuckDB typed column check (file not found)"
+fi
+
+# =============================================================================
+section "3.18" "Intelligence Pipeline Silent Failure Detection"
+# =============================================================================
+
+# Check for analyzer failures in logs — these are caught by the DAG scheduler
+# but may prevent individual output files from being generated.
+
+ANALYZER_FAILURES=0
+ANALYZER_FAILURE_NAMES=""
+
+# Check server log for analyzer failure patterns
+SERVER_LOG="/tmp/unfade-server.log"
+if [[ -f "$SERVER_LOG" ]]; then
+  # Pattern: "[intelligence] Analyzer <name> failed (non-fatal)"
+  FAIL_LINES=$(grep -c '\[intelligence\] Analyzer .* failed' "$SERVER_LOG" 2>/dev/null || true)
+  if [[ "${FAIL_LINES:-0}" -gt 0 ]]; then
+    ANALYZER_FAILURES=$FAIL_LINES
+    # Extract unique analyzer names that failed
+    ANALYZER_FAILURE_NAMES=$(grep -o '\[intelligence\] Analyzer [^ ]* failed' "$SERVER_LOG" 2>/dev/null | sed 's/.*Analyzer \(.*\) failed/\1/' | sort -u | tr '\n' ', ' || echo "")
+    fail "Analyzer failures in server log: $FAIL_LINES occurrences"
+    detail "Failed analyzers: ${ANALYZER_FAILURE_NAMES%, }"
+    # Show most recent failure's error message
+    LAST_FAIL=$(grep '\[intelligence\] Analyzer .* failed' "$SERVER_LOG" 2>/dev/null | tail -1 | head -c 200 || echo "")
+    if [[ -n "$LAST_FAIL" ]]; then
+      detail "Latest: $LAST_FAIL"
+    fi
+  else
+    pass "No analyzer failures in server log"
+  fi
+
+  # Check for initialization failures
+  INIT_FAIL_COUNT=$(grep -c 'Failed to initialize' "$SERVER_LOG" 2>/dev/null || true)
+  if [[ "${INIT_FAIL_COUNT:-0}" -gt 0 ]]; then
+    warn "Analyzer initialization failures: $INIT_FAIL_COUNT"
+    INIT_FAIL_LAST=$(grep 'Failed to initialize' "$SERVER_LOG" 2>/dev/null | tail -1 | head -c 200 || echo "")
+    detail "Latest: $INIT_FAIL_LAST"
+  else
+    pass "No analyzer initialization failures"
+  fi
+
+  # Check pipeline throughput — how many events were processed in last run?
+  LAST_BATCH=$(grep '\[intelligence\] Event batch built' "$SERVER_LOG" 2>/dev/null | tail -1 || echo "")
+  if [[ -n "$LAST_BATCH" ]]; then
+    BATCH_EVENTS=$(echo "$LAST_BATCH" | grep -o '"events":[0-9]*' | grep -o '[0-9]*' || echo "?")
+    BATCH_MS=$(echo "$LAST_BATCH" | grep -o '"buildMs":[0-9]*' | grep -o '[0-9]*' || echo "?")
+    detail "Last batch: $BATCH_EVENTS events, built in ${BATCH_MS}ms"
+  fi
+
+  # Check for cascade activity (shows DAG is working)
+  LAST_COMPLETE=$(grep '\[intelligence\].*complete in' "$SERVER_LOG" 2>/dev/null | tail -3 || echo "")
+  if [[ -n "$LAST_COMPLETE" ]]; then
+    ANALYZERS_RAN=$(grep -c '\[intelligence\].*complete in' "$SERVER_LOG" 2>/dev/null || true)
+    pass "Intelligence pipeline active: $ANALYZERS_RAN analyzer runs recorded"
+  else
+    warn "No analyzer completion records in server log — pipeline may not have run"
+  fi
+else
+  skip "Pipeline failure detection (no server log at $SERVER_LOG)"
+fi
+
+# =============================================================================
+section "3.19" "Cross-Layer Consistency"
+# =============================================================================
+
+# Verify data flows correctly across layers:
+# Layer 1 (events/) → Layer 2 (SQLite+DuckDB) → Layer 3 (intelligence/)
+# If events exist but intelligence doesn't, something is broken in the pipeline.
+
+EVENTS_DIR="$UNFADE_HOME/events"
+SQLITE_DB="$UNFADE_HOME/cache/unfade.db"
+
+if [[ -d "$EVENTS_DIR" && -f "$SQLITE_DB" && -d "$INTEL_DIR" ]]; then
+  # Count JSONL event files
+  JSONL_COUNT=$(find "$EVENTS_DIR" -name "*.jsonl" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+  # Count SQLite events
+  SQLITE_EVENTS=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events" 2>/dev/null || true)
+
+  # Count intelligence outputs
+  INTEL_OUTPUTS=$(ls "$INTEL_DIR"/*.json 2>/dev/null | wc -l | tr -d ' ')
+
+  if [[ "${JSONL_COUNT:-0}" -gt 0 && "${SQLITE_EVENTS:-0}" -gt 0 && "${INTEL_OUTPUTS:-0}" -gt 0 ]]; then
+    pass "Cross-layer data flow: $JSONL_COUNT JSONL files → $SQLITE_EVENTS SQLite events → $INTEL_OUTPUTS intelligence outputs"
+  elif [[ "${JSONL_COUNT:-0}" -gt 0 && "${SQLITE_EVENTS:-0}" -gt 0 && "${INTEL_OUTPUTS:-0}" -eq 0 ]]; then
+    fail "Layer 2→3 broken: $SQLITE_EVENTS events materialized but 0 intelligence outputs"
+    detail "Intelligence pipeline may be failing silently — check for BigInt or analyzer errors"
+  elif [[ "${JSONL_COUNT:-0}" -gt 0 && "${SQLITE_EVENTS:-0}" -eq 0 ]]; then
+    fail "Layer 1→2 broken: $JSONL_COUNT JSONL files but 0 SQLite events"
+    detail "Materializer may not have run — check 'unfade doctor --rebuild-cache'"
+  else
+    skip "Cross-layer consistency (no JSONL events yet)"
+  fi
+
+  # Verify per-source event coverage for intelligence analyzers
+  if [[ "${SQLITE_EVENTS:-0}" -gt 0 ]]; then
+    AI_EVENTS=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events WHERE source IN ('ai-session','mcp-active')" 2>/dev/null || true)
+    GIT_EVENTS=$(sqlite3 "$SQLITE_DB" "SELECT COUNT(*) FROM events WHERE source='git'" 2>/dev/null || true)
+
+    detail "Source breakdown: ai-session/mcp=$AI_EVENTS, git=$GIT_EVENTS"
+
+    if [[ "${AI_EVENTS:-0}" -lt 5 ]]; then
+      warn "Insufficient AI events ($AI_EVENTS) — efficiency/comprehension analyzers need ≥5"
+    fi
+    if [[ "${GIT_EVENTS:-0}" -eq 0 ]]; then
+      detail "No git events — commit-analysis/file-churn analyzers will be empty"
+    fi
+  fi
+else
+  skip "Cross-layer consistency (missing components)"
+fi
+
+# =============================================================================
+section "3.20" "Summary.json Coherence"
+# =============================================================================
+
+# summary.json is the primary data source for the dashboard home page.
+# It must exist, be fresh, and have coherent values.
+
+SUMMARY_FILE="$UNFADE_HOME/state/summary.json"
+if [[ -f "$SUMMARY_FILE" ]]; then
+  SUMM_RESULT=$(node -e "
+    const d = JSON.parse(require('fs').readFileSync('$SUMMARY_FILE','utf8'));
+    const age = Date.now() - new Date(d.updatedAt || '1970-01-01').getTime();
+    const ageMin = Math.round(age / 60000);
+    const hasSchema = d.schemaVersion === 1;
+    const dirDensity = d.directionDensity24h ?? -1;
+    const eventCount = d.eventCount24h ?? -1;
+    const comprehension = d.comprehensionScore;
+    const topDomain = d.topDomain;
+    const firstRun = d.firstRunComplete;
+    console.log(JSON.stringify({
+      ageMin, hasSchema, dirDensity, eventCount,
+      comprehension, topDomain, firstRun
+    }));
+  " 2>/dev/null || echo '{"error":true}')
+
+  if echo "$SUMM_RESULT" | grep -q '"error":true'; then
+    fail "summary.json exists but failed to parse/validate"
+  else
+    S_AGE=$(echo "$SUMM_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.ageMin)" 2>/dev/null || echo "999")
+    S_SCHEMA=$(echo "$SUMM_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.hasSchema)" 2>/dev/null || echo "false")
+    S_EVENTS=$(echo "$SUMM_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.eventCount)" 2>/dev/null || echo "-1")
+    S_FIRST_RUN=$(echo "$SUMM_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); console.log(d.firstRun)" 2>/dev/null || echo "false")
+
+    if [[ "$S_SCHEMA" == "true" ]]; then
+      pass "summary.json: schemaVersion=1"
+    else
+      fail "summary.json: unexpected schemaVersion"
+    fi
+
+    if [[ "${S_AGE:-999}" -lt 60 ]]; then
+      pass "summary.json: fresh (${S_AGE}m ago)"
+    elif [[ "${S_AGE:-999}" -lt 1440 ]]; then
+      warn "summary.json: ${S_AGE}m old (older than 1h)"
+    else
+      warn "summary.json: ${S_AGE}m old (stale — older than 24h)"
+    fi
+
+    detail "eventCount24h=$S_EVENTS, firstRunComplete=$S_FIRST_RUN"
+  fi
+else
+  warn "summary.json not found at $SUMMARY_FILE (summary-writer may not have run)"
+fi
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SUMMARY
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2055,7 +2718,10 @@ elif [[ "$FAIL" -eq 0 ]]; then
   echo -e "  ${GREEN}${BOLD}Layer 1 + Layer 2 + Layer 3: All critical checks passed.${NC} ${YELLOW}($WARN warnings)${NC}"
 else
   echo -e "  ${RED}${BOLD}$FAIL critical failure(s) — see above.${NC}"
-  echo -e "  ${DIM}Common fix: node dist/cli.mjs doctor --rebuild-cache${NC}"
+  echo -e "  ${DIM}Common fixes:${NC}"
+  echo -e "  ${DIM}  - Rebuild cache: node dist/cli.mjs doctor --rebuild-cache${NC}"
+  echo -e "  ${DIM}  - BigInt errors: wrap DuckDB results with Number()${NC}"
+  echo -e "  ${DIM}  - Missing intelligence: restart server and wait for pipeline tick${NC}"
 fi
 echo -e "${BOLD}═══════════════════════════════════════════════════════${NC}"
 echo ""

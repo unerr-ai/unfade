@@ -59,8 +59,8 @@ func TestCheckBudget_NoWarningUnderBudget(t *testing.T) {
 
 func TestDefaultBudgetConfig(t *testing.T) {
 	cfg := DefaultBudgetConfig()
-	if cfg.MaxMemoryMB != 50.0 {
-		t.Errorf("MaxMemoryMB = %f, want 50.0", cfg.MaxMemoryMB)
+	if cfg.MaxMemoryMB != 100.0 {
+		t.Errorf("MaxMemoryMB = %f, want 100.0", cfg.MaxMemoryMB)
 	}
 	if cfg.MaxCPUPct != 1.0 {
 		t.Errorf("MaxCPUPct = %f, want 1.0", cfg.MaxCPUPct)

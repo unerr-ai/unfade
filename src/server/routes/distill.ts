@@ -1,7 +1,7 @@
 // FILE: src/server/routes/distill.ts
-// GET /unfade/distill/latest — most recent distill
-// GET /unfade/distill/:date — distill for specific date
-// POST /unfade/distill — trigger manual distillation
+// GET /api/distill/latest — most recent distill
+// GET /api/distill/:date — distill for specific date
+// POST /api/distill — trigger manual distillation
 
 import { existsSync, readdirSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
@@ -122,6 +122,85 @@ distillRoutes.get("/distill/:date", async (c) => {
       durationMs: Math.round(performance.now() - start),
       degraded: false,
       lastUpdated: distillData.lastUpdated,
+    },
+  });
+});
+
+/**
+ * Read an enriched distill JSON file.
+ */
+async function readEnrichedDistill(date: string, cwd?: string) {
+  const distillsDir = getDistillsDir(cwd);
+  const filePath = join(distillsDir, `${date}.json`);
+
+  if (!existsSync(filePath)) return null;
+
+  try {
+    const content = await readFile(filePath, "utf-8");
+    const data = JSON.parse(content);
+    const mtime = (await stat(filePath)).mtime.toISOString();
+    return { ...data, lastUpdated: mtime };
+  } catch {
+    return null;
+  }
+}
+
+distillRoutes.get("/distill/:date/enriched", async (c) => {
+  const start = performance.now();
+  const date = c.req.param("date");
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json(
+      {
+        data: null,
+        _meta: {
+          tool: "unfade-distill",
+          durationMs: Math.round(performance.now() - start),
+          degraded: true,
+          degradedReason: "Invalid date format. Use YYYY-MM-DD",
+        },
+      },
+      400,
+    );
+  }
+
+  const enriched = await readEnrichedDistill(date);
+  if (!enriched) {
+    // Fall back to markdown-only distill (pre-v2 distills)
+    const mdData = await readDistill(date);
+    if (!mdData) {
+      return c.json({
+        data: null,
+        _meta: {
+          tool: "unfade-distill",
+          durationMs: Math.round(performance.now() - start),
+          degraded: true,
+          degradedReason: `No distill found for ${date}`,
+        },
+      });
+    }
+    // Return markdown-only response with v1 flag
+    return c.json({
+      data: {
+        version: 1 as const,
+        date,
+        markdown: mdData.content,
+        lastUpdated: mdData.lastUpdated,
+      },
+      _meta: {
+        tool: "unfade-distill",
+        durationMs: Math.round(performance.now() - start),
+        degraded: false,
+      },
+    });
+  }
+
+  return c.json({
+    data: enriched,
+    _meta: {
+      tool: "unfade-distill",
+      durationMs: Math.round(performance.now() - start),
+      degraded: false,
     },
   });
 });

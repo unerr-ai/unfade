@@ -4,7 +4,7 @@
 // nodes only, cascades changes to dependents with magnitude throttling.
 // Replaces both the old IntelligenceEngine and the 16C IncrementalEngine.
 
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../../utils/logger.js";
 import { getIntelligenceDir } from "../../utils/paths.js";
@@ -47,6 +47,14 @@ export interface SchedulerResult {
   entityContributions: import("../substrate/substrate-engine.js").EntityContribution[];
 }
 
+export interface AnalyzerProgressInfo {
+  analyzerName: string;
+  index: number;
+  total: number;
+  phase: "starting" | "complete";
+  changed: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // IntelligenceScheduler
 // ---------------------------------------------------------------------------
@@ -62,6 +70,10 @@ export class IntelligenceScheduler {
 
   constructor(opts: { minIntervalMs?: number } = {}) {
     this.minIntervalMs = opts.minIntervalMs ?? 10_000;
+  }
+
+  setMinInterval(ms: number): void {
+    this.minIntervalMs = ms;
   }
 
   register(analyzer: IncrementalAnalyzer<unknown, unknown>): void {
@@ -95,7 +107,10 @@ export class IntelligenceScheduler {
     }
   }
 
-  async processEvents(ctx: AnalyzerContext): Promise<SchedulerResult> {
+  async processEvents(
+    ctx: AnalyzerContext,
+    onProgress?: (info: AnalyzerProgressInfo) => void,
+  ): Promise<SchedulerResult> {
     const now = Date.now();
     if (now - this.lastRunMs < this.minIntervalMs) {
       return {
@@ -119,7 +134,15 @@ export class IntelligenceScheduler {
       };
     }
 
+    const batchStartMs = Date.now();
     const batch = await buildEventBatch(ctx.analytics, this.globalWatermark);
+    logger.info(`[intelligence] Event batch built`, {
+      events: batch.events.length,
+      watermark: this.globalWatermark || "(none)",
+      buildMs: Date.now() - batchStartMs,
+      heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    });
+
     if (batch.events.length === 0) {
       return {
         results: [],
@@ -143,14 +166,32 @@ export class IntelligenceScheduler {
     let nodesProcessed = 0;
     let nodesCascaded = 0;
 
-    for (const name of this.topoOrder) {
+    for (let nodeIdx = 0; nodeIdx < this.topoOrder.length; nodeIdx++) {
+      const name = this.topoOrder[nodeIdx];
       const node = this.graph.get(name)!;
       if (!node.dirty) {
         node.lastChanged = false;
         continue;
       }
 
+      // Yield to event loop between analyzer runs to prevent blocking
+      if (nodeIdx > 0) {
+        await new Promise<void>((r) => setImmediate(r));
+      }
+
+      if (onProgress) {
+        onProgress({
+          analyzerName: name,
+          index: nodeIdx,
+          total: this.topoOrder.length,
+          phase: "starting",
+          changed: false,
+        });
+      }
+
       try {
+        const analyzerStartMs = Date.now();
+
         // Ensure state exists (cold start)
         if (!node.state) {
           node.state = loadState(name) ?? null;
@@ -159,6 +200,9 @@ export class IntelligenceScheduler {
           if (batch.events.length < node.analyzer.minDataPoints) {
             node.dirty = false;
             node.lastChanged = false;
+            logger.info(
+              `[intelligence] Skipping ${name}: insufficient data (${batch.events.length} < ${node.analyzer.minDataPoints})`,
+            );
             continue;
           }
           node.state = await node.analyzer.initialize(ctx);
@@ -170,6 +214,9 @@ export class IntelligenceScheduler {
 
         // Filter batch to this analyzer's interests
         const filtered = filterBatch(batch, node.analyzer.eventFilter);
+        logger.info(
+          `[intelligence] Running ${name}: ${filtered.events.length} events (${nodeIdx + 1}/${this.topoOrder.length})`,
+        );
 
         // Run update
         const updateResult: UpdateResult<unknown> = await node.analyzer.update(
@@ -178,13 +225,26 @@ export class IntelligenceScheduler {
           enrichedCtx,
         );
 
+        const analyzerMs = Date.now() - analyzerStartMs;
+        logger.info(`[intelligence] ${name} complete in ${analyzerMs}ms`, {
+          changed: updateResult.changed,
+          changeMagnitude: updateResult.changeMagnitude,
+          heapUsedMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        });
+
         node.state = updateResult.state;
-        node.lastChanged = updateResult.changed;
-        node.lastChangeMagnitude = updateResult.changeMagnitude ?? (updateResult.changed ? 1 : 0);
         node.dirty = false;
         nodesProcessed++;
 
-        if (updateResult.changed) {
+        // Force write if output file doesn't exist yet — ensures first run
+        // always produces output even when computed values match initial defaults.
+        const outputFileExists = existsSync(join(intelligenceDir, node.analyzer.outputFile));
+        const effectiveChanged = updateResult.changed || !outputFileExists;
+
+        node.lastChanged = effectiveChanged;
+        node.lastChangeMagnitude = updateResult.changeMagnitude ?? (effectiveChanged ? 1 : 0);
+
+        if (effectiveChanged) {
           const output = node.analyzer.derive(node.state);
           writeResultAtomically(
             intelligenceDir,
@@ -192,6 +252,9 @@ export class IntelligenceScheduler {
             output as Record<string, unknown>,
           );
           saveState(name, node.state);
+          if (!outputFileExists) {
+            logger.info(`[intelligence] First-run write for ${name} → ${node.analyzer.outputFile}`);
+          }
 
           results.push({
             analyzer: name,
@@ -232,18 +295,45 @@ export class IntelligenceScheduler {
             }
           }
         }
+        if (onProgress) {
+          onProgress({
+            analyzerName: name,
+            index: nodeIdx,
+            total: this.topoOrder.length,
+            phase: "complete",
+            changed: updateResult.changed,
+          });
+        }
       } catch (err) {
-        logger.debug(`Scheduler: analyzer ${name} failed (non-fatal)`, {
+        logger.warn(`[intelligence] Analyzer ${name} failed (non-fatal)`, {
           error: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack?.split("\n").slice(0, 3).join(" | ") : undefined,
         });
         node.dirty = false;
         node.lastChanged = false;
         node.lastChangeMagnitude = 0;
+
+        if (onProgress) {
+          onProgress({
+            analyzerName: name,
+            index: nodeIdx,
+            total: this.topoOrder.length,
+            phase: "complete",
+            changed: false,
+          });
+        }
       }
     }
 
     if (batch.events.length > 0) {
-      this.globalWatermark = batch.events[batch.events.length - 1].ts;
+      const lastTs = batch.events[batch.events.length - 1].ts;
+      // Safety: ensure watermark is always a string (DuckDB can return {micros} objects)
+      this.globalWatermark =
+        typeof lastTs === "string"
+          ? lastTs
+          : lastTs && typeof lastTs === "object" && "micros" in (lastTs as Record<string, unknown>)
+            ? new Date(Number((lastTs as { micros: number }).micros) / 1000).toISOString()
+            : String(lastTs);
     }
 
     return {
@@ -362,7 +452,7 @@ export class IntelligenceScheduler {
   private async checkMinData(ctx: AnalyzerContext): Promise<boolean> {
     try {
       const result = await ctx.analytics.exec("SELECT COUNT(*) FROM events");
-      const count = (result[0]?.values[0]?.[0] as number) ?? 0;
+      const count = Number(result[0]?.values[0]?.[0] ?? 0);
       return count >= 3;
     } catch {
       return false;
@@ -376,6 +466,10 @@ export { IntelligenceScheduler as IncrementalEngine };
 function writeResultAtomically(dir: string, filename: string, data: Record<string, unknown>): void {
   const target = join(dir, filename);
   const tmp = join(dir, `${filename}.tmp.${process.pid}`);
-  writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
+  writeFileSync(
+    tmp,
+    JSON.stringify(data, (_key, value) => (typeof value === "bigint" ? Number(value) : value), 2),
+    "utf-8",
+  );
   renameSync(tmp, target);
 }
