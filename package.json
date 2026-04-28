@@ -64,7 +64,7 @@
     "@clack/prompts": "^1.2.0",
     "@commander-js/extra-typings": "^14.0.0",
     "@duckdb/node-api": "1.5.2-r.1",
-    "@hono/node-server": "^1.19.14",
+    "@hono/node-server": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-progress": "^1.1.8",
