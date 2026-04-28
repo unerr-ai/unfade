@@ -92,7 +92,7 @@
     "lucide-react": "^1.9.0",
     "node-notifier": "^10.0.1",
     "ollama-ai-provider": "^1.2.0",
-    "ora": "^9.3.0",
+    "ora": "^9.4.0",
     "pino": "^10.3.1",
     "piscina": "^5.1.4",
     "proper-lockfile": "^4.1.2",
