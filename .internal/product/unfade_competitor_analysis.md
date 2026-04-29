@@ -2,7 +2,7 @@
 
 > **What this document is:** A founder's reference on every tool, company, and category that touches the space Unfade enters. Written as the complete competitive picture — who's building what, where the money is, what's structurally impossible for them to do, and where we're genuinely vulnerable. Evidence-backed, honest, no spin.
 >
-> **What this document is NOT:** A marketing differentiation guide, a sales battle card, or a pitch deck appendix. Product strategy lives in `unfade.md`. Business model and growth strategy live in `unfade_support.md`. Raw RRVV research data lives in `RRVV_COMPETITOR_ANALYSIS_V2.md` and `RRVV_MARKET_ANALYSIS_V2.md`.
+> **What this document is NOT:** A marketing differentiation guide, a sales battle card, or a pitch deck appendix. Product strategy lives in `unfade.md`. Business model and growth strategy live in `unfade_business.md`.
 >
 > **Last updated:** April 2026
 
@@ -519,4 +519,4 @@ But architecture without users is a blueprint, not a moat. Ship fast.
 
 ---
 
-*This analysis synthesizes research across 60+ tools, 10 competitive categories, $4.2B+ in adjacent funding, and sources including product websites, GitHub repositories, funding databases (Crunchbase, Tracxn), academic papers (arXiv, ICPC, ACL), developer communities (Reddit, HN, X), and industry reports (Gartner, ThoughtWorks, JetBrains). Raw RRVV research data preserved in `RRVV_COMPETITOR_ANALYSIS_V2.md`. Last verified April 2026.*
+*This analysis synthesizes research across 60+ tools, 10 competitive categories, $4.2B+ in adjacent funding, and sources including product websites, GitHub repositories, funding databases (Crunchbase, Tracxn), academic papers (arXiv, ICPC, ACL), developer communities (Reddit, HN, X), and industry reports (Gartner, ThoughtWorks, JetBrains). Last verified April 2026.*

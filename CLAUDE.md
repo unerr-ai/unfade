@@ -112,6 +112,16 @@ Directory structure:
 - Say **"reasoning"**, not "data" or "logs"
 - Say **"distill"**, not "summarize"
 
+### 6.1 CLI-Light Philosophy
+
+**Unfade is a dashboard-first product with a minimal CLI surface.** The CLI exists only as the initial entry point. All configuration, exploration, and ongoing interaction happens through the dashboard or is automated.
+
+- **`unfade`** — Starts everything (server, dashboard, MCP, capture engines). First run triggers onboarding automatically. This is the only command users need.
+- All other capabilities (distill, search, cards, profile, comprehension, decisions, settings) are **dashboard pages or automated processes**, not CLI subcommands.
+- **Why:** Too many CLI commands creates a learning curve. Even in Claude Code, most users don't know or regularly use slash commands. The product must be discoverable through the UI, not memorized from docs.
+- **When proposing features:** Always default to dashboard/automated surface. CLI subcommands are a last resort for scriptability needs, not the primary interface.
+- **MCP tools remain as-is** — they are programmatic interfaces for AI tools, not user-facing CLI commands.
+
 ### 7. Test Naming
 
 Tests mirror source structure: `test/<path>/<name>.test.ts` mirrors `src/<path>/<name>.ts`.

@@ -2,7 +2,7 @@
 
 > **What this document is:** A founder's reference. The complete, evidence-backed narrative of why Unfade exists — from the real pain developers feel today, through the research that shaped our thinking, to what we built and why each piece matters. Written as the single document you'd hand someone who needs to understand the soul of this product in one sitting.
 >
-> **What this document is NOT:** A pitch deck, a marketing brief, a competitor teardown, or an implementation spec. Competitor analysis lives in `unfade_competitor_analysis.md` and `RRVV_COMPETITOR_ANALYSIS_V2.md`. Business model and growth strategy live in `unfade_support.md`. Technical architecture lives in `.internal/architecture/`. This document stops at the product and its features.
+> **What this document is NOT:** A pitch deck, a marketing brief, a competitor teardown, or an implementation spec. Competitor analysis lives in `unfade_competitor_analysis.md`. Business model and growth strategy live in `unfade_business.md`. Technical architecture lives in `.internal/architecture/`. This document stops at the product and its features.
 >
 > **Last updated:** April 2026
 
@@ -510,4 +510,4 @@ Four converging forces make this the right product at the right time:
 
 ---
 
-*This document is the culmination of research across Reddit, Hacker News, X/Twitter, academic studies (MIT, METR, Anthropic), industry reports (ThoughtWorks, DORA, Stack Overflow, JetBrains, Faros AI), competitive analysis of 60+ tools, and direct observation of developer behavior across dozens of communities. The evidence base is documented in `RRVV_MARKET_ANALYSIS_V2.md`, `INTELLIGENCE_SUBSTRATE_RRVV_ANALYSIS.md`, `unfade_support.md`, and `RRVV_COMPETITOR_ANALYSIS_V2.md`.*
+*This document is the culmination of research across Reddit, Hacker News, X/Twitter, academic studies (MIT, METR, Anthropic), industry reports (ThoughtWorks, DORA, Stack Overflow, JetBrains, Faros AI), competitive analysis of 60+ tools, and direct observation of developer behavior across dozens of communities. The evidence base is documented in `unfade_business.md` and `unfade_competitor_analysis.md`.*

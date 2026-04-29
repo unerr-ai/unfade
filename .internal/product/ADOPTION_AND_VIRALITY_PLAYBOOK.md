@@ -200,7 +200,7 @@ A count of consecutive days where the user has captured reasoning (git commits, 
 **Display:**
 - Sidebar: small flame icon + day count, always visible
 - Home page: prominent streak card with current count + personal best
-- CLI: `unfade status` shows streak in terminal output
+- Dashboard: sidebar streak display (always visible)
 
 **Streak mechanics:**
 - A "day" counts if at least 1 captured event exists (any source: git, AI, terminal)
@@ -251,7 +251,7 @@ An optional public page at `unfade.dev/u/{username}` showing:
 - A narrative: "This developer is in Multi-Gear. They steer with precision in auth and infrastructure, with deep track knowledge across 4 domains. 90-day reasoning streak."
 
 **Privacy model:**
-- 100% opt-in. Nothing is public until `unfade publish` is run
+- 100% opt-in. Nothing is public until published from the dashboard
 - The user controls what's visible (e.g., show phase but hide domains)
 - All data is computed locally — the public profile is a snapshot, not a live feed
 - No login required to view (reduces friction for viewers → higher conversion)
@@ -282,24 +282,24 @@ Renders as: `[Unfade: Multi-Gear | 47-day streak]`
 - Low friction — add one line to README
 - Social proof — when multiple developers in a community have Unfade badges, it normalizes the tool
 
-### 6.3 CLI Identity Output
+### 6.3 Dashboard Identity Summary
 
-`unfade status` outputs a compact identity summary to the terminal:
+The Home page shows a compact identity summary:
 
 ```
-unfade: Multi-Gear (Phase 3) | 47-day streak | 312 decisions
-        Steering: 72% | Track: 68% | Speed: 81% | Maturity: 65%
-        Top: auth (Deep), infrastructure (Moderate), database (Emerging)
+Multi-Gear (Phase 3) | 47-day streak | 312 decisions
+Steering: 72% | Track: 68% | Speed: 81% | Maturity: 65%
+Top: auth (Deep), infrastructure (Moderate), database (Emerging)
 ```
 
 This is designed to be:
 - Screenshot-friendly for developer tweets/posts
-- Useful in terminal workflows (quick glance at current state)
-- Embeddable in CI/CD output or team dashboards
+- Glanceable overview of current state
+- Embeddable in CI/CD output or team dashboards (via API)
 
-### 6.4 `unfade publish` Enhancement
+### 6.4 Publish Enhancement
 
-The existing `unfade publish` command generates a static site. Enhanced version:
+The dashboard's Publish action generates a static site. Enhanced version:
 - Generates public profile page (§6.1)
 - Generates README badge (§6.2)
 - Generates og:image card for link previews
@@ -408,7 +408,7 @@ Developers delete tool emails. All engagement happens in-app or in the terminal.
 |---|---|---|---|
 | **Reasoning Streak** | Consecutive days with captured reasoning. Sidebar + Home display. | Progression | Small |
 | **Phase upshift celebration** | Banner + shareable card on phase transition | Progression + Output | Small |
-| **Streak counter in CLI** | `unfade status` shows streak | Identity | Trivial |
+| **Streak counter** | Dashboard sidebar shows streak | Identity | Trivial |
 
 ### Priority 2: Primary viral artifacts
 
@@ -424,7 +424,7 @@ Developers delete tool emails. All engagement happens in-app or in the terminal.
 |---|---|---|---|
 | **README badge** | Dynamic SVG showing phase + streak | Identity | Medium |
 | **Public profile** | `unfade.dev/u/{username}` with full vehicle profile | Identity | Large |
-| **`unfade publish` v2** | Generates profile + badge + card + og:image in one command | Identity + Output | Medium |
+| **Publish v2** | Dashboard action: generates profile + badge + card + og:image | Identity + Output | Medium |
 
 ### Priority 4: Recurring engagement
 

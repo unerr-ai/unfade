@@ -68,7 +68,7 @@ What's included:
 | **Hosted card sharing** | Analytics on who viewed your cards, rich link previews on social platforms | Developers who share cards on LinkedIn/Twitter |
 | **Team dashboards** | Aggregate comprehension scores, team reasoning patterns, onboarding narratives, manager views | Engineering managers, team leads |
 | **SSO + admin controls** | Enterprise auth, audit logs, data policies | Companies with compliance requirements |
-| **Onboarding narratives** | `unfade history --project=auth --last-6months` gives new hires a reasoning history of every decision | Any team that hires (this is the killer enterprise feature) |
+| **Onboarding narratives** | Dashboard reasoning history (filterable by project + timeframe) gives new hires a reasoning history of every decision | Any team that hires (this is the killer enterprise feature) |
 
 ### The Core Insight About Payment
 
@@ -120,7 +120,7 @@ The free layer creates the habit. The paid layer amplifies the value. This is ex
 
 6. **Performance credibility.** Built in Rust. "<10ms overhead" is believable. The name "Rust Token Killer" is memorable and searchable.
 
-**What Unfade can learn:** The `rtk gain` command -- showing personal savings as shareable stats -- is directly transferable. Unfade needs an equivalent: `unfade stats` showing "47 decisions captured, context auto-injected 12 times this week, estimated 3 hours of re-explanation saved."
+**What Unfade can learn:** The `rtk gain` command -- showing personal savings as shareable stats -- is directly transferable. Unfade needs an equivalent: a dashboard stats view showing "47 decisions captured, context auto-injected 12 times this week, estimated 3 hours of re-explanation saved."
 
 ### Case Study: Lovable (Fastest to $1M ARR in 2025-2026)
 
@@ -171,7 +171,7 @@ Before laying out the plan, here's how each element was validated:
 |---|---|---|
 | -7 | Start building in public on X. Daily progress screenshots showing the Reasoning Fingerprint output. | Builds anticipation. Every post seeds followers who will star on launch day. |
 | -5 | Post your own Unfade Card with the caption "What's your reasoning fingerprint?" | Creates curiosity before the tool exists. Establishes the visual artifact in people's minds. |
-| -3 | Record 30-second terminal GIF: `unfade init` -> fingerprint -> card. | This GIF is the single most important launch asset. It IS the HN post. Repos with terminal GIFs in the first screenful get 4x more stars. |
+| -3 | Record 30-second terminal GIF: `unfade` -> fingerprint -> card. | This GIF is the single most important launch asset. It IS the HN post. Repos with terminal GIFs in the first screenful get 4x more stars. |
 | -2 | Seed 100-200 stars from personal network, dev friends, and beta testers. | Not fake stars -- real people who tried the beta. This seeds the GitHub Trending algorithm. |
 | -1 | Write HN first comment draft. Prepare subreddit-specific angles. | HN posts live or die on first comment quality. Each subreddit needs a different angle. |
 
@@ -201,9 +201,9 @@ Before laying out the plan, here's how each element was validated:
 
 2. **The Card must be beautiful enough to screenshot.** Dark theme, distinctive visual language, instantly recognizable at thumbnail size. Not a generic chart. Something that belongs in a portfolio or a tweet.
 
-3. **The install must be copy-paste-enter.** `npx unfade-cli init` and nothing else. No Ollama dependency for first run. No config files. No API keys. The Fingerprint comes from git history analysis, not LLM synthesis.
+3. **The install must be copy-paste-enter.** `npx unfade-cli` and nothing else. No Ollama dependency for first run. No config files. No API keys. The Fingerprint comes from git history analysis, not LLM synthesis.
 
-4. **The README must have a terminal GIF in the first screenful.** This GIF -- showing `unfade init` -> fingerprint -> card -- is the single most important marketing asset. 15-20 seconds. Beautiful.
+4. **The README must have a terminal GIF in the first screenful.** This GIF -- showing `unfade` -> fingerprint -> card -- is the single most important marketing asset. 15-20 seconds. Beautiful.
 
 5. **Day 7 responsiveness must be flawless.** Every issue gets a response within hours. At least 2-3 community requests get shipped. This signals "alive project" and sustains GitHub Trending placement.
 
@@ -229,8 +229,8 @@ This is the right model for Unfade because:
 |---|---|---|
 | **Week 1** | Launch open-source CLI. Fingerprint + Card + MCP server all working. Focus entirely on star growth and community building. | Nothing. Do not mention pricing. Let the free product speak. |
 | **Week 2** | Ship community requests. Fix bugs aggressively. Add integrations requested by users. | Soft-launch `unfade.dev/username` hosted profiles for early adopters. Free during beta. Collect feedback on what "hosted identity" should include. |
-| **Week 3** | Ship team features in open source: `unfade team` for local team reasoning aggregation. | Announce Pro tier pricing. Hosted identity + cloud distill + cross-machine sync. $12/dev/month. Early adopter discount (first 3 months free or 50% off). |
-| **Week 4** | Ship onboarding narratives (`unfade history`). This is the enterprise killer feature. | Announce Team tier. $20/dev/month. Team dashboards + aggregate comprehension + SSO. Start conversations with engineering managers who found Unfade through their developers. |
+| **Week 3** | Ship team features in open source: team reasoning aggregation in the dashboard. | Announce Pro tier pricing. Hosted identity + cloud distill + cross-machine sync. $12/dev/month. Early adopter discount (first 3 months free or 50% off). |
+| **Week 4** | Ship onboarding narratives (dashboard reasoning history). This is the enterprise killer feature. | Announce Team tier. $20/dev/month. Team dashboards + aggregate comprehension + SSO. Start conversations with engineering managers who found Unfade through their developers. |
 
 ### Why This Ordering Works
 
@@ -311,7 +311,7 @@ These are real developer needs that Unfade can address, each validated against c
 
 **The pain.** New hires take 4-6 weeks to ramp up. AI halves this, but doesn't solve the deeper problem: understanding *why* the codebase is the way it is.
 
-**What Unfade offers.** `unfade history --project=auth --last-6months` gives a new hire a structured narrative of every architectural decision, trade-off, and dead end the team explored. This requires zero new features -- just a query interface and positioning.
+**What Unfade offers.** The dashboard's reasoning history view (filterable by project + timeframe) gives a new hire a structured narrative of every architectural decision, trade-off, and dead end the team explored. This requires zero new features -- just a query interface and positioning.
 
 **Revenue impact.** This is the single strongest enterprise conversion argument. "Your codebase's reasoning history becomes your onboarding documentation" maps directly to a budget line item (onboarding time costs $5K-$15K per new hire in lost productivity).
 
@@ -410,7 +410,7 @@ Unfade's free tier should be genuinely useful for a solo developer for years wit
 
 ### Risk 1: The Fingerprint Isn't Accurate Enough
 
-**The problem.** The entire growth strategy rests on one moment: `unfade init` -> 60 seconds -> Reasoning Fingerprint. If the fingerprint feels generic or wrong, nobody shares it, and the viral loop never starts.
+**The problem.** The entire growth strategy rests on one moment: `unfade` -> 60 seconds -> Reasoning Fingerprint. If the fingerprint feels generic or wrong, nobody shares it, and the viral loop never starts.
 
 **Mitigation.** Aggressive tuning of git history heuristics before launch. Beta test with 20-50 developers and measure "recognition rate" -- what percentage say "that's me"? Must be >70% to launch.
 
@@ -420,7 +420,7 @@ Unfade's free tier should be genuinely useful for a solo developer for years wit
 
 **The problem.** After the initial fingerprint wow, the next value comes from Daily Distill -- which requires working for a day first. No viral product has a 24-hour gap between first value and second value.
 
-**Mitigation.** The backfill (`unfade distill --backfill 30`) should produce distills from the past 30 days of git history immediately. The user gets both the fingerprint AND a month of distills in their first session.
+**Mitigation.** The backfill (automated during onboarding) should produce distills from the past 30 days of git history immediately. The user gets both the fingerprint AND a month of distills in their first session.
 
 **Severity: High.** Solvable with engineering effort.
 
@@ -455,7 +455,7 @@ Unfade's free tier should be genuinely useful for a solo developer for years wit
 
 **The problem.** Developers are overwhelmed with tools. "Another CLI to install" is a real objection.
 
-**Mitigation.** Zero configuration and passive operation. After `unfade init`, the user never needs to interact with Unfade again unless they want to. The MCP server runs silently. Capture runs silently. Value appears in their existing AI tools without any workflow change. This is the opposite of tools that demand daily engagement.
+**Mitigation.** Zero configuration and passive operation. After running `unfade`, the user never needs to interact with the CLI again unless they want to. The MCP server runs silently. Capture runs silently. Value appears in their existing AI tools without any workflow change. This is the opposite of tools that demand daily engagement.
 
 **Severity: Low.** Passive tools avoid the fatigue trap by not adding cognitive load.
 
