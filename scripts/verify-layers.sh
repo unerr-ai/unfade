@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Unfade Layer 1, 2, & 3 Verification Script
+# Unfade Full System Verification Script (Layers 0–5)
 # =============================================================================
+#
+# Layer 0 (Foundation): Build artifacts (dist/cli.mjs, Go binary), global
+#   directory structure (~/.unfade/), config.json validation, marker files
 #
 # Layer 1 (Go Daemon): Binary, daemon lifecycle, JSONL events, capture modes,
 #   AI parsers, historical ingest, event format, O_APPEND atomicity,
@@ -12,6 +15,10 @@
 #   DuckDB (14 tables, ~46 typed columns), materializer cursor + liveness,
 #   data consistency, VARCHAR[] columns, rebuild/repair, HTTP server health,
 #   end-to-end flow validation (JSONL → SQLite pipeline integrity)
+#
+# Layer 2.5 (Knowledge Extraction): CozoDB entity types (8), fact extraction
+#   with bi-temporal storage, comprehension assessments (5-dimension scoring),
+#   knowledge pipeline files (entities.jsonl, facts.jsonl, comprehension.json)
 #
 # Layer 2b (CozoDB Intelligence Graph): CozoManager, entity/edge/entity_source
 #   relations, HNSW vector index, schema versioning, analyzer contributions,
@@ -25,6 +32,14 @@
 #   output content validation (field checks), state health (eventCount/watermarks),
 #   DuckDB typed column data, silent failure detection, cross-layer consistency,
 #   summary.json coherence
+#
+# Layer 4 (Intelligence Presentation): Cross-analyzer correlation discovery,
+#   evidence chains (per-metric drill-through), enriched API responses with
+#   _meta (freshness, correlations, evidenceAvailable), schema compliance
+#
+# Layer 5 (UI / HTTP / SSE): Vite SPA build (index.html, code-split assets),
+#   React page components (12), Hono route modules (23+), SPA fallback routing,
+#   SSE streaming, API smoke tests, MCP server mount, server state files
 #
 # Run:  bash scripts/verify-layers.sh
 # Prereq: `unfade` must have been started at least once
@@ -52,6 +67,174 @@ warn()    { WARN=$((WARN + 1));  echo -e "  ${YELLOW}⚠${NC} $1"; }
 skip()    { SKIP=$((SKIP + 1));  echo -e "  ${DIM}○${NC} $1 ${DIM}(skipped)${NC}"; }
 section() { echo -e "\n${BOLD}${CYAN}[$1]${NC} $2"; }
 detail()  { echo -e "    ${DIM}$1${NC}"; }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  LAYER 0: FOUNDATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${BOLD}╔═══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║        LAYER 0: FOUNDATION                        ║${NC}"
+echo -e "${BOLD}╚═══════════════════════════════════════════════════╝${NC}"
+
+# =============================================================================
+section "0.1" "Build Artifacts"
+# =============================================================================
+
+SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CLI_ENTRY="$SCRIPT_ROOT/dist/cli.mjs"
+
+if [[ -f "$CLI_ENTRY" ]]; then
+  CLI_SIZE=$(du -sh "$CLI_ENTRY" 2>/dev/null | awk '{print $1}')
+  pass "CLI bundle exists at dist/cli.mjs ($CLI_SIZE)"
+  if [[ -x "$CLI_ENTRY" ]]; then
+    pass "CLI bundle is executable"
+  else
+    warn "CLI bundle is not executable (should have +x for npx/bin)"
+  fi
+
+  # Check for code-split chunks (Vite build output)
+  CHUNK_COUNT=$(find "$SCRIPT_ROOT/dist" -name "*.mjs" -type f 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$CHUNK_COUNT" -gt 1 ]]; then
+    pass "Build output: $CHUNK_COUNT compiled modules in dist/"
+  else
+    warn "Only $CHUNK_COUNT module(s) in dist/ — build may be incomplete"
+  fi
+else
+  fail "CLI bundle missing at dist/cli.mjs — run 'pnpm build'"
+fi
+
+# Go daemon binary
+GO_BINARY="$UNFADE_HOME/bin/unfaded"
+if [[ -f "$GO_BINARY" && -x "$GO_BINARY" ]]; then
+  pass "Go daemon binary present and executable"
+else
+  if [[ -f "$GO_BINARY" ]]; then
+    warn "Go daemon binary exists but is not executable"
+  else
+    warn "Go daemon binary not installed at $GO_BINARY"
+  fi
+fi
+
+# =============================================================================
+section "0.2" "Global Directory Structure (~/.unfade/)"
+# =============================================================================
+
+# All directories that should exist under ~/.unfade/
+L0_DIRS=(
+  ""                    # ~/.unfade/ itself
+  "events"              # JSONL events (Layer 1 writes)
+  "cache"               # SQLite + DuckDB (Layer 2 writes)
+  "intelligence"        # Analyzer outputs (Layer 3 writes)
+  "state"               # Runtime state (server PID, materializer cursor, daemons)
+  "state/daemons"       # Per-daemon state directories
+  "profile"             # Reasoning model
+  "graph"               # Decisions + domains
+  "distills"            # Daily reasoning summaries
+  "logs"                # Server logs
+  "bin"                 # Shared binaries
+)
+
+L0_PRESENT=0
+L0_MISSING=0
+L0_MISSING_LIST=""
+for dir in "${L0_DIRS[@]}"; do
+  target="$UNFADE_HOME/$dir"
+  if [[ -d "$target" ]]; then
+    L0_PRESENT=$((L0_PRESENT + 1))
+  else
+    L0_MISSING=$((L0_MISSING + 1))
+    L0_MISSING_LIST="$L0_MISSING_LIST $dir"
+  fi
+done
+
+if [[ "$L0_MISSING" -eq 0 ]]; then
+  pass "All ${L0_PRESENT} global directories exist under $UNFADE_HOME"
+else
+  warn "$L0_PRESENT/${#L0_DIRS[@]} directories present (missing:$L0_MISSING_LIST)"
+fi
+
+# Optional directories (created on demand)
+L0_OPT_DIRS=("cards" "site" "amplification" "metrics" "insights")
+L0_OPT_PRESENT=0
+for dir in "${L0_OPT_DIRS[@]}"; do
+  [[ -d "$UNFADE_HOME/$dir" ]] && L0_OPT_PRESENT=$((L0_OPT_PRESENT + 1))
+done
+detail "Optional directories present: $L0_OPT_PRESENT/${#L0_OPT_DIRS[@]} (cards, site, amplification, metrics, insights)"
+
+# =============================================================================
+section "0.3" "Configuration"
+# =============================================================================
+
+CONFIG_FILE="$UNFADE_HOME/config.json"
+if [[ -f "$CONFIG_FILE" ]]; then
+  CONFIG_RESULT=$(node -e "
+    const d = JSON.parse(require('fs').readFileSync('$CONFIG_FILE','utf8'));
+    const ver = d.version ?? 'missing';
+    const provider = d.distill?.provider ?? 'none';
+    const model = d.distill?.model ?? 'default';
+    const mcpEnabled = d.mcp?.enabled ?? true;
+    const gitEnabled = d.capture?.sources?.git ?? true;
+    const aiEnabled = d.capture?.sources?.aiSession ?? true;
+    console.log(ver + '|' + provider + '|' + model + '|' + mcpEnabled + '|' + gitEnabled + '|' + aiEnabled);
+  " 2>/dev/null || echo "error|none|default|true|true|true")
+
+  IFS='|' read -r CFG_VER CFG_PROVIDER CFG_MODEL CFG_MCP CFG_GIT CFG_AI <<< "$CONFIG_RESULT"
+  if [[ "$CFG_VER" == "2" ]]; then
+    pass "Config version: $CFG_VER (current)"
+  elif [[ "$CFG_VER" == "1" ]]; then
+    warn "Config version: $CFG_VER (needs migration to v2)"
+  elif [[ "$CFG_VER" == "error" ]]; then
+    fail "Config file exists but failed to parse"
+  else
+    warn "Config version: $CFG_VER (unexpected)"
+  fi
+
+  detail "Distill: provider=$CFG_PROVIDER model=$CFG_MODEL"
+  detail "Capture: git=$CFG_GIT ai=$CFG_AI | MCP: enabled=$CFG_MCP"
+else
+  warn "Config file missing at $CONFIG_FILE — will use defaults"
+fi
+
+# =============================================================================
+section "0.4" "Marker Files (Repo Registration)"
+# =============================================================================
+
+# Check that registered repos have .unfade marker files
+REGISTRY="$UNFADE_HOME/state/registry.v1.json"
+if [[ -f "$REGISTRY" ]]; then
+  MARKER_RESULT=$(node -e "
+    const r = JSON.parse(require('fs').readFileSync('$REGISTRY','utf8'));
+    const repos = r.repos || [];
+    let hasMarker = 0, noMarker = 0, noMarkerList = [];
+    const fs = require('fs');
+    const path = require('path');
+    for (const repo of repos) {
+      const root = repo.root || repo.path || '';
+      if (!root) continue;
+      const marker = path.join(root, '.unfade');
+      if (fs.existsSync(marker)) { hasMarker++; }
+      else { noMarker++; noMarkerList.push(root); }
+    }
+    console.log(hasMarker + '|' + noMarker + '|' + noMarkerList.slice(0,3).join(';'));
+  " 2>/dev/null || echo "0|0|")
+
+  IFS='|' read -r MK_HAS MK_NO MK_LIST <<< "$MARKER_RESULT"
+  if [[ "$MK_HAS" -gt 0 && "$MK_NO" -eq 0 ]]; then
+    pass "All $MK_HAS registered repo(s) have .unfade marker files"
+  elif [[ "$MK_HAS" -gt 0 ]]; then
+    warn "$MK_HAS with markers, $MK_NO without"
+    if [[ -n "$MK_LIST" ]]; then
+      detail "Missing markers: $MK_LIST"
+    fi
+  elif [[ "$MK_NO" -gt 0 ]]; then
+    fail "No registered repos have .unfade marker files"
+  else
+    skip "No repos in registry to check"
+  fi
+else
+  skip "Registry not found — marker file check skipped"
+fi
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  LAYER 1: GO DAEMON
@@ -1505,6 +1688,278 @@ fi
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  LAYER 2.5: KNOWLEDGE EXTRACTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${BOLD}╔═══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║    LAYER 2.5: KNOWLEDGE EXTRACTION                 ║${NC}"
+echo -e "${BOLD}╚═══════════════════════════════════════════════════╝${NC}"
+
+# =============================================================================
+section "2.5.1" "Knowledge Entity Types in CozoDB"
+# =============================================================================
+
+# Knowledge extraction populates CozoDB with 8 entity types:
+# technology, pattern, module, concept, architecture, library, service, domain
+# These are distinct from the 9 substrate entity types checked in Layer 3.
+
+KE_ENTITY_TYPES="technology pattern module concept architecture library service domain"
+
+if echo "$COZO_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.exit(d.error ? 1 : 0)" 2>/dev/null; then
+  echo "$COZO_RESULT" | node -e "
+    const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    const keTypes = '$KE_ENTITY_TYPES'.split(' ');
+    const foundTypes = Object.keys(d.typeDistribution || {});
+    const keFound = keTypes.filter(t => foundTypes.includes(t));
+    const keMissing = keTypes.filter(t => !foundTypes.includes(t));
+
+    if (keFound.length === keTypes.length) {
+      console.log('PASS|All 8 knowledge entity types present: ' + keFound.join(', '));
+    } else if (keFound.length > 0) {
+      console.log('WARN|Knowledge entity types: ' + keFound.length + '/8 present (missing: ' + keMissing.join(', ') + ')');
+    } else {
+      console.log('WARN|No knowledge entity types found — extraction pipeline may not have run');
+    }
+
+    // Count knowledge entities specifically
+    let keTotal = 0;
+    for (const t of keFound) {
+      keTotal += (d.typeDistribution[t] || 0);
+    }
+    if (keTotal > 0) {
+      console.log('PASS|Knowledge entities: ' + keTotal + ' total across ' + keFound.length + ' types');
+    }
+  " 2>/dev/null | while IFS='|' read -r verdict msg; do
+    case "$verdict" in
+      PASS) pass "$msg" ;;
+      WARN) warn "$msg" ;;
+      FAIL) fail "$msg" ;;
+    esac
+  done
+else
+  skip "Knowledge entity type check (CozoDB not queryable)"
+fi
+
+# =============================================================================
+section "2.5.2" "Fact Extraction & Temporal Storage"
+# =============================================================================
+
+# Check CozoDB for persisted facts with temporal properties
+if echo "$COZO_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.exit(d.error ? 1 : 0)" 2>/dev/null; then
+  # Query facts from CozoDB
+  FACT_RESULT=$(node --input-type=module -e "
+    import { CozoDb } from 'cozo-node';
+
+    let db;
+    try {
+      db = new CozoDb('sqlite', '$COZO_DB');
+    } catch (e) {
+      console.log(JSON.stringify({ error: 'open_failed' }));
+      process.exit(0);
+    }
+
+    // Count facts
+    let factCount = 0;
+    let predicates = {};
+    try {
+      const r = await db.run('?[predicate, count(id)] := *fact{id, predicate}');
+      for (const row of r.rows ?? []) {
+        predicates[String(row[0])] = Number(row[1]);
+        factCount += Number(row[1]);
+      }
+    } catch {
+      // fact relation may not exist yet
+    }
+
+    // Check for temporal fields (validAt, createdAt)
+    let temporalFacts = 0;
+    try {
+      const r = await db.run('?[count(id)] := *fact{id, valid_at}, valid_at != \"\"');
+      temporalFacts = Number((r.rows ?? [])[0]?.[0] ?? 0);
+    } catch {}
+
+    // Check segments
+    let segmentCount = 0;
+    try {
+      const r = await db.run('?[count(id)] := *segment{id}');
+      segmentCount = Number((r.rows ?? [])[0]?.[0] ?? 0);
+    } catch {}
+
+    db.close();
+    console.log(JSON.stringify({ factCount, predicates, temporalFacts, segmentCount }));
+  " 2>/dev/null || echo '{"error":true}')
+
+  if echo "$FACT_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.exit(d.error ? 1 : 0)" 2>/dev/null; then
+    echo "$FACT_RESULT" | node -e "
+      const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+
+      if (d.factCount > 0) {
+        const preds = Object.entries(d.predicates);
+        console.log('PASS|Extracted facts: ' + d.factCount + ' across ' + preds.length + ' predicates');
+        console.log('DETAIL|Predicates: ' + preds.map(([k,v]) => k + '=' + v).join(', '));
+      } else {
+        console.log('WARN|No extracted facts in CozoDB — knowledge extraction may not have run');
+      }
+
+      if (d.temporalFacts > 0) {
+        console.log('PASS|Temporal facts: ' + d.temporalFacts + ' with validAt timestamps (bi-temporal model)');
+      } else if (d.factCount > 0) {
+        console.log('WARN|Facts exist but none have temporal markers');
+      }
+
+      if (d.segmentCount > 0) {
+        console.log('PASS|Conversation segments: ' + d.segmentCount);
+      } else {
+        console.log('WARN|No conversation segments stored');
+      }
+    " 2>/dev/null | while IFS='|' read -r verdict msg; do
+      case "$verdict" in
+        PASS) pass "$msg" ;;
+        WARN) warn "$msg" ;;
+        DETAIL) detail "$msg" ;;
+      esac
+    done
+  else
+    skip "Fact extraction check (CozoDB query failed)"
+  fi
+else
+  skip "Fact extraction check (CozoDB not queryable)"
+fi
+
+# =============================================================================
+section "2.5.3" "Comprehension Assessments"
+# =============================================================================
+
+# Comprehension data is stored in DuckDB tables: comprehension_proxy, comprehension_by_module
+# These feed the comprehension-radar analyzer in Layer 3.
+
+if [[ "$DUCK_QUERIED" == "yes" ]]; then
+  COMP_RESULT=$(node --input-type=module -e "
+    import { DuckDBInstance } from '@duckdb/node-api';
+    const inst = await DuckDBInstance.create('$DUCKDB_FILE', { access_mode: 'READ_ONLY' });
+    const conn = await inst.connect();
+
+    let proxyCount = 0, moduleCount = 0, avgScore = 0;
+    try {
+      const r = await conn.runAndReadAll('SELECT COUNT(*), AVG(overall_score) FROM comprehension_proxy');
+      proxyCount = Number(r.getRows()[0][0]);
+      avgScore = Number(r.getRows()[0][1] ?? 0);
+    } catch {}
+
+    try {
+      const r = await conn.runAndReadAll('SELECT COUNT(DISTINCT module) FROM comprehension_by_module');
+      moduleCount = Number(r.getRows()[0][0]);
+    } catch {}
+
+    // Check for 5 weighted dimensions in raw data
+    let hasDimensions = false;
+    try {
+      const r = await conn.runAndReadAll('SELECT COUNT(*) FROM comprehension_proxy WHERE steering IS NOT NULL');
+      hasDimensions = Number(r.getRows()[0][0]) > 0;
+    } catch {}
+
+    conn.closeSync();
+    console.log(JSON.stringify({ proxyCount, moduleCount, avgScore: avgScore.toFixed(1), hasDimensions }));
+  " 2>/dev/null || echo '{"error":true}')
+
+  if echo "$COMP_RESULT" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.exit(d.error ? 1 : 0)" 2>/dev/null; then
+    echo "$COMP_RESULT" | node -e "
+      const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+      if (d.proxyCount > 0) {
+        console.log('PASS|Comprehension assessments: ' + d.proxyCount + ' (avg score: ' + d.avgScore + ')');
+      } else {
+        console.log('WARN|No comprehension assessments in DuckDB');
+      }
+      if (d.moduleCount > 0) {
+        console.log('PASS|Comprehension by module: ' + d.moduleCount + ' distinct modules');
+      } else {
+        console.log('WARN|No per-module comprehension data');
+      }
+      if (d.hasDimensions) {
+        console.log('PASS|5-dimension scoring present (steering, understanding, metacognition, independence, engagement)');
+      } else if (d.proxyCount > 0) {
+        console.log('WARN|Comprehension rows exist but steering dimension column is null');
+      }
+    " 2>/dev/null | while IFS='|' read -r verdict msg; do
+      case "$verdict" in
+        PASS) pass "$msg" ;;
+        WARN) warn "$msg" ;;
+      esac
+    done
+  else
+    skip "Comprehension assessment check (DuckDB query failed)"
+  fi
+elif [[ -n "${SERVER_URL:-}" ]]; then
+  # Try via API if DuckDB is locked
+  COMP_API=$(curl -sL --connect-timeout 3 "$SERVER_URL/api/intelligence/comprehension" 2>/dev/null || echo "")
+  if [[ -n "$COMP_API" ]]; then
+    COMP_STATUS=$(echo "$COMP_API" | node -e "
+      try {
+        const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+        if (d.warming_up) console.log('warming');
+        else if (d.overallScore != null || (d.data && d.data.overallScore != null)) console.log('ok');
+        else console.log('empty');
+      } catch { console.log('error'); }
+    " 2>/dev/null || echo "error")
+    case "$COMP_STATUS" in
+      ok) pass "Comprehension data available via API" ;;
+      warming) warn "Comprehension API still warming up" ;;
+      empty) warn "Comprehension API returned empty data" ;;
+      *) skip "Comprehension API check inconclusive" ;;
+    esac
+  else
+    skip "Comprehension check (DuckDB locked, API not reachable)"
+  fi
+else
+  skip "Comprehension check (DuckDB not queryable, no server running)"
+fi
+
+# =============================================================================
+section "2.5.4" "Knowledge Extraction Pipeline Files"
+# =============================================================================
+
+# Check for knowledge extraction output artifacts
+KE_OUTPUT_DIR="$UNFADE_HOME/intelligence"
+
+# entities.jsonl — extracted entities log
+KE_ENTITIES="$KE_OUTPUT_DIR/entities.jsonl"
+if [[ -f "$KE_ENTITIES" ]]; then
+  KE_ENT_LINES=$(wc -l < "$KE_ENTITIES" 2>/dev/null | tr -d ' ')
+  pass "entities.jsonl: $KE_ENT_LINES extracted entity records"
+else
+  skip "entities.jsonl not found (populated after knowledge extraction runs)"
+fi
+
+# facts.jsonl — extracted facts log
+KE_FACTS="$KE_OUTPUT_DIR/facts.jsonl"
+if [[ -f "$KE_FACTS" ]]; then
+  KE_FACT_LINES=$(wc -l < "$KE_FACTS" 2>/dev/null | tr -d ' ')
+  pass "facts.jsonl: $KE_FACT_LINES extracted fact records"
+else
+  skip "facts.jsonl not found (populated after knowledge extraction runs)"
+fi
+
+# Comprehension output from comprehension-radar analyzer
+KE_COMP="$KE_OUTPUT_DIR/comprehension.json"
+if [[ -f "$KE_COMP" ]]; then
+  KE_COMP_RESULT=$(node -e "
+    const d = JSON.parse(require('fs').readFileSync('$KE_COMP','utf8'));
+    const score = d.overallScore ?? -1;
+    const modules = Object.keys(d.byModule || {}).length;
+    console.log(score + '|' + modules);
+  " 2>/dev/null || echo "-1|0")
+  IFS='|' read -r KC_SCORE KC_MODULES <<< "$KE_COMP_RESULT"
+  if [[ "$KC_SCORE" != "-1" ]]; then
+    pass "comprehension.json: overallScore=$KC_SCORE, $KC_MODULES modules"
+  else
+    warn "comprehension.json exists but overallScore missing"
+  fi
+else
+  skip "comprehension.json (generated by comprehension-radar analyzer)"
+fi
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  LAYER 3: INTELLIGENCE ANALYSIS & SUBSTRATE
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2704,6 +3159,615 @@ fi
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  LAYER 4: INTELLIGENCE PRESENTATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${BOLD}╔═══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║   LAYER 4: INTELLIGENCE PRESENTATION              ║${NC}"
+echo -e "${BOLD}╚═══════════════════════════════════════════════════╝${NC}"
+
+# =============================================================================
+section "4.1" "Correlation Discovery (cross-analyzer.ts)"
+# =============================================================================
+
+# cross-analyzer.ts writes correlation.json; correlation-engine.ts writes correlations.json
+CORR_FILE_LEGACY="$UNFADE_HOME/intelligence/correlation.json"
+CORR_FILE="$UNFADE_HOME/intelligence/correlations.json"
+
+CORR_FOUND=false
+for CF in "$CORR_FILE" "$CORR_FILE_LEGACY"; do
+  if [[ -f "$CF" ]]; then
+    CORR_FOUND=true
+    CORR_SIZE=$(stat -f%z "$CF" 2>/dev/null || stat -c%s "$CF" 2>/dev/null || echo "0")
+    pass "Correlation file exists: $(basename "$CF") ($CORR_SIZE bytes)"
+
+    # Validate JSON structure
+    CORR_VALID=$(node -e "
+      try {
+        const d = JSON.parse(require('fs').readFileSync('$CF','utf8'));
+        // cross-analyzer.ts format: { correlations: [...], updatedAt, discoveredPairs, checkedPairs }
+        if (Array.isArray(d.correlations)) {
+          const count = d.correlations.length;
+          const checked = d.checkedPairs ?? 'n/a';
+          const discovered = d.discoveredPairs ?? 'n/a';
+          console.log('OK|' + count + '|' + checked + '|' + discovered + '|' + (d.updatedAt || ''));
+        }
+        // correlation-engine.ts format: plain array
+        else if (Array.isArray(d)) {
+          console.log('OK|' + d.length + '|n/a|n/a|');
+        } else {
+          console.log('INVALID');
+        }
+      } catch(e) { console.log('PARSE_ERROR'); }
+    " 2>/dev/null || echo "EXEC_ERROR")
+
+    if [[ "$CORR_VALID" == PARSE_ERROR* || "$CORR_VALID" == EXEC_ERROR* || "$CORR_VALID" == "INVALID" ]]; then
+      fail "$(basename "$CF") is invalid or unparseable"
+    else
+      IFS='|' read -r _S CORR_COUNT CORR_CHECKED CORR_DISCOVERED CORR_UPDATED <<< "$CORR_VALID"
+      pass "$(basename "$CF"): $CORR_COUNT correlation(s), checked=$CORR_CHECKED, discovered=$CORR_DISCOVERED"
+      if [[ -n "$CORR_UPDATED" ]]; then
+        detail "updatedAt=$CORR_UPDATED"
+      fi
+
+      # Validate individual correlation entries
+      if [[ "$CORR_COUNT" -gt 0 ]]; then
+        CORR_ENTRY_CHECK=$(node -e "
+          const d = JSON.parse(require('fs').readFileSync('$CF','utf8'));
+          const arr = Array.isArray(d.correlations) ? d.correlations : (Array.isArray(d) ? d : []);
+          const first = arr[0];
+          const fields = ['id','a','b','r','direction','confidence'].filter(f => first[f] !== undefined);
+          // correlation-engine format uses different field names
+          const altFields = ['id','type','severity','title','analyzers'].filter(f => first[f] !== undefined);
+          const matched = Math.max(fields.length, altFields.length);
+          console.log(matched >= 3 ? 'VALID' : 'INCOMPLETE');
+        " 2>/dev/null || echo "ERROR")
+        if [[ "$CORR_ENTRY_CHECK" == "VALID" ]]; then
+          pass "Correlation entries have valid structure"
+        else
+          warn "Correlation entries may have incomplete fields"
+        fi
+      fi
+    fi
+    break
+  fi
+done
+if [[ "$CORR_FOUND" == "false" ]]; then
+  warn "No correlation file found (cross-analyzer discovery may not have run yet)"
+fi
+
+# =============================================================================
+section "4.2" "Evidence Chains (evidence-linker.ts)"
+# =============================================================================
+
+EVIDENCE_DIR="$UNFADE_HOME/intelligence/evidence"
+if [[ -d "$EVIDENCE_DIR" ]]; then
+  EV_FILES=$(find "$EVIDENCE_DIR" -name '*.json' -type f 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$EV_FILES" -gt 0 ]]; then
+    pass "Evidence directory contains $EV_FILES analyzer evidence file(s)"
+
+    # Validate structure of first evidence file
+    FIRST_EV=$(find "$EVIDENCE_DIR" -name '*.json' -type f 2>/dev/null | head -1)
+    if [[ -n "$FIRST_EV" ]]; then
+      EV_CHECK=$(node -e "
+        const d = JSON.parse(require('fs').readFileSync('$FIRST_EV','utf8'));
+        const chains = Array.isArray(d) ? d : (d.chains || d.evidenceChains || []);
+        if (chains.length === 0) { console.log('EMPTY'); process.exit(0); }
+        const c = chains[0];
+        const hasMetric = 'metric' in c;
+        const hasEvents = Array.isArray(c.events);
+        console.log((hasMetric && hasEvents) ? 'VALID|' + chains.length : 'INVALID');
+      " 2>/dev/null || echo "ERROR")
+      if [[ "$EV_CHECK" == VALID* ]]; then
+        EV_CHAIN_COUNT="${EV_CHECK#VALID|}"
+        pass "Evidence file $(basename "$FIRST_EV"): $EV_CHAIN_COUNT chain(s) with valid structure (metric + events)"
+      elif [[ "$EV_CHECK" == "EMPTY" ]]; then
+        warn "Evidence file $(basename "$FIRST_EV") exists but has no chains"
+      else
+        warn "Evidence file $(basename "$FIRST_EV") structure unexpected"
+      fi
+    fi
+  else
+    warn "Evidence directory exists but is empty (evidence-linker may not have run)"
+  fi
+else
+  warn "No evidence directory at $EVIDENCE_DIR (evidence-linker has not run)"
+fi
+
+# =============================================================================
+section "4.3" "Enriched Intelligence API (Layer 4 endpoints)"
+# =============================================================================
+
+if [[ -n "${SERVER_URL:-}" ]]; then
+  # Test correlations API endpoint
+  CORR_API_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/api/intelligence/correlations" 2>/dev/null || echo "000")
+  if [[ "$CORR_API_STATUS" == "200" ]]; then
+    CORR_API_BODY=$(curl -sL --connect-timeout 3 "$SERVER_URL/api/intelligence/correlations" 2>/dev/null || echo "")
+    CORR_API_COUNT=$(node -e "
+      try {
+        const d = JSON.parse(process.argv[1]);
+        console.log((d.data || []).length);
+      } catch { console.log('?'); }
+    " "$CORR_API_BODY" 2>/dev/null || echo "?")
+    pass "GET /api/intelligence/correlations → 200 ($CORR_API_COUNT correlations)"
+  elif [[ "$CORR_API_STATUS" == "000" ]]; then
+    skip "Correlations API: server not reachable"
+  else
+    warn "GET /api/intelligence/correlations → $CORR_API_STATUS"
+  fi
+
+  # Test enriched intelligence endpoint (efficiency) — should include _meta.freshness and _meta.correlations
+  ENRICH_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/api/intelligence/efficiency" 2>/dev/null || echo "000")
+  if [[ "$ENRICH_STATUS" == "200" ]]; then
+    ENRICH_BODY=$(curl -sL --connect-timeout 3 "$SERVER_URL/api/intelligence/efficiency" 2>/dev/null || echo "")
+    ENRICH_CHECK=$(node -e "
+      try {
+        const d = JSON.parse(process.argv[1]);
+        const hasMeta = d._meta !== undefined;
+        const hasFreshness = hasMeta && d._meta.freshness !== undefined;
+        const hasCorrelations = hasMeta && Array.isArray(d._meta.correlations);
+        const hasEvidence = hasMeta && d._meta.evidenceAvailable === true;
+        const parts = [];
+        if (hasFreshness) parts.push('freshness');
+        if (hasCorrelations) parts.push('correlations(' + d._meta.correlations.length + ')');
+        if (hasEvidence) parts.push('evidenceAvailable');
+        console.log(parts.length > 0 ? 'ENRICHED|' + parts.join(',') : 'BASIC');
+      } catch { console.log('ERROR'); }
+    " "$ENRICH_BODY" 2>/dev/null || echo "ERROR")
+    if [[ "$ENRICH_CHECK" == ENRICHED* ]]; then
+      ENRICH_PARTS="${ENRICH_CHECK#ENRICHED|}"
+      pass "Enriched response: /api/intelligence/efficiency has _meta [$ENRICH_PARTS]"
+    elif [[ "$ENRICH_CHECK" == "BASIC" ]]; then
+      warn "Efficiency endpoint returns data but no enrichment _meta (Layer 4 enrichment not active)"
+    else
+      warn "Failed to parse enriched response body"
+    fi
+  elif [[ "$ENRICH_STATUS" == "202" ]]; then
+    warn "GET /api/intelligence/efficiency → 202 (warming up — no data yet)"
+  elif [[ "$ENRICH_STATUS" == "000" ]]; then
+    skip "Enriched API: server not reachable"
+  else
+    warn "GET /api/intelligence/efficiency → $ENRICH_STATUS"
+  fi
+
+  # Test evidence drill-through endpoint
+  EV_API_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/api/intelligence/evidence/efficiency" 2>/dev/null || echo "000")
+  if [[ "$EV_API_STATUS" == "200" ]]; then
+    pass "GET /api/intelligence/evidence/efficiency → 200 (evidence drill-through working)"
+  elif [[ "$EV_API_STATUS" == "404" ]]; then
+    warn "GET /api/intelligence/evidence/efficiency → 404 (no evidence computed yet)"
+  elif [[ "$EV_API_STATUS" == "000" ]]; then
+    skip "Evidence API: server not reachable"
+  else
+    warn "GET /api/intelligence/evidence/efficiency → $EV_API_STATUS"
+  fi
+
+  # Test explain endpoint
+  EXPLAIN_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/api/intelligence/explain/test-insight" 2>/dev/null || echo "000")
+  if [[ "$EXPLAIN_STATUS" == "200" ]]; then
+    pass "GET /api/intelligence/explain/:insightId → 200 (explain endpoint working)"
+  elif [[ "$EXPLAIN_STATUS" == "000" ]]; then
+    skip "Explain API: server not reachable"
+  else
+    warn "GET /api/intelligence/explain/:insightId → $EXPLAIN_STATUS"
+  fi
+else
+  skip "Layer 4 API checks: SERVER_URL not set (server not running?)"
+fi
+
+# =============================================================================
+section "4.4" "Presentation Schema Compliance"
+# =============================================================================
+
+# Verify intelligence-presentation.ts schema file exists in the build
+SCHEMA_FILE="$SCRIPT_ROOT/src/schemas/intelligence-presentation.ts"
+if [[ -f "$SCHEMA_FILE" ]]; then
+  # Check all required schema exports exist
+  SCHEMA_CHECK=$(node -e "
+    const src = require('fs').readFileSync('$SCHEMA_FILE','utf8');
+    const required = [
+      'AnalyzerOutputMetaSchema',
+      'DiagnosticMessageSchema',
+      'EvidenceEntrySchema',
+      'EvidenceChainSchema',
+      'CorrelationSchema',
+      'MetricDecompositionSchema',
+      'EnrichedAnalyzerOutputSchema'
+    ];
+    const found = required.filter(s => src.includes(s));
+    const missing = required.filter(s => !src.includes(s));
+    console.log(found.length + '/' + required.length + '|' + (missing.length > 0 ? missing.join(',') : 'none'));
+  " 2>/dev/null || echo "ERROR")
+  if [[ "$SCHEMA_CHECK" == ERROR ]]; then
+    fail "Could not parse intelligence-presentation.ts"
+  else
+    IFS='|' read -r SCHEMA_RATIO SCHEMA_MISSING <<< "$SCHEMA_CHECK"
+    if [[ "$SCHEMA_MISSING" == "none" ]]; then
+      pass "Layer 4 schema: all 7 schemas defined ($SCHEMA_RATIO)"
+    else
+      warn "Layer 4 schema: $SCHEMA_RATIO — missing: $SCHEMA_MISSING"
+    fi
+  fi
+else
+  fail "intelligence-presentation.ts not found at $SCHEMA_FILE"
+fi
+
+# Check Layer 4 service files exist
+L4_SERVICES=("evidence-linker.ts" "correlation-engine.ts" "cross-analyzer.ts" "correlation-patterns.ts" "narrative-engine.ts")
+L4_PRESENT=0
+L4_MISSING_LIST=""
+for SVC in "${L4_SERVICES[@]}"; do
+  if [[ -f "$SCRIPT_ROOT/src/services/intelligence/$SVC" ]]; then
+    L4_PRESENT=$((L4_PRESENT + 1))
+  else
+    L4_MISSING_LIST="$L4_MISSING_LIST $SVC"
+  fi
+done
+if [[ "$L4_PRESENT" -eq "${#L4_SERVICES[@]}" ]]; then
+  pass "All ${#L4_SERVICES[@]} Layer 4 service modules present"
+else
+  warn "Layer 4 services: $L4_PRESENT/${#L4_SERVICES[@]} present — missing:$L4_MISSING_LIST"
+fi
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  LAYER 5: UI / HTTP / SSE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+echo -e "\n${BOLD}╔═══════════════════════════════════════════════════╗${NC}"
+echo -e "${BOLD}║   LAYER 5: UI / HTTP / SSE                        ║${NC}"
+echo -e "${BOLD}╚═══════════════════════════════════════════════════╝${NC}"
+
+# =============================================================================
+section "5.1" "Vite SPA Build Assets"
+# =============================================================================
+
+SPA_DIR="$SCRIPT_ROOT/dist/ui"
+SPA_INDEX="$SPA_DIR/index.html"
+
+if [[ -f "$SPA_INDEX" ]]; then
+  SPA_INDEX_SIZE=$(stat -f%z "$SPA_INDEX" 2>/dev/null || stat -c%s "$SPA_INDEX" 2>/dev/null || echo "0")
+  pass "SPA index.html exists ($SPA_INDEX_SIZE bytes)"
+
+  # Check for React root mount point
+  if grep -q 'id="root"' "$SPA_INDEX" 2>/dev/null || grep -q 'id="app"' "$SPA_INDEX" 2>/dev/null; then
+    pass "SPA index.html has React mount point"
+  else
+    warn "SPA index.html may be missing React mount point (no id='root' or id='app')"
+  fi
+
+  # Check for Vite-injected script/link tags
+  if grep -q 'assets/' "$SPA_INDEX" 2>/dev/null; then
+    pass "SPA index.html references Vite-built assets"
+  else
+    warn "SPA index.html has no asset references (Vite build may have failed)"
+  fi
+else
+  fail "SPA index.html not found at $SPA_INDEX — run 'pnpm build:ui'"
+fi
+
+# Check compiled JS/CSS assets
+SPA_ASSETS_DIR="$SPA_DIR/assets"
+if [[ -d "$SPA_ASSETS_DIR" ]]; then
+  JS_COUNT=$(find "$SPA_ASSETS_DIR" -name '*.js' -type f 2>/dev/null | wc -l | tr -d ' ')
+  CSS_COUNT=$(find "$SPA_ASSETS_DIR" -name '*.css' -type f 2>/dev/null | wc -l | tr -d ' ')
+  TOTAL_ASSETS=$((JS_COUNT + CSS_COUNT))
+
+  if [[ "$JS_COUNT" -gt 0 ]]; then
+    pass "SPA JS bundles: $JS_COUNT file(s)"
+  else
+    fail "No JS bundles in $SPA_ASSETS_DIR — Vite build incomplete"
+  fi
+
+  if [[ "$CSS_COUNT" -gt 0 ]]; then
+    pass "SPA CSS bundles: $CSS_COUNT file(s)"
+  else
+    warn "No CSS bundles in $SPA_ASSETS_DIR"
+  fi
+
+  # Check for code splitting (should have multiple chunks)
+  if [[ "$JS_COUNT" -ge 5 ]]; then
+    pass "Code splitting active ($JS_COUNT JS chunks — lazy-loaded pages)"
+  else
+    warn "Only $JS_COUNT JS chunk(s) — code splitting may not be working"
+  fi
+
+  # Total SPA size
+  SPA_TOTAL_SIZE=$(du -sh "$SPA_DIR" 2>/dev/null | awk '{print $1}')
+  detail "Total SPA size: $SPA_TOTAL_SIZE ($TOTAL_ASSETS asset files)"
+else
+  fail "SPA assets directory not found at $SPA_ASSETS_DIR"
+fi
+
+# =============================================================================
+section "5.2" "UI Source Pages (React components)"
+# =============================================================================
+
+UI_PAGES_DIR="$SCRIPT_ROOT/src/ui/pages"
+EXPECTED_PAGES=("HomePage" "LivePage" "DistillPage" "IntelligencePage" "DecisionsPage" "ProfilePage" "CardsPage" "ProjectsPage" "SettingsPage" "IntegrationsPage" "LogsPage" "SetupPage")
+PAGES_FOUND=0
+PAGES_MISSING=""
+
+for PAGE in "${EXPECTED_PAGES[@]}"; do
+  # Search for the page component file (could be .tsx or .ts)
+  PAGE_FILE=$(find "$UI_PAGES_DIR" -maxdepth 2 -name "${PAGE}.*" -o -name "$(echo "$PAGE" | sed 's/Page$//')*" 2>/dev/null | head -1)
+  if [[ -n "$PAGE_FILE" ]]; then
+    PAGES_FOUND=$((PAGES_FOUND + 1))
+  else
+    # Try lowercase/kebab-case variants
+    PAGE_LOWER=$(echo "$PAGE" | sed 's/\([A-Z]\)/-\L\1/g' | sed 's/^-//')
+    PAGE_FILE2=$(find "$UI_PAGES_DIR" -maxdepth 2 -name "${PAGE_LOWER}*" 2>/dev/null | head -1)
+    if [[ -n "$PAGE_FILE2" ]]; then
+      PAGES_FOUND=$((PAGES_FOUND + 1))
+    else
+      PAGES_MISSING="$PAGES_MISSING $PAGE"
+    fi
+  fi
+done
+
+if [[ "$PAGES_FOUND" -eq "${#EXPECTED_PAGES[@]}" ]]; then
+  pass "All ${#EXPECTED_PAGES[@]} React page components found"
+elif [[ "$PAGES_FOUND" -ge 10 ]]; then
+  pass "$PAGES_FOUND/${#EXPECTED_PAGES[@]} page components found"
+  if [[ -n "$PAGES_MISSING" ]]; then
+    detail "Missing:$PAGES_MISSING"
+  fi
+else
+  warn "Only $PAGES_FOUND/${#EXPECTED_PAGES[@]} page components found — missing:$PAGES_MISSING"
+fi
+
+# Check for router setup
+ROUTER_FILE="$SCRIPT_ROOT/src/ui/router.tsx"
+if [[ -f "$ROUTER_FILE" ]]; then
+  ROUTE_COUNT=$(grep -c 'path:' "$ROUTER_FILE" 2>/dev/null || grep -c '<Route' "$ROUTER_FILE" 2>/dev/null || echo "0")
+  pass "Router file exists ($ROUTE_COUNT route definitions)"
+else
+  ROUTER_FILE2=$(find "$SCRIPT_ROOT/src/ui" -name 'router.*' -o -name 'routes.*' -o -name 'App.*' 2>/dev/null | head -1)
+  if [[ -n "$ROUTER_FILE2" ]]; then
+    pass "Router file found at $(basename "$ROUTER_FILE2")"
+  else
+    warn "No router file found in src/ui/"
+  fi
+fi
+
+# =============================================================================
+section "5.3" "Hono API Route Coverage"
+# =============================================================================
+
+ROUTES_DIR="$SCRIPT_ROOT/src/server/routes"
+EXPECTED_ROUTES=(
+  "intelligence.ts"
+  "stream.ts"
+  "settings.ts"
+  "setup.ts"
+  "decisions.ts"
+  "distill.ts"
+  "profile.ts"
+  "repos.ts"
+  "projects.ts"
+  "cards.ts"
+  "logs.ts"
+  "integrations.ts"
+  "substrate.ts"
+  "actions.ts"
+  "summary.ts"
+  "system-health.ts"
+  "context.ts"
+  "query.ts"
+  "insights.ts"
+  "heatmap.ts"
+  "amplify.ts"
+  "feedback.ts"
+  "lineage.ts"
+)
+
+ROUTES_FOUND=0
+ROUTES_MISSING=""
+for RF in "${EXPECTED_ROUTES[@]}"; do
+  if [[ -f "$ROUTES_DIR/$RF" ]]; then
+    ROUTES_FOUND=$((ROUTES_FOUND + 1))
+  else
+    ROUTES_MISSING="$ROUTES_MISSING $RF"
+  fi
+done
+
+if [[ "$ROUTES_FOUND" -eq "${#EXPECTED_ROUTES[@]}" ]]; then
+  pass "All ${#EXPECTED_ROUTES[@]} Hono route modules present"
+else
+  warn "Route modules: $ROUTES_FOUND/${#EXPECTED_ROUTES[@]} — missing:$ROUTES_MISSING"
+fi
+
+# Check http.ts imports all route modules
+HTTP_FILE="$SCRIPT_ROOT/src/server/http.ts"
+if [[ -f "$HTTP_FILE" ]]; then
+  IMPORT_COUNT=$(grep -c "from.*./routes/" "$HTTP_FILE" 2>/dev/null || echo "0")
+  pass "http.ts imports $IMPORT_COUNT route modules"
+else
+  fail "http.ts not found"
+fi
+
+# =============================================================================
+section "5.4" "HTTP Server & SPA Fallback (live)"
+# =============================================================================
+
+if [[ -n "${SERVER_URL:-}" ]]; then
+  # Test SPA fallback — a non-API path should return 200 with HTML
+  SPA_FALLBACK_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/intelligence" 2>/dev/null || echo "000")
+  if [[ "$SPA_FALLBACK_STATUS" == "200" ]]; then
+    SPA_FALLBACK_BODY=$(curl -sL --connect-timeout 3 "$SERVER_URL/intelligence" 2>/dev/null | head -5)
+    if echo "$SPA_FALLBACK_BODY" | grep -qi 'html' 2>/dev/null; then
+      pass "SPA fallback working: /intelligence → 200 (HTML)"
+    else
+      warn "SPA fallback: /intelligence → 200 but response doesn't look like HTML"
+    fi
+  elif [[ "$SPA_FALLBACK_STATUS" == "000" ]]; then
+    skip "SPA fallback check: server not reachable"
+  else
+    warn "SPA fallback: /intelligence → $SPA_FALLBACK_STATUS (expected 200)"
+  fi
+
+  # Verify /assets/* is served (static files)
+  # Find a real asset file to test
+  if [[ -d "$SPA_ASSETS_DIR" ]]; then
+    FIRST_JS=$(find "$SPA_ASSETS_DIR" -name '*.js' -type f 2>/dev/null | head -1)
+    if [[ -n "$FIRST_JS" ]]; then
+      ASSET_BASENAME=$(basename "$FIRST_JS")
+      ASSET_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL/assets/$ASSET_BASENAME" 2>/dev/null || echo "000")
+      if [[ "$ASSET_STATUS" == "200" ]]; then
+        pass "Static asset serving: /assets/$ASSET_BASENAME → 200"
+      elif [[ "$ASSET_STATUS" == "000" ]]; then
+        skip "Static asset check: server not reachable"
+      else
+        warn "Static asset /assets/$ASSET_BASENAME → $ASSET_STATUS (expected 200)"
+      fi
+    fi
+  fi
+else
+  skip "SPA/HTTP live checks: SERVER_URL not set"
+fi
+
+# =============================================================================
+section "5.5" "SSE Streaming Endpoint"
+# =============================================================================
+
+if [[ -n "${SERVER_URL:-}" ]]; then
+  # Test SSE endpoint — should return 200 with text/event-stream content type
+  SSE_HEADERS=$(curl -sI --connect-timeout 3 --max-time 5 "$SERVER_URL/api/stream" 2>/dev/null || echo "")
+
+  if [[ -n "$SSE_HEADERS" ]]; then
+    SSE_STATUS=$(echo "$SSE_HEADERS" | head -1 | grep -o '[0-9]\{3\}' | head -1)
+    SSE_CT=$(echo "$SSE_HEADERS" | grep -i 'content-type' | head -1)
+
+    if [[ "$SSE_STATUS" == "200" ]]; then
+      if echo "$SSE_CT" | grep -qi 'text/event-stream' 2>/dev/null; then
+        pass "SSE endpoint: /api/stream → 200 (text/event-stream)"
+      else
+        pass "SSE endpoint: /api/stream → 200 (content-type: $(echo "$SSE_CT" | sed 's/.*: //'))"
+      fi
+    else
+      warn "SSE endpoint: /api/stream → $SSE_STATUS"
+    fi
+  else
+    skip "SSE endpoint check: no response (server not reachable)"
+  fi
+else
+  skip "SSE checks: SERVER_URL not set"
+fi
+
+# =============================================================================
+section "5.6" "API Route Smoke Tests (live)"
+# =============================================================================
+
+if [[ -n "${SERVER_URL:-}" ]]; then
+  # Smoke test critical API endpoints — just check they return non-500
+  SMOKE_ENDPOINTS=(
+    "/api/system/health"
+    "/api/summary"
+    "/api/repos"
+    "/api/logs"
+    "/api/setup/progress"
+    "/api/intelligence/efficiency"
+    "/api/intelligence/correlations"
+  )
+
+  SMOKE_PASS=0
+  SMOKE_FAIL=0
+  for EP in "${SMOKE_ENDPOINTS[@]}"; do
+    EP_CODE=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 "$SERVER_URL$EP" 2>/dev/null || echo "000")
+    if [[ "$EP_CODE" == "000" ]]; then
+      skip "Smoke test $EP: server not reachable"
+      break
+    elif [[ "$EP_CODE" -ge 500 ]]; then
+      fail "Smoke test $EP → $EP_CODE (server error)"
+      SMOKE_FAIL=$((SMOKE_FAIL + 1))
+    else
+      SMOKE_PASS=$((SMOKE_PASS + 1))
+    fi
+  done
+
+  if [[ "$SMOKE_PASS" -gt 0 ]]; then
+    pass "API smoke tests: $SMOKE_PASS/${#SMOKE_ENDPOINTS[@]} endpoints healthy (no 5xx)"
+    if [[ "$SMOKE_FAIL" -gt 0 ]]; then
+      warn "$SMOKE_FAIL endpoint(s) returned 5xx errors"
+    fi
+  fi
+else
+  skip "API smoke tests: SERVER_URL not set"
+fi
+
+# =============================================================================
+section "5.7" "MCP Server Mount"
+# =============================================================================
+
+if [[ -n "${SERVER_URL:-}" ]]; then
+  # MCP is mounted at /mcp — test that the path exists (even if we can't do full MCP handshake)
+  MCP_STATUS=$(curl -sL -o /dev/null -w "%{http_code}" --connect-timeout 3 -X POST "$SERVER_URL/mcp" 2>/dev/null || echo "000")
+  if [[ "$MCP_STATUS" == "000" ]]; then
+    skip "MCP check: server not reachable"
+  elif [[ "$MCP_STATUS" -lt 500 ]]; then
+    pass "MCP endpoint /mcp is mounted (responded $MCP_STATUS — expected without proper handshake)"
+  else
+    warn "MCP endpoint /mcp → $MCP_STATUS (server error)"
+  fi
+else
+  skip "MCP endpoint check: SERVER_URL not set"
+fi
+
+# Check MCP server source
+MCP_SERVER_FILE="$SCRIPT_ROOT/src/services/mcp/server.ts"
+if [[ -f "$MCP_SERVER_FILE" ]]; then
+  MCP_TOOLS=$(grep -c 'tool(' "$MCP_SERVER_FILE" 2>/dev/null || grep -c 'addTool\|registerTool\|name:' "$MCP_SERVER_FILE" 2>/dev/null || echo "?")
+  pass "MCP server module exists ($MCP_TOOLS tool registrations)"
+else
+  fail "MCP server module not found at $MCP_SERVER_FILE"
+fi
+
+# =============================================================================
+section "5.8" "Server State Files"
+# =============================================================================
+
+SERVER_JSON="$UNFADE_HOME/state/server.json"
+if [[ -f "$SERVER_JSON" ]]; then
+  SRV_CHECK=$(node -e "
+    try {
+      const d = JSON.parse(require('fs').readFileSync('$SERVER_JSON','utf8'));
+      const fields = [];
+      if (d.port) fields.push('port=' + d.port);
+      if (d.pid) fields.push('pid=' + d.pid);
+      if (d.startedAt) fields.push('startedAt=' + d.startedAt.substring(0,19));
+      if (d.version) fields.push('v=' + d.version);
+      if (d.transport?.http) fields.push('http=' + d.transport.http);
+      if (d.transport?.mcp) fields.push('mcp=' + d.transport.mcp);
+      console.log(fields.join(', '));
+    } catch { console.log('PARSE_ERROR'); }
+  " 2>/dev/null || echo "ERROR")
+  if [[ "$SRV_CHECK" == "PARSE_ERROR" || "$SRV_CHECK" == "ERROR" ]]; then
+    warn "server.json exists but could not be parsed"
+  else
+    pass "server.json: $SRV_CHECK"
+
+    # Verify the PID in server.json is actually alive
+    SRV_PID=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$SERVER_JSON','utf8')).pid || '')" 2>/dev/null || echo "")
+    if [[ -n "$SRV_PID" ]] && kill -0 "$SRV_PID" 2>/dev/null; then
+      pass "Server process PID $SRV_PID is alive"
+    elif [[ -n "$SRV_PID" ]]; then
+      warn "Server PID $SRV_PID in server.json is not running (stale?)"
+    fi
+  fi
+else
+  warn "server.json not found (server may not be running)"
+fi
+
+# Check server lock file
+SERVER_LOCK="$UNFADE_HOME/state/server.pid"
+if [[ -f "$SERVER_LOCK" ]]; then
+  pass "Server lock file exists at state/server.pid"
+else
+  detail "No server lock file (server not running or proper-lockfile cleaned up)"
+fi
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  SUMMARY
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2713,15 +3777,17 @@ TOTAL=$((PASS + FAIL + WARN + SKIP))
 echo -e "  ${GREEN}$PASS passed${NC}  ${RED}$FAIL failed${NC}  ${YELLOW}$WARN warnings${NC}  ${DIM}$SKIP skipped${NC}  ($TOTAL checks)"
 
 if [[ "$FAIL" -eq 0 && "$WARN" -eq 0 ]]; then
-  echo -e "  ${GREEN}${BOLD}Layer 1 + Layer 2 + Layer 3: All checks passed.${NC}"
+  echo -e "  ${GREEN}${BOLD}Layers 0–5: All checks passed.${NC}"
 elif [[ "$FAIL" -eq 0 ]]; then
-  echo -e "  ${GREEN}${BOLD}Layer 1 + Layer 2 + Layer 3: All critical checks passed.${NC} ${YELLOW}($WARN warnings)${NC}"
+  echo -e "  ${GREEN}${BOLD}Layers 0–5: All critical checks passed.${NC} ${YELLOW}($WARN warnings)${NC}"
 else
   echo -e "  ${RED}${BOLD}$FAIL critical failure(s) — see above.${NC}"
   echo -e "  ${DIM}Common fixes:${NC}"
-  echo -e "  ${DIM}  - Rebuild cache: node dist/cli.mjs doctor --rebuild-cache${NC}"
-  echo -e "  ${DIM}  - BigInt errors: wrap DuckDB results with Number()${NC}"
-  echo -e "  ${DIM}  - Missing intelligence: restart server and wait for pipeline tick${NC}"
+  echo -e "  ${DIM}  - Build missing:   pnpm build${NC}"
+  echo -e "  ${DIM}  - Rebuild cache:   node dist/cli.mjs doctor --rebuild-cache${NC}"
+  echo -e "  ${DIM}  - BigInt errors:   wrap DuckDB results with Number()${NC}"
+  echo -e "  ${DIM}  - Missing intel:   restart server and wait for pipeline tick${NC}"
+  echo -e "  ${DIM}  - No SPA assets:   pnpm build:ui${NC}"
 fi
 echo -e "${BOLD}═══════════════════════════════════════════════════════${NC}"
 echo ""

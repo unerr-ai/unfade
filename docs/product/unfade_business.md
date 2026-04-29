@@ -242,7 +242,7 @@ The ordering follows a validated pattern from PostHog, Supabase, and Grafana:
 
 3. **Week 3: formalize individual pricing.** By now you have thousands of active users. Some percentage naturally want cloud distill (better LLMs without managing Ollama) and cross-machine sync. Price it below Cursor ($20) and comparable to WakaTime ($11).
 
-4. **Week 4: unlock the enterprise conversation.** The onboarding narrative feature (`unfade history`) is the entry point for enterprise sales. "Your codebase's reasoning history becomes your onboarding documentation" is a value proposition engineering managers immediately understand because they feel the pain of 4-6 week ramp-ups for every new hire.
+4. **Week 4: unlock the enterprise conversation.** The onboarding narrative feature (dashboard reasoning history) is the entry point for enterprise sales. "Your codebase's reasoning history becomes your onboarding documentation" is a value proposition engineering managers immediately understand because they feel the pain of 4-6 week ramp-ups for every new hire.
 
 ---
 

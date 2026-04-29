@@ -316,7 +316,7 @@ After Launch 4, polish the supporting pages:
 | Page | What |
 |------|------|
 | **HomePage** (enhance) | Dashboard summary of all groups, system health, quick-glance metrics |
-| **ProfilePage** (enhance) | Interactive Thinking Graph — decision density heatmap, domain evolution, thinking threads. `unfade publish` generates static site. |
+| **ProfilePage** (enhance) | Interactive Thinking Graph — decision density heatmap, domain evolution, thinking threads. Publish action generates static site. |
 | **SettingsPage** | LLM configuration, capture preferences, theme toggle, API key management |
 | **ProjectsPage** (enhance) | Full project management — discovery scanner, bulk operations, monitoring state |
 | **LogsPage** | Debug log viewer, diagnostic history, pipeline health |
